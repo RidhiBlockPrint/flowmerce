@@ -9,7 +9,8 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 # The /api forwarding target is fixed at build time: the API listens inside the container on 18787.
-ENV FLOWMERCE_API_ORIGIN=http://127.0.0.1:18787 NEXT_TELEMETRY_DISABLED=1
+# FLOWMERCE_HOSTED=1 at build time keeps the local-only /login -> Home redirect out of this build.
+ENV FLOWMERCE_API_ORIGIN=http://127.0.0.1:18787 NEXT_TELEMETRY_DISABLED=1 FLOWMERCE_HOSTED=1
 RUN npm run build && npm prune --omit=dev
 
 # ---- 2. Runtime ----

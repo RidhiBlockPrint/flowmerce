@@ -26,7 +26,10 @@ const nextConfig = {
   },
   async redirects() {
     // Pages that were merged keep working through their old addresses (see redirects.mjs).
-    return REDIRECTS.map((r) => ({ ...r, permanent: false }));
+    // Local operator mode has no sign-in, so /login goes to Home. The hosted image is built with FLOWMERCE_HOSTED=1
+    // and leaves this out: there src/middleware.js shows the sign-in page.
+    const login = process.env.FLOWMERCE_HOSTED === '1' ? [] : [{ source: '/login', destination: '/' }];
+    return [...REDIRECTS, ...login].map((r) => ({ ...r, permanent: false }));
   },
 };
 

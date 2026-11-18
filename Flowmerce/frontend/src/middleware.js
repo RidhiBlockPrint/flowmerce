@@ -54,9 +54,12 @@ function isHttps(request) {
   return request.nextUrl.protocol === 'https:' || request.headers.get('x-forwarded-proto') === 'https';
 }
 
-/** Relative redirect: the browser resolves it against the address it is on, whatever proxies sit in between. */
+/** Next.js needs an absolute address. The Host header is the address the browser used (also behind Render's
+ *  proxy, with X-Forwarded-Proto https); request.url is not (it shows the bind address, e.g. 0.0.0.0). */
 function redirectTo(request, path, status = 303) {
-  return new NextResponse(null, { status, headers: { Location: path } });
+  const proto = request.headers.get('x-forwarded-proto') || request.nextUrl.protocol.replace(':', '');
+  const host = request.headers.get('host') || request.nextUrl.host;
+  return NextResponse.redirect(new URL(path, `${proto}://${host}`), status);
 }
 
 function noStore(response) {
@@ -98,8 +101,7 @@ export async function middleware(request) {
   if (!password) {
     // Fail closed: a hosted copy without a password must never serve the app.
     if (hosted) return new NextResponse('Sign-in is not configured (FLOWMERCE_LOGIN_PASSWORD).', { status: 503 });
-    // Local operator mode has no sign-in: the sign-in address goes straight to Home.
-    if (pathname === '/login' || pathname.startsWith('/auth/')) return redirectTo(request, '/', 307);
+    // Local operator mode has no sign-in: next.config.mjs sends /login straight to Home (non-hosted builds).
     return NextResponse.next();
   }
   if (pathname === '/api/hooks/workflow' && request.method === 'POST') return NextResponse.next();
