@@ -130,24 +130,31 @@ jobs:
         if: env.VERCEL_TOKEN != ''
         with:
           node-version: 24
+      - name: Check the token's shape (never prints it)
+        if: env.VERCEL_TOKEN != ''
+        run: |
+          t="$VERCEL_TOKEN"
+          echo "length=${#t}"
+          case "$t" in *[[:space:]]*) echo "::warning::VERCEL_TOKEN contains spaces or line breaks; re-add it without them.";; esac
+          case "$t" in *-*) echo "::warning::VERCEL_TOKEN contains '-'; Vercel tokens normally do not. Check you pasted the token itself.";; esac
       - name: Link the Vercel project (created on first run) and force DEMO mode
         if: env.VERCEL_TOKEN != ''
         run: |
-          npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT" --token "$VERCEL_TOKEN"
-          npx --yes vercel@latest pull --yes --environment=production --token "$VERCEL_TOKEN"
+          npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT"
+          npx --yes vercel@latest pull --yes --environment=production
       - name: Build in DEMO mode (synthetic data only, no backend)
         if: env.VERCEL_TOKEN != ''
         env:
           NEXT_PUBLIC_FLOWMERCE_DATA_SOURCE: demo
-        run: npx --yes vercel@latest build --prod --token "$VERCEL_TOKEN"
+        run: npx --yes vercel@latest build --prod
       - name: Deploy
         id: deploy
         if: env.VERCEL_TOKEN != ''
         run: |
-          npx --yes vercel@latest deploy --prebuilt --prod --token "$VERCEL_TOKEN" > deploy-url.txt
+          npx --yes vercel@latest deploy --prebuilt --prod > deploy-url.txt
           # The shareable link is the project's production domain (https://<project>.vercel.app or similar);
           # the per-deployment URL may sit behind Vercel's own sign-in.
-          npx --yes vercel@latest inspect "$(tail -n1 deploy-url.txt)" --token "$VERCEL_TOKEN" > inspect.txt 2>&1 || true
+          npx --yes vercel@latest inspect "$(tail -n1 deploy-url.txt)" > inspect.txt 2>&1 || true
           prod=$(grep -oE 'https://[a-z0-9.-]+\.vercel\.app' inspect.txt | grep -v -- "-[a-z0-9]\{9\}-" | head -n1)
           [ -n "$prod" ] || prod=$(tail -n1 deploy-url.txt)
           echo "url=$prod" >> "$GITHUB_OUTPUT"
