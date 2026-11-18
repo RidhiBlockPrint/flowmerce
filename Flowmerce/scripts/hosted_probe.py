@@ -46,10 +46,21 @@ def main() -> None:
     checks.append(("a page without sign-in goes to /login", status in (302, 307) and "/login" in location))
     checks.append(("API without sign-in is refused", fetch(raw, f"{base}/api/home")[0] == 401))
     status, _, body = fetch(opener(), f"{base}/login")
-    checks.append(("sign-in page renders", status == 200 and "Welcome back" in body))
+    # The form itself renders in the browser; the server HTML carries the page shell and the art panel.
+    checks.append(("sign-in page renders", status == 200 and "login-art" in body))
 
     status, location, _ = fetch(raw, f"{base}/auth/login", {"username": user, "password": password + "x", "next": "/"})
     checks.append(("wrong password is refused", status == 303 and "error=invalid" in location))
+
+    req = urllib.request.Request(f"{base}/auth/login", data=urllib.parse.urlencode(
+        {"username": user, "password": password, "next": "/"}).encode())
+    try:
+        raw.open(req, timeout=30)
+        cookies: list[str] = []
+    except urllib.error.HTTPError as e:
+        cookies = e.headers.get_all("Set-Cookie") or []
+    checks.append(("session cookie is HttpOnly",
+                   any(c.startswith("fm_session=") and "httponly" in c.lower() for c in cookies)))
 
     jar = http.cookiejar.CookieJar()
     session = opener(jar)
@@ -57,9 +68,6 @@ def main() -> None:
                              {"username": user, "password": password, "next": "/shipping", "remember": "on"})
     checks.append((f"right password signs in and returns to the page (ended at {final})",
                    status == 200 and final.endswith("/shipping")))
-    checks.append(("session cookie is HttpOnly",
-                   any(c.name == "fm_session" and any(k.lower() == "httponly" for k in getattr(c, "_rest", {}))
-                       for c in jar)))
     checks.append(("home page opens after sign-in", fetch(session, f"{base}/")[0] == 200))
     status, _, body = fetch(session, f"{base}/api/home")
     try:

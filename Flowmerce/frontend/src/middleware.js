@@ -54,11 +54,9 @@ function isHttps(request) {
   return request.nextUrl.protocol === 'https:' || request.headers.get('x-forwarded-proto') === 'https';
 }
 
+/** Relative redirect: the browser resolves it against the address it is on, whatever proxies sit in between. */
 function redirectTo(request, path, status = 303) {
-  // Build from the public host the browser used (behind Render's proxy request.url is the internal address).
-  const proto = request.headers.get('x-forwarded-proto') || request.nextUrl.protocol.replace(':', '');
-  const host = request.headers.get('host') || request.headers.get('x-forwarded-host') || request.nextUrl.host;
-  return NextResponse.redirect(new URL(path, `${proto}://${host}`), status);
+  return new NextResponse(null, { status, headers: { Location: path } });
 }
 
 function noStore(response) {
