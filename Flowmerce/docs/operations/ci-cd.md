@@ -1,12 +1,12 @@
 # CI/CD
 
-Status (2026-10-29): **continuous integration (Stage A) is written but has not yet run on GitHub.** Its first run on GitHub is the real test. There is **no deployment** and no release automation yet; see "Not included".
+Status (2026-11-18): CI runs on GitHub from the repository root (`.github/workflows/ci.yml` in *Flowmerce Main*; the jobs work inside `Flowmerce/`). After every check passes on `main`, a **demo-only** deploy publishes the frontend to Vercel. The real app (backend, keys, data) is never deployed; see "Demo deploy" and "Not included".
 
 Decision record: [ADR 0004](../decisions/0004-ci-cd-github-actions.md).
 
 ## What runs and when
 
-Workflow: `.github/workflows/ci.yml`. It runs on every push to `main` and on every pull request. It uses no secrets and has read-only repository access.
+Workflow: `.github/workflows/ci.yml` at the root of the repository (one level above this `Flowmerce/` folder). It runs on every push to `main`, on every pull request, and on demand (Actions tab, *Run workflow*). The CI jobs use no secrets and have read-only repository access; only the demo deploy uses one secret, `VERCEL_TOKEN`.
 
 | Job (check name) | What it does | Fails when |
 |---|---|---|
@@ -50,9 +50,21 @@ Without step 3, CI reports problems but does not stop a merge.
 - **`Smoke test` fails to start the app:** the log prints the last server output. Reproduce it with the local command above.
 - Re-run a job from the run page ("Re-run jobs") if you suspect a temporary GitHub problem.
 
+## Demo deploy (CD)
+
+Job `Deploy demo (Vercel)` runs only on `main`, only after `Python 3.12`, `Python 3.14`, `Frontend` and `Smoke test` pass. It builds the frontend with `NEXT_PUBLIC_FLOWMERCE_DATA_SOURCE=demo` and deploys it to the Vercel project `flowmerce-demo` (created on the first run). The result is a public link that shows **synthetic data only**: no backend, no Shopify, Google or Supabase keys, nothing connected. The link appears in the run summary and under the repository's **Environments → demo**.
+
+One-time setup (owner):
+1. Create a free account at vercel.com (sign in with GitHub is fine).
+2. Vercel → Account Settings → Tokens → create a token (scope: your account).
+3. Add it to GitHub, either in the repository's Settings → Secrets and variables → Actions → *New repository secret* named `VERCEL_TOKEN`, or from a terminal: `gh secret set VERCEL_TOKEN --repo RidhiBlockPrint/flowmerce` (paste the token when asked).
+4. Actions tab → CI/CD → *Run workflow*, or push any commit.
+
+Until the secret exists the deploy job only prints a warning and succeeds. Vercel's free Hobby plan is for non-commercial use; move to Pro if the demo is used commercially.
+
 ## Not included (deliberately)
 
-- **Deployment.** The hosting target is an open decision (`docs/01-architecture.md` section 10), and the database choice (roadmap B1) must come first: SQLite on a server's temporary disk loses data when it restarts.
+- **Deployment of the real app.** Only the demo is deployed. The real app has no sign-in (local operator mode) and must never face the internet as it is. The hosting target is an open decision (`docs/01-architecture.md` section 10), and the database choice (roadmap B1) must come first: SQLite on a server's temporary disk loses data when it restarts.
 - **Release artifacts and a container image** (a possible Stage B), pending your approval.
 - **Dependency vulnerability scanning** (`pip-audit`, `npm audit`). Add it as advisory first so a known issue does not block every merge.
 - **A format check** (`ruff format --check`): the migrated SEO code was never formatted, so it would fail today. The pipeline checks only what currently passes.
