@@ -1,0 +1,90 @@
+# Setup
+
+Tested here on Python 3.13 (Linux). The project requires Python 3.12+. Not yet run on Windows.
+
+## Install (Windows PowerShell, from the repository root)
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev,seo]"
+copy .env.example .env
+```
+
+On macOS/Linux use `source .venv/bin/activate` and `cp .env.example .env`.
+
+## Dependencies
+
+Runtime dependencies of the core package: none (standard library only). The `seo` extra (fastapi, uvicorn, httpx, openpyxl, anthropic, google-auth, requests; carried over from blog-ops) is needed for the SEO module. Dev tools: `pytest` (tests), `ruff` (lint and format), `mypy` (strict type checking). Add any new dependency to `pyproject.toml` and record the reason here.
+
+## Configuration
+
+| Variable | Default | Allowed values |
+|---|---|---|
+| `FLOWMERCE_ENV` | `development` | development, test, production |
+| `FLOWMERCE_LOG_LEVEL` | `INFO` | DEBUG, INFO, WARNING, ERROR, CRITICAL |
+
+Settings are read from the process environment. The code does not load `.env` itself; export the variables in your shell (or add a loader via an approved ADR).
+
+## Run
+
+```powershell
+python -m flowmerce version
+python -m flowmerce health
+```
+
+## Test and check
+
+```powershell
+pytest
+ruff check .
+ruff format --check .
+mypy
+```
+
+The same checks run automatically on GitHub (see [CI/CD](../operations/ci-cd.md), which also lists the frontend commands and the local smoke test, `python scripts/ci_smoke.py`). CI runs `ruff check .` but not `ruff format --check .`, because the migrated SEO code is not formatted yet.
+
+## Running Flowmerce locally
+
+```powershell
+python scripts\run_flowmerce.py             # API on 127.0.0.1:8787 + web interface on 127.0.0.1:3000, opens the browser
+python scripts\run_flowmerce.py --dev       # frontend in Next.js development mode
+python scripts\run_flowmerce.py --no-browser
+```
+
+`scripts\run_seo.py` and `scripts\run_seo.bat` still work and forward to the same launcher. The launcher creates `.venv` if needed, installs `".[seo]"`, runs `npm install` in `frontend\` when `node_modules` is missing, builds the web interface when it is missing or older than its sources, starts both services, opens `http://127.0.0.1:3000` and stops both on Ctrl+C. It needs **Python 3.12+** and **Node.js with npm** (Next.js 15 needs Node 18.18+; the project was last built with v26.13.0); it prints a clear message if Node.js/npm is missing, a package install or build fails, or port 8787 or 3000 is already in use.
+
+Credentials and options are in `.env` (see the SEO section of `.env.example`). The module reads `.env` from the repository root and keeps its SQLite database in `data/` (`data/blog-ops.sqlite`).
+
+**Two services.** The **API** is the Python FastAPI app (`flowmerce.modules.seo.main:app`); it returns JSON only and serves no pages. The **web interface** is the Next.js app in `frontend\` (React, JavaScript/JSX only, App Router). `frontend\next.config.mjs` forwards `/api/*` to `http://127.0.0.1:8787` (override at build time with `FLOWMERCE_API_ORIGIN`). The frontend holds no credentials.
+
+**Local operator mode (no sign-in).** The dashboard opens without credentials. The web interface listens on `127.0.0.1` only, and the API answers only connections from this computer (loopback addresses); any other address gets HTTP 403 for every API path, even if the API's `HOST` is changed. Run it on `127.0.0.1` (the default) and do not expose it to a network or put a proxy or tunnel in front of it. The single exception is `POST /api/hooks/workflow`, the external workflow webhook, which has its own `X-Workflow-Secret` check and is reachable from other computers if the API is reachable. Local requests act as the first active administrator record, which the server creates at startup if none exists (no password is generated, shown or saved; `ADMIN_PASSWORD` is ignored). The old `/api/auth/login` and `/api/auth/password` endpoints answer 410. An existing `data/initial-admin.txt` is not deleted and is no longer used. Scripts that call the API from this computer still need the `X-Requested-With: blog-ops` header for mutating requests. See [ADR 0005](../decisions/0005-local-operator-mode.md).
+
+**AI jobs (Flowmerce <-> Claude).** Choose how jobs are executed with `AI_EXECUTION_MODE` in `.env` (see `.env.example`). `anthropic_api`: set `ANTHROPIC_API_KEY` (an API key from the Anthropic Console; a Claude.ai subscription does not include one) and Claude is called from this server. `external_worker`: **all three** of `AI_WORKER_URL` (https), `AI_WORKER_TOKEN` and `WORKFLOW_WEBHOOK_SECRET` are required (without the secret Flowmerce cannot authenticate the worker's callbacks, so no job can be created and waiting jobs are not sent). The worker must implement the contract in [ADR 0009](../decisions/0009-ai-job-bridge.md) and you must put the **same** webhook secret into the worker's own environment yourself, through a secure channel: Flowmerce never sends it. `AI_CALLBACK_URL` (the public HTTPS URL of the webhook) is sent to the worker as `callback_url`; leave it empty only if the worker already knows where to call back. Topic research and content generation on the Automation page, and the topic page's "Draft with Claude" button, now queue background AI jobs in either mode ("Queue AI job"); the request returns at once and the job's progress is shown under **AI jobs**. Until the chosen method is configured, **Automation → AI jobs** says "API not configured" or "Worker not configured" and no job can be created. Run one Flowmerce process per database file. For a worker on another machine the webhook must be reached through a secured HTTPS gateway that forwards only `POST /api/hooks/workflow`, with rate limiting and monitoring; do not expose the dev server or the whole app. Nothing in this feature publishes: results become proposed topics or draft articles.
+
+**AI jobs: manual test** (no real Claude or worker needed). 1) In `.env` set `AI_EXECUTION_MODE=external_worker`, `AI_WORKER_URL=http://127.0.0.1:9100`, `AI_WORKER_TOKEN=test-token`, `WORKFLOW_WEBHOOK_SECRET=test-secret`, then start Flowmerce. 2) Start a stand-in worker that answers `{"status":"accepted"}` on `POST /v1/jobs` at that address (for example a few lines of Python with `http.server`). 3) In Automation → AI jobs click **New AI job** (topic research): the job appears as Pending, then Queued after the stand-in accepts it. 4) Act as the worker with curl, using the job id shown in the list (the same pattern works for each step):
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/hooks/workflow -H "X-Workflow-Secret: test-secret" -H "Content-Type: application/json" -d '{"event_id":"manual-0001","job_id":"<JOB ID>","event_type":"started","sequence":1}'
+curl -X POST http://127.0.0.1:8787/api/hooks/workflow -H "X-Workflow-Secret: test-secret" -H "Content-Type: application/json" -d '{"event_id":"manual-0002","job_id":"<JOB ID>","event_type":"progress","sequence":2,"progress":45,"message":"Researching"}'
+curl -X POST http://127.0.0.1:8787/api/hooks/workflow -H "X-Workflow-Secret: test-secret" -H "Content-Type: application/json" -d '{"event_id":"manual-0003","job_id":"<JOB ID>","event_type":"succeeded","sequence":3,"result":{"topics":[{"title":"Test topic","primary_keyword":"test keyword","secondary_keywords":[],"intent":"informational","rationale":"manual test"}]}}'
+```
+
+The job moves Running (45%) then Succeeded, and the topic appears under Topics as proposed. For a failure send `{"event_id":"manual-0004","job_id":"<JOB ID>","event_type":"failed","sequence":3,"error":"test failure"}` instead of the success, then use **Retry**. Re-sending an `event_id` is ignored; sending a lower `sequence` is refused with 409. Remove the test topic afterwards.
+
+**Checking and repairing stored data** (run from the repository root with the project's Python, `.venv\Scripts\python.exe`):
+
+```powershell
+python -m flowmerce.modules.seo.maintenance db-report          # read-only summary: integration status, articles, stored GSC/GA4 coverage
+python -m flowmerce.modules.seo.maintenance backup             # verified copy of data/blog-ops.sqlite into backups/
+python -m flowmerce.modules.seo.maintenance resync-preview --source gsc --brand ridhi --from 2025-08-01 --to 2026-11-10
+python -m flowmerce.modules.seo.maintenance resync-apply   --source gsc --brand ridhi --from 2025-08-01 --to 2026-11-10 --confirm
+```
+
+`db-report` opens the database read-only and changes nothing. `resync-preview` reads from Google and shows how many stored days would be added or changed; it writes nothing. `resync-apply` first makes a verified backup, then replaces only the live-API rows of the range (demo and imported rows are never touched) and writes an audit line. Run `resync-apply` only after the preview has been reviewed and approved. Routine syncs re-read only the last 10 days (Search Console) or 7 days (GA4); when the computer was off longer, the Integrations page and `db-report` show the gap and these commands fill it.
+
+**Moving from the original blog-ops folder** (done 2026-10-29; the folder no longer exists): `.env`, `data/` and `backups/` now live in the repository root. Both are git-ignored; keep your own copy of `.env` and back up `data/` and `backups/`.
+
+**Building the UI** (needs Node.js; `frontend\.next` and `frontend\node_modules` are git-ignored, so a fresh clone must install and build): from `frontend\` run `npm ci` (installs exactly what `package-lock.json` specifies) and `npm run build` (the Next.js build). There is no TypeScript type check: the frontend is JavaScript/JSX only. There is no frontend lint or test suite yet; `python scripts\ci_smoke.py --web` starts the built frontend and checks its routes.
+
+**Changing the UI**: start the API (`python scripts\run_flowmerce.py --dev` does both), edit files in `frontend\src\`, and the page reloads. Routes are folders under `frontend\src\app\`; page implementations are in `frontend\src\views\`. The original `README` is archived at `docs/architecture/legacy-blog-ops-README.md`.

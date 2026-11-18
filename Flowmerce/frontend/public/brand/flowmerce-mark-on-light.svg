@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 150" role="img" aria-label="Flowmerce">
+  <g >
+    <path d="M14 134 V50 C14 28 28 14 50 14 H80" fill="none" stroke="#0b1020" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="130 8 22 60"/>
+    <path d="M14 79 L62 69" fill="none" stroke="#0b1020" stroke-width="11" stroke-linecap="round" stroke-dasharray="38 40"/>
+    <circle cx="48" cy="14" r="8" fill="#7a58e0"/><circle cx="86" cy="14" r="8" fill="#e2543d"/>
+    <circle cx="14" cy="45" r="7" fill="#4a6fe0"/><circle cx="14" cy="79" r="8" fill="#e48a1a"/>
+    <circle cx="70" cy="67" r="8" fill="#1aa3b5"/><circle cx="14" cy="138" r="8" fill="#1fa874"/>
+  </g>
+</svg>

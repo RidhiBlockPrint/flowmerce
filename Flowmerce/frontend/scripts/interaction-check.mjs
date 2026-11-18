@@ -1,0 +1,44 @@
+// Clicks through key demo interactions in headless Chrome/Edge. Usage: node scripts/interaction-check.mjs [baseUrl]
+import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const BASE = process.argv[2] || 'http://127.0.0.1:3000';
+const exe = ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].find(existsSync);
+const port = 9800 + Math.floor(Math.random() * 100);
+const proc = spawn(exe, [`--remote-debugging-port=${port}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), 'fm-'))}`, '--headless=new', '--disable-gpu', 'about:blank'], { stdio: 'ignore' });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let url; for (let i = 0; i < 60 && !url; i++) { try { url = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === 'page')?.webSocketDebuggerUrl; } catch {} await sleep(250); }
+const ws = new WebSocket(url); await new Promise((r) => ws.addEventListener('open', r, { once: true }));
+let id = 0; const pend = new Map(); const errors = [];
+ws.addEventListener('message', (m) => { const x = JSON.parse(m.data); if (x.id) pend.get(x.id)?.(x); else if (x.method === 'Runtime.exceptionThrown') errors.push(x.params.exceptionDetails.exception?.description ?? 'exception'); });
+const send = (method, params = {}) => new Promise((r) => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+const ev = async (e) => (await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true })).result?.result?.value;
+await send('Runtime.enable'); await send('Page.enable');
+await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+const goto = async (p) => { await send('Page.navigate', { url: BASE + p }); await sleep(2200); };
+const click = (sel, text) => ev(`(() => { const els = [...document.querySelectorAll(${JSON.stringify(sel)})]; const el = els.find((e) => !${JSON.stringify(text)} || e.innerText.includes(${JSON.stringify(text)})); if (!el) return false; el.click(); return true; })()`);
+const has = (t) => ev(`document.body.innerText.toLowerCase().includes(${JSON.stringify(t.toLowerCase())})`);
+let failed = 0;
+const check = (name, ok) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}`); if (!ok) failed++; };
+
+await goto('/');
+check('banner opens About dialog', (await click('.demo-link')) && (await sleep(400), await has('Planned, not built yet')));
+await ev(`document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))`); await sleep(300);
+check('role menu lists roles', (await click('.user-chip')) && (await sleep(300), await has('Reviewer / Approver')));
+check('switching to Reviewer updates the chip', (await click('.menu-item', 'Reviewer')) && (await sleep(1200), await ev(`document.querySelector('.user-chip').innerText.includes('Reviewer')`)));
+check('tasks drawer opens', (await click('button', 'Tasks')) && (await sleep(700), await has('My tasks')));
+await goto('/publishing');
+check('reviewer can authorize a pending request', (await has('Authorize')) );
+check('reviewer sees no New article button', !(await goto('/articles'), await has('New article')));
+await click('.user-chip'); await sleep(300); await click('.menu-item', 'Admin'); await sleep(1000);
+await goto('/shipping?tab=shipments');
+check('shipment row opens the tracking drawer', (await click('tbody button', 'DEMO-')) && (await sleep(900), await has('Tracking timeline')));
+await goto('/shipping');
+check('Checks and exceptions tab', (await click('[role=tab]', 'Checks')) && (await sleep(900), await has('xception')));
+await goto('/settings/integrations');
+check('simulated test is labelled', (await click('button', 'Test connection')) && (await sleep(1200), await has('Simulated')));
+await goto('/articles');
+check('new article dialog', (await click('button', 'New')) && (await sleep(500), await ev(`!!document.querySelector('.overlay')`)));
+console.log(errors.length ? `JS exceptions:\n${errors.join('\n')}` : 'no JS exceptions');
+ws.close(); proc.kill(); process.exit(failed || errors.length ? 1 : 0);
