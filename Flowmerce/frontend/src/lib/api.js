@@ -50,9 +50,18 @@ async function request(method, path, body, init = {}) {
     catch {
         return null;
     } })() : null;
+    if (res.status === 401 && json?.code === 'signed_out')
+        toSignIn();
     if (!res.ok)
         throw new ApiError(res.status, json?.error || `Request failed (${res.status})`, json?.code, json?.details);
     return json;
+}
+/** Hosted copy: the sign-in session ended (expired, or the password changed). Go to the sign-in page and come back. */
+function toSignIn() {
+    if (typeof window === 'undefined' || window.location.pathname === '/login')
+        return;
+    const here = window.location.pathname + window.location.search;
+    window.location.assign(here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`);
 }
 export const api = {
     get: (path, signal) => request('GET', path, undefined, { signal }),
@@ -106,6 +115,8 @@ export async function download(path) {
     const res = await fetch('/api' + path, { credentials: 'same-origin', headers: { 'X-Requested-With': 'blog-ops' } });
     if (!res.ok) {
         const j = await res.json().catch(() => null);
+        if (res.status === 401 && j?.code === 'signed_out')
+            toSignIn();
         throw new ApiError(res.status, j?.error || 'Download failed');
     }
     const cd = res.headers.get('Content-Disposition') || '';

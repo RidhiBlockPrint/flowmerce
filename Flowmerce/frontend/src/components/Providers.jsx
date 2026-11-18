@@ -1,5 +1,6 @@
 'use client';
 import { Suspense, useCallback, useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { api } from '../lib/api';
 import { AppProvider } from '../lib/app';
 import { Shell } from './Shell';
@@ -10,11 +11,13 @@ import { Logo } from './Logo';
 /**
  * Local operator mode: there is no sign-in. The backend answers /api/auth/me with the local administrator
  * (or refuses with 403 when the page is opened from another computer), and the dashboard opens directly.
+ * The hosted copy's sign-in page (/login) renders on its own: no app shell and no API call before signing in.
  */
 export function Providers({ children }) {
   const [me, setMe] = useState(null);
   const [state, setState] = useState('loading');
   const [err, setErr] = useState(null);
+  const bare = usePathname() === '/login';
 
   const load = useCallback(async () => {
     try {
@@ -26,7 +29,9 @@ export function Providers({ children }) {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (!bare) void load(); }, [load, bare]);
+
+  if (bare) return <ToastProvider>{children}</ToastProvider>;
 
   return (
     <ToastProvider>

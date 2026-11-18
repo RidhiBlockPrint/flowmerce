@@ -15,6 +15,5 @@ export const REDIRECTS = [
     { source: '/integrations', destination: '/settings/integrations' },
     { source: '/audit', destination: '/settings/audit' },
     { source: '/settings', destination: '/settings/integrations' },
-    // Local operator mode has no sign-in: the old address goes straight to Home.
-    { source: '/login', destination: '/' },
+    // /login is handled by src/middleware.js: the sign-in page on the hosted copy, Home on your own computer.
 ];

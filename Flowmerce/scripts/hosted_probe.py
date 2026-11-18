@@ -1,46 +1,77 @@
-"""Probe a running hosted Flowmerce (CI uses it against the container): the gate must hold and the API must answer.
+"""Probe a running hosted Flowmerce (CI uses it against the container): the sign-in gate must hold and the app must
+work after signing in through the /login form.
 
     python scripts/hosted_probe.py http://127.0.0.1:10000 <password> [user]
 """
 
 from __future__ import annotations
 
-import base64
+import http.cookiejar
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
-def get(url: str, auth: tuple[str, str] | None = None) -> tuple[int, bytes]:
-    req = urllib.request.Request(url)  # noqa: S310 - fixed http(s) URL given by the caller
-    if auth:
-        req.add_header("Authorization", "Basic " + base64.b64encode(f"{auth[0]}:{auth[1]}".encode()).decode())
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: object, **kwargs: object) -> None:
+        return None
+
+
+def opener(jar: http.cookiejar.CookieJar | None = None, follow: bool = True) -> urllib.request.OpenerDirector:
+    handlers: list[urllib.request.BaseHandler] = [urllib.request.HTTPCookieProcessor(jar or http.cookiejar.CookieJar())]
+    if not follow:
+        handlers.append(NoRedirect())
+    return urllib.request.build_opener(*handlers)
+
+
+def fetch(op: urllib.request.OpenerDirector, url: str, form: dict[str, str] | None = None) -> tuple[int, str, str]:
+    data = urllib.parse.urlencode(form).encode() if form is not None else None
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-            return resp.status, resp.read()
+        with op.open(urllib.request.Request(url, data=data), timeout=30) as resp:  # noqa: S310 - caller's URL
+            return resp.status, resp.geturl(), resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return e.code, e.headers.get("Location") or url, e.read().decode("utf-8", "replace")
 
 
 def main() -> None:
     base, password = sys.argv[1].rstrip("/"), sys.argv[2]
     user = sys.argv[3] if len(sys.argv) > 3 else "admin"
-    good, bad = (user, password), (user, password + "x")
-    checks = [
-        ("health check is open", get(f"{base}/healthz")[0] == 200),
-        ("home page needs sign-in", get(f"{base}/")[0] == 401),
-        ("API needs sign-in", get(f"{base}/api/home")[0] == 401),
-        ("wrong password is refused", get(f"{base}/", bad)[0] == 401),
-        ("home page opens after sign-in", get(f"{base}/", good)[0] == 200),
-        ("shipping page opens after sign-in", get(f"{base}/shipping", good)[0] == 200),
-    ]
-    status, body = get(f"{base}/api/home", good)
+    raw = opener(follow=False)
+    checks: list[tuple[str, bool]] = []
+
+    checks.append(("health check is open", fetch(raw, f"{base}/healthz")[0] == 200))
+    status, location, _ = fetch(raw, f"{base}/shipping")
+    checks.append(("a page without sign-in goes to /login", status in (302, 307) and "/login" in location))
+    checks.append(("API without sign-in is refused", fetch(raw, f"{base}/api/home")[0] == 401))
+    status, _, body = fetch(opener(), f"{base}/login")
+    checks.append(("sign-in page renders", status == 200 and "Welcome back" in body))
+
+    status, location, _ = fetch(raw, f"{base}/auth/login", {"username": user, "password": password + "x", "next": "/"})
+    checks.append(("wrong password is refused", status == 303 and "error=invalid" in location))
+
+    jar = http.cookiejar.CookieJar()
+    session = opener(jar)
+    status, final, _ = fetch(session, f"{base}/auth/login",
+                             {"username": user, "password": password, "next": "/shipping", "remember": "on"})
+    checks.append((f"right password signs in and returns to the page (ended at {final})",
+                   status == 200 and final.endswith("/shipping")))
+    checks.append(("session cookie is HttpOnly",
+                   any(c.name == "fm_session" and any(k.lower() == "httponly" for k in getattr(c, "_rest", {}))
+                       for c in jar)))
+    checks.append(("home page opens after sign-in", fetch(session, f"{base}/")[0] == 200))
+    status, _, body = fetch(session, f"{base}/api/home")
     try:
         api_ok = status == 200 and isinstance(json.loads(body), dict)
     except ValueError:
         api_ok = False
     checks.append((f"API answers after sign-in (HTTP {status})", api_ok))
+
+    status, final, _ = fetch(session, f"{base}/auth/logout")
+    checks.append(("sign out returns to the sign-in page", "/login" in final))
+    checks.append(("API is refused after sign out", fetch(session, f"{base}/api/home")[0] == 401))
+
     for name, ok in checks:
         print(f"{'PASS' if ok else 'FAIL'}  {name}")
     if not all(ok for _, ok in checks):
