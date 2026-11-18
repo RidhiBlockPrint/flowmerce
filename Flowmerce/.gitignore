@@ -14,11 +14,11 @@ dist/
 .env
 .env.*
 !.env.example
-secrets/
+/secrets/
 
 # Runtime data and logs
-data/
-backups/
+/data/
+/backups/
 frontend/node_modules/
 frontend/.next/
 frontend/out/

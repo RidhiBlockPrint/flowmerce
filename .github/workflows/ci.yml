@@ -44,8 +44,10 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
       - name: Type check (mypy, strict)
+        if: ${{ !cancelled() }}
         run: mypy
       - name: Tests (pytest)
+        if: ${{ !cancelled() }}
         run: pytest -q
 
   frontend:
@@ -99,7 +101,9 @@ jobs:
 
   deploy-demo:
     name: Deploy demo (Vercel)
-    needs: [python, frontend, smoke]
+    # Only the frontend is deployed, so the deploy waits on the frontend build and the full-app smoke test.
+    # The Python lint/type/test jobs still run and must be green before merging (branch protection).
+    needs: [frontend, smoke]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15

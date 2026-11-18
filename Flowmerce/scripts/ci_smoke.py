@@ -68,8 +68,9 @@ WEB_ROUTES = (
     "/integrations",
     "/audit",
     "/workspace/ridhi",
+    "/shipping",
 )
-WEB_MISSING = ("/users", "/shipping", "/approvals", "/merchandising", "/no-such-page")
+WEB_MISSING = ("/users", "/approvals", "/merchandising", "/no-such-page")
 
 
 def free_port() -> int:

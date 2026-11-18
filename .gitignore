@@ -2,11 +2,11 @@
 .env
 .env.*
 !.env.example
-**/secrets/
+Flowmerce/secrets/
 
 # Local data, backups, build output
-**/data/
-**/backups/
+Flowmerce/data/
+Flowmerce/backups/
 **/node_modules/
 **/.next/
 **/.venv/
