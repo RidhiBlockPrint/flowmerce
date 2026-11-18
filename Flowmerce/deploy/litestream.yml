@@ -1,0 +1,13 @@
+# Litestream: continuous copy of the SEO database to S3-compatible storage (Supabase Storage).
+# Values come from the environment; see docs/operations/hosting-render.md. Used by scripts/run_hosted.py.
+dbs:
+  - path: /app/data/blog-ops.sqlite
+    replica:
+      type: s3
+      bucket: ${LITESTREAM_BUCKET}
+      path: ${LITESTREAM_PATH}
+      endpoint: ${LITESTREAM_ENDPOINT}
+      region: ${LITESTREAM_REGION}
+      access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+      secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+      force-path-style: true

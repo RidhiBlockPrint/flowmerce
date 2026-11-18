@@ -1,0 +1,40 @@
+# Render blueprint: the live Flowmerce app (real data, sign-in required) on Render's free plan.
+# Setup and the values to enter: Flowmerce/docs/operations/hosting-render.md
+services:
+  - type: web
+    name: flowmerce
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    dockerfilePath: ./Flowmerce/Dockerfile
+    dockerContext: ./Flowmerce
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - Flowmerce/**
+      ignoredPaths:
+        - Flowmerce/docs/**
+        - Flowmerce/tests/**
+    envVars:
+      # Sign-in. Render generates the password; find it under the service's Environment tab.
+      - key: FLOWMERCE_LOGIN_USER
+        value: admin
+      - key: FLOWMERCE_LOGIN_PASSWORD
+        generateValue: true
+      - key: APP_ENV
+        value: production
+      # SEO database backup in Supabase Storage (S3). Entered by you in the Render dashboard.
+      - key: LITESTREAM_BUCKET
+        sync: false
+      - key: LITESTREAM_ENDPOINT
+        sync: false
+      - key: LITESTREAM_REGION
+        sync: false
+      - key: LITESTREAM_ACCESS_KEY_ID
+        sync: false
+      - key: LITESTREAM_SECRET_ACCESS_KEY
+        sync: false
+      # Everything else (Shopify, Supabase, Google, Anthropic ...) is pasted from your local .env with
+      # "Add from .env" in the Render dashboard. Keys never go into this repository.

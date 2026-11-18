@@ -99,6 +99,30 @@ jobs:
       - name: Boot the API and the frontend on a throwaway folder and probe them
         run: python scripts/ci_smoke.py --web
 
+  container:
+    name: Hosted container
+    # Builds the image Render runs and checks the sign-in gate and the API inside it (no real keys, empty data).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build -t flowmerce-hosted .
+      - name: Start it the way Render does
+        run: |
+          docker run -d --name fm -p 10000:10000 -e FLOWMERCE_LOGIN_PASSWORD=ci-only-password-0123456789 flowmerce-hosted
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:10000/healthz && break; sleep 2; done
+      - name: Probe the gate and the API
+        run: python3 scripts/hosted_probe.py http://127.0.0.1:10000 ci-only-password-0123456789
+      - name: Refuses to start without a password
+        run: |
+          if docker run --rm flowmerce-hosted; then echo "::error::started without FLOWMERCE_LOGIN_PASSWORD"; exit 1; fi
+      - name: Container log
+        if: ${{ !cancelled() }}
+        run: docker logs fm 2>&1 | tail -60
+
   pages-build:
     name: Build demo for GitHub Pages
     # Only the frontend is published, so this waits on the frontend build and the full-app smoke test.

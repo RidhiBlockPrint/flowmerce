@@ -62,7 +62,7 @@ Build the same thing locally (PowerShell, in `frontend`): `$env:FLOWMERCE_STATIC
 
 ## Not included (deliberately)
 
-- **Deployment of the real app.** Only the demo is deployed. The real app has no sign-in (local operator mode) and must never face the internet as it is. The hosting target is an open decision (`docs/01-architecture.md` section 10), and the database choice (roadmap B1) must come first: SQLite on a server's temporary disk loses data when it restarts.
+- **Deployment of the real app** is set up separately on Render with a sign-in gate; see [hosting-render.md](hosting-render.md). Never expose the local app (no sign-in) to the internet. Render keeps the SEO SQLite database in Supabase Storage with Litestream until the database move (roadmap B1).
 - **Release artifacts and a container image** (a possible Stage B), pending your approval.
 - **Dependency vulnerability scanning** (`pip-audit`, `npm audit`). Add it as advisory first so a known issue does not block every merge.
 - **A format check** (`ruff format --check`): the migrated SEO code was never formatted, so it would fail today. The pipeline checks only what currently passes.
