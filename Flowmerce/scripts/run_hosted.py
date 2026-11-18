@@ -107,15 +107,22 @@ def seed_database() -> None:
     url, key = os.environ.get("SUPABASE_URL", "").rstrip("/"), os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
     bucket = os.environ.get("LITESTREAM_BUCKET", "")
     if not (url and key and bucket):
-        log("no stored copy and no Supabase keys for a seed; the app will create a fresh database")
-        return
+        # Never start empty just because keys are missing: an empty database would be backed up and then
+        # restored on every later start, hiding the uploaded copy for good. Stop; the host retries once keys exist.
+        fail("no stored database yet, and SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set, so the uploaded "
+             "copy (scripts/upload_seo_seed.py) cannot be checked. Add your .env values in Render, then deploy again.")
     import httpx
 
-    resp = httpx.get(f"{url}/storage/v1/object/{bucket}/{seed}",
-                     headers={"Authorization": f"Bearer {key}", "apikey": key}, timeout=120)
-    if resp.status_code != 200:
-        log(f"no seed copy at {bucket}/{seed} (HTTP {resp.status_code}); the app will create a fresh database")
+    try:
+        resp = httpx.get(f"{url}/storage/v1/object/{bucket}/{seed}",
+                         headers={"Authorization": f"Bearer {key}", "apikey": key}, timeout=120)
+    except httpx.HTTPError as e:
+        fail(f"could not reach Supabase Storage to load the uploaded copy ({type(e).__name__}); will retry.")
+    if resp.status_code in (400, 404):
+        log(f"no uploaded copy at {bucket}/{seed}; the app will create a fresh database")
         return
+    if resp.status_code != 200:
+        fail(f"loading the uploaded copy from {bucket}/{seed} failed (HTTP {resp.status_code}); will retry.")
     tmp = DB_FILE.with_suffix(".seed")
     tmp.write_bytes(resp.content)
     tmp.replace(DB_FILE)
