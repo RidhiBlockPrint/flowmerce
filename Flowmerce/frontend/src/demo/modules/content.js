@@ -226,7 +226,7 @@ export function seed(db) {
     const author = userOf(s.author);
     const content = {
       title: s.title, handle: s.handle, primary_keyword: s.kw, meta_title: s.metaTitle ?? '', meta_description: s.meta ?? '', summary_html: s.summary ? `<p>${s.summary}</p>` : '',
-      body_html: s.body ?? '', tags: s.tags ?? '', author: BRAND_NAME[s.brand], image_url: s.body || s.status !== 'idea' ? `/demo/tile-${s.img ?? 1}.svg` : '',
+      body_html: s.body ?? '', tags: s.tags ?? '', author: BRAND_NAME[s.brand], image_url: s.body || s.status !== 'idea' ? `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/demo/tile-${s.img ?? 1}.svg` : '',
       image_alt: s.body || s.status !== 'idea' ? `Demo image for ${s.title}` : '',
     };
     const created = daysAgo(s.createdD);

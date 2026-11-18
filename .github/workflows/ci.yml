@@ -1,7 +1,7 @@
 name: CI/CD
 
 # CI: the same checks you can run locally; see Flowmerce/docs/operations/ci-cd.md.
-# CD: after every check passes on main, the frontend is deployed to Vercel in DEMO mode
+# CD: after the frontend build and smoke test pass on main, the frontend is published to GitHub Pages in DEMO mode
 #     (synthetic data in the browser, no backend, no keys). Real data is never deployed.
 # Actions are pinned to full commit hashes (the version is in the trailing comment); Dependabot proposes updates.
 on:
@@ -99,63 +99,51 @@ jobs:
       - name: Boot the API and the frontend on a throwaway folder and probe them
         run: python scripts/ci_smoke.py --web
 
-  deploy-demo:
-    name: Deploy demo (Vercel)
-    # Only the frontend is deployed, so the deploy waits on the frontend build and the full-app smoke test.
+  pages-build:
+    name: Build demo for GitHub Pages
+    # Only the frontend is published, so this waits on the frontend build and the full-app smoke test.
     # The Python lint/type/test jobs still run and must be green before merging (branch protection).
     needs: [frontend, smoke]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: demo
-      url: ${{ steps.deploy.outputs.url }}
-    env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_PROJECT: flowmerce-demo
-      VERCEL_TELEMETRY_DISABLED: "1"
     defaults:
       run:
         working-directory: Flowmerce/frontend
     steps:
-      - name: Skip when the Vercel token is not set yet
-        if: env.VERCEL_TOKEN == ''
-        working-directory: .
-        run: echo "::warning::VERCEL_TOKEN secret is not set; skipping the demo deploy. See Flowmerce/docs/operations/ci-cd.md."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: env.VERCEL_TOKEN != ''
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: env.VERCEL_TOKEN != ''
         with:
           node-version: 24
-      - name: Check the token's shape (never prints it)
-        if: env.VERCEL_TOKEN != ''
-        run: |
-          t="$VERCEL_TOKEN"
-          echo "length=${#t}"
-          case "$t" in *[[:space:]]*) echo "::warning::VERCEL_TOKEN contains spaces or line breaks; re-add it without them.";; esac
-          case "$t" in *-*) echo "::warning::VERCEL_TOKEN contains '-'; Vercel tokens normally do not. Check you pasted the token itself.";; esac
-      - name: Link the Vercel project (created on first run) and force DEMO mode
-        if: env.VERCEL_TOKEN != ''
-        run: |
-          npx --yes vercel@latest link --yes --project "$VERCEL_PROJECT"
-          npx --yes vercel@latest pull --yes --environment=production
-      - name: Build in DEMO mode (synthetic data only, no backend)
-        if: env.VERCEL_TOKEN != ''
+          cache: npm
+          cache-dependency-path: Flowmerce/frontend/package-lock.json
+      - id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Install (exactly what package-lock.json specifies)
+        run: npm ci
+      - name: Static export in DEMO mode (synthetic data only, no backend, no keys)
         env:
+          FLOWMERCE_STATIC_EXPORT: "1"
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
           NEXT_PUBLIC_FLOWMERCE_DATA_SOURCE: demo
-        run: npx --yes vercel@latest build --prod
-      - name: Deploy
-        id: deploy
-        if: env.VERCEL_TOKEN != ''
-        run: |
-          npx --yes vercel@latest deploy --prebuilt --prod > deploy-url.txt
-          # The shareable link is the project's production domain (https://<project>.vercel.app or similar);
-          # the per-deployment URL may sit behind Vercel's own sign-in.
-          npx --yes vercel@latest inspect "$(tail -n1 deploy-url.txt)" > inspect.txt 2>&1 || true
-          prod=$(grep -oE 'https://[a-z0-9.-]+\.vercel\.app' inspect.txt | grep -v -- "-[a-z0-9]\{9\}-" | head -n1)
-          [ -n "$prod" ] || prod=$(tail -n1 deploy-url.txt)
-          echo "url=$prod" >> "$GITHUB_OUTPUT"
-          echo "### Demo link: $prod" >> "$GITHUB_STEP_SUMMARY"
+        run: npm run build
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: Flowmerce/frontend/out
+
+  pages-deploy:
+    name: Deploy demo to GitHub Pages
+    needs: pages-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

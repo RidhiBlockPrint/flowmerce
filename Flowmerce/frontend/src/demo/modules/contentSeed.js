@@ -328,7 +328,7 @@ const CPC_PRODUCTS = ['Berry Holiday Tablecloth', 'Evergreen Napkin Set of 6', '
   'Hostess Gift Bundle: Cloth and Napkins', 'Forest Leaf Placemat Set', 'Cotton Print Round Tablecloth', 'Spring Blossom Table Runner'];
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 export const productsFor = (brand) => (brand === 'ridhi' ? RIDHI_PRODUCTS : brand === 'cpc' ? CPC_PRODUCTS : null)?.map((title, i) => ({
-  handle: slug(title), title, url: `https://${brand}.demo.invalid/products/${slug(title)}`, image_url: `/demo/tile-${(i % 6) + 1}.svg`,
+  handle: slug(title), title, url: `https://${brand}.demo.invalid/products/${slug(title)}`, image_url: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/demo/tile-${(i % 6) + 1}.svg`,
 }));
 
 /* ---------------- Query terms for analytics ---------------- */

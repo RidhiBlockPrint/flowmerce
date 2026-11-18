@@ -1,12 +1,12 @@
 # CI/CD
 
-Status (2026-11-18): CI runs on GitHub from the repository root (`.github/workflows/ci.yml` in *Flowmerce Main*; the jobs work inside `Flowmerce/`). After every check passes on `main`, a **demo-only** deploy publishes the frontend to Vercel. The real app (backend, keys, data) is never deployed; see "Demo deploy" and "Not included".
+Status (2026-11-18): CI runs on GitHub from the repository root (`.github/workflows/ci.yml` in *Flowmerce Main*; the jobs work inside `Flowmerce/`). After every check passes on `main`, a **demo-only** deploy publishes the frontend to GitHub Pages: https://ridhiblockprint.github.io/flowmerce/ The real app (backend, keys, data) is never deployed; see "Demo deploy" and "Not included".
 
 Decision record: [ADR 0004](../decisions/0004-ci-cd-github-actions.md).
 
 ## What runs and when
 
-Workflow: `.github/workflows/ci.yml` at the root of the repository (one level above this `Flowmerce/` folder). It runs on every push to `main`, on every pull request, and on demand (Actions tab, *Run workflow*). The CI jobs use no secrets and have read-only repository access; only the demo deploy uses one secret, `VERCEL_TOKEN`.
+Workflow: `.github/workflows/ci.yml` at the root of the repository (one level above this `Flowmerce/` folder). It runs on every push to `main`, on every pull request, and on demand (Actions tab, *Run workflow*). No job uses secrets. CI jobs have read-only repository access; only the Pages deploy job gets `pages: write` and `id-token: write`.
 
 | Job (check name) | What it does | Fails when |
 |---|---|---|
@@ -52,15 +52,13 @@ Without step 3, CI reports problems but does not stop a merge.
 
 ## Demo deploy (CD)
 
-Job `Deploy demo (Vercel)` runs only on `main`, only after `Python 3.12`, `Python 3.14`, `Frontend` and `Smoke test` pass. It builds the frontend with `NEXT_PUBLIC_FLOWMERCE_DATA_SOURCE=demo` and deploys it to the Vercel project `flowmerce-demo` (created on the first run). The result is a public link that shows **synthetic data only**: no backend, no Shopify, Google or Supabase keys, nothing connected. The link appears in the run summary and under the repository's **Environments → demo**.
+Jobs `Build demo for GitHub Pages` and `Deploy demo to GitHub Pages` run only on `main`, only after `Frontend` and `Smoke test` pass. The build is a static export (`FLOWMERCE_STATIC_EXPORT=1`, base path `/flowmerce`, `NEXT_PUBLIC_FLOWMERCE_DATA_SOURCE=demo`) in `frontend/out`. The result is public at **https://ridhiblockprint.github.io/flowmerce/** and shows **synthetic data only**: no backend, no Shopify, Google or Supabase keys, nothing connected. Changes a visitor makes stay in their own browser.
 
-One-time setup (owner):
-1. Create a free account at vercel.com (sign in with GitHub is fine).
-2. Vercel → Account Settings → Tokens → create a token (scope: your account).
-3. Add it to GitHub, either in the repository's Settings → Secrets and variables → Actions → *New repository secret* named `VERCEL_TOKEN`, or from a terminal: `gh secret set VERCEL_TOKEN --repo RidhiBlockPrint/flowmerce` (paste the token when asked).
-4. Actions tab → CI/CD → *Run workflow*, or push any commit.
+- The static export leaves out what needs a server: the `/api` forwarding, the old-address redirects (`/blogs`, `/seo`, ...) and the security headers. Your normal build (`npm run build`) is unchanged.
+- Article pages `/articles/1` to `/articles/500` are pre-built; a demo article with a higher number opens only by navigating inside the app.
+- GitHub Pages needs a public repository on the free plan; this repository was made public on 2026-11-18. Settings → Pages must stay on *Source: GitHub Actions*.
 
-Until the secret exists the deploy job only prints a warning and succeeds. Vercel's free Hobby plan is for non-commercial use; move to Pro if the demo is used commercially.
+Build the same thing locally (PowerShell, in `frontend`): `$env:FLOWMERCE_STATIC_EXPORT='1'; $env:NEXT_PUBLIC_BASE_PATH='/flowmerce'; $env:NEXT_PUBLIC_FLOWMERCE_DATA_SOURCE='demo'; npm run build`, then serve `out` under `/flowmerce/`.
 
 ## Not included (deliberately)
 

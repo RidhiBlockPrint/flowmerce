@@ -3,7 +3,7 @@ import { Providers } from '../components/Providers';
 
 export const metadata = {
   title: 'Flowmerce · Ecommerce in a Flow',
-  icons: { icon: '/favicon.svg' },
+  icons: { icon: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/favicon.svg` },
 };
 
 export const viewport = {

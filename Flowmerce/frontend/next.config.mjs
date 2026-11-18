@@ -30,4 +30,17 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// GitHub Pages demo (FLOWMERCE_STATIC_EXPORT=1, set only by the CI deploy job): plain static files served under
+// /<repo>, demo data only. Rewrites, redirects and headers need a server, so they are left out of that build.
+const staticExport = process.env.FLOWMERCE_STATIC_EXPORT === '1';
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
+export default staticExport
+  ? {
+      reactStrictMode: true,
+      output: 'export',
+      basePath,
+      trailingSlash: true,
+      images: { unoptimized: true },
+    }
+  : nextConfig;
