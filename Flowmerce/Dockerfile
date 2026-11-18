@@ -39,7 +39,7 @@ COPY db/ db/
 COPY --from=web /app/frontend/.next frontend/.next
 COPY --from=web /app/frontend/node_modules frontend/node_modules
 COPY --from=web /app/frontend/public frontend/public
-COPY --from=web /app/frontend/package.json frontend/next.config.mjs frontend/redirects.mjs frontend/
+COPY --from=web /app/frontend/package.json /app/frontend/next.config.mjs /app/frontend/redirects.mjs frontend/
 
 RUN useradd --create-home --uid 10001 flowmerce && mkdir -p data secrets backups logs && chown -R flowmerce /app
 USER flowmerce
