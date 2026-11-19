@@ -2,6 +2,21 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-19 (Shipping: a delivered order is never an alert)
+
+Verified: 100 shipping tests (new: a no-tracking fulfilment on a delivered order, a last scan that says
+"Delivered"), 589 backend tests pass (the 1 failure also fails on 7cd0758), 54 frontend tests, build, smoke test,
+no new mypy or ruff findings. Live board: Critical 10 -> 7, Checks 152 -> 63 orders, "Dispatched without tracking
+number" 105 -> 18; no delivered order is left in any alert list.
+
+- **Changed** once ANY parcel of an order is delivered (Shopify, carrier, Amazon MCF, or a last scan that says
+  "Delivered"), every other open parcel of that order is shown as Delivered and leaves Critical, exceptions, Checks,
+  Reshipped and Unfulfilled. # RBP6462: DHL 2375772626 and 7282291785 delivered on 20 Oct; its fulfilment with no
+  tracking number (dispatched 17 Nov) no longer shows "Dispatched without tracking number". This replaces the
+  narrower rules (same-carrier split, sent after the delivery, still scanning), which kept those parcels open.
+- **Changed** a parcel whose carrier's last scan starts with "Delivered" counts as delivered even when its status
+  did not catch up.
+
 ## 2026-11-19 (Shipping: Unfulfilled tab; unfulfilled orders out of Critical)
 
 Verified: 99 shipping tests (new: unfulfilled orders are never Critical, on their own list with waiting bands),

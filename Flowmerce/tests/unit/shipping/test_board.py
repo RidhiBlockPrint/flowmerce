@@ -340,14 +340,38 @@ class BoardTest(unittest.TestCase):
         self.assertEqual((old["USPS1"]["reshipped"]["how"], old["USPS1"]["reshipped"]["newCarrier"],
                           old["USPS1"]["reshipped"]["newTracking"]), ("delivered_by_other_carrier", "UPS", "UPS1"))
         self.assertEqual(old["USPS1"]["resolved"]["by"], "order")   # UPS delivered it: shown as delivered
-        self.assertIsNone(old["SPL1"].get("resolved"))
-        active = {r["tracking_number"] for r in d.active}
-        self.assertNotIn("USPS1", active)                            # out of Critical / exceptions
-        self.assertIn("SPL1", active)                                # same-carrier parcel stays
-        self.assertTrue({"LATER1", "MOVING1"} <= active)             # sent later / still moving: stay
-        self.assertNotIn("USPS1", {r["tracking_number"] for r in d.active if r["cat"] == "red"})
+        # an order that was delivered is no problem: every other open parcel of it counts as delivered too
+        # (a same-carrier parcel, one sent after the delivery, one still scanning)
+        for t in ("SPL1", "LATER1", "MOVING1"):
+            self.assertEqual(old[t]["resolved"]["by"], "order", t)
+        self.assertEqual({r["tracking_number"] for r in d.active}, set())
+        self.assertFalse(board.exception_rows(d))
         self.assertEqual(board.list_rows(d, cat="reshipped")["total"], 0)
-        self.assertEqual(board.list_rows(d, cat="resolved")["total"], 1)
+        self.assertEqual(board.list_rows(d, cat="resolved")["total"], 4)
+
+    def test_delivered_order_hides_its_no_tracking_fulfilment_and_scan_says_delivered(self):
+        rows = [
+            # # RBP6462: DHL parcel delivered; a later Shopify fulfilment with no tracking number
+            row(row_id="a", tracking_number="2375772626", order_id=6462, order_name="#R6462", shipment_id="s1",
+                status="delivered", delivered_at=ago(30), shipped_at=ago(33), placed_at=ago(47)),
+            row(row_id="b", row_kind="shipment", tracking_number=None, order_id=6462, order_name="#R6462",
+                shipment_id="s2", status="pending", last_scan_at=None, shipped_at=ago(2), placed_at=ago(47)),
+            # the carrier's last scan says delivered, the status never caught up
+            row(row_id="c", tracking_number="DLV1", order_id=6500, order_name="#R6500", status="in_transit",
+                last_scan_at=ago(3), last_scan_text="Delivered, Front Door/Porch", shipped_at=ago(12), placed_at=ago(13)),
+            # dispatched without tracking and nothing delivered: still a problem
+            row(row_id="d", row_kind="shipment", tracking_number=None, order_id=6600, order_name="#R6600",
+                shipment_id="s3", status="pending", last_scan_at=None, shipped_at=ago(4), placed_at=ago(6)),
+        ]
+        sn = board.Snapshot(rows, [{"source": "shopify", "kind": "import", "last_ok_at": ago(0.05), "last_status": "ok"}], NOW,
+                            items={}, replacements=[], reship_notes=set())
+        d = board.build("all", now=NOW, snap=sn)
+        orders = {e["order"] for e in board.exception_rows(d)}
+        self.assertEqual(orders, {"#R6600"})
+        self.assertEqual({r["order_number"] for r in d.active}, {"#R6600"})
+        nt = next(r for r in d.everything if r["row_id"] == "b")
+        self.assertIn("no tracking number", nt["resolved"]["detail"])
+        self.assertEqual(board.public_row(d, nt, {})["cat"], "delivered")
 
     def test_amazon_extra_parcel_is_delivered_when_the_shopify_order_arrived(self):
         # #7254: Shopify lists two Amazon parcels, both delivered; Amazon's extra parcel said "delivery date unavailable"
@@ -441,6 +465,10 @@ class BoardTest(unittest.TestCase):
                 "delivered_at": ago(2), "last_event_at": ago(2), "last_event_text": "Delivered", "last_event_city": "Austin",
                 "last_event_state": "TX", "events": [{"at": ago(2), "code": "EVENT_301", "text": "Delivered", "city": "Austin", "state": "TX"}],
                 "fetched_at": ago(0.1)}
+        if kw.get("tracking_status", "DELIVERED") != "DELIVERED":   # Amazon's text follows its status, as in real data
+            text = str(kw["tracking_status"] or "Shipped").replace("_", " ").capitalize()
+            base.update(tracking_status_text=text, last_event_text=text,
+                        events=[{"at": ago(1), "code": "EVENT_101", "text": text, "city": "Austin", "state": "TX"}])
         base.update(kw)
         return base
 

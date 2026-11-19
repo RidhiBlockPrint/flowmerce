@@ -437,44 +437,45 @@ def _mark_resolved(everything: list[dict[str, Any]], marks: dict[tuple[str, int]
                                  "at": iso(r["lastScan"]), "detail": r.get("last_scan_text") or r.get("raw_status") or ""}
 
 
+DELIVERED_SCAN = re.compile(r"^\s*delivered", re.I)
+
+
 def _mark_order_delivered(everything: list[dict[str, Any]]) -> None:
-    """An open parcel of an order that has already arrived is resolved as Delivered ("order complete"), so it leaves
-    Critical, exceptions and Reshipped. Two cases:
-      1. an Amazon parcel that is NOT on the Shopify order, when every parcel the Shopify order lists is delivered
-         (e.g. #7254: Shopify lists TBA335061903868 + TBA335580914603, both delivered; Amazon's extra TBA335054863307
-         said "delivery date unavailable");
-      2. a parcel flagged Reshipped whose replacement parcel was delivered.
-    A parcel the Shopify order itself lists stays open while it is undelivered (one parcel of a split missing is a
-    real problem), unless a Reshipped signal covers it."""
+    """An order that has arrived is not a problem: once ANY parcel of it is delivered (Shopify, the carrier, Amazon's
+    MCF data, or a last scan that says "Delivered"), every other open parcel of that order is resolved as Delivered
+    ("order delivered"). That covers a fulfilment with no tracking number on a delivered order (# RBP6462), a parcel
+    whose replacement arrived (#5680), and an extra Amazon parcel (#7254). It leaves Critical, exceptions, Checks,
+    Reshipped and Unfulfilled. A parcel whose own last scan says delivered counts as delivered too."""
     by: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for r in everything:
         if not r["excluded"]:
             by.setdefault((r.get("store") or "", _digits(r["order_number"])), []).append(r)
     for parcels in by.values():
-        done = [r for r in parcels if r["cat"] == "delivered"]
+        for r in parcels:            # the carrier's own last word is "Delivered ..." but the status never caught up
+            if r["cat"] != "delivered" and not r.get("resolved") and DELIVERED_SCAN.match(r.get("last_scan_text") or ""):
+                r["resolved"] = {"outcome": "delivered", "label": "Delivered", "by": "order", "who": None,
+                                 "at": iso(r["lastScan"]),
+                                 "detail": f"The carrier's last scan says \"{(r.get('last_scan_text') or '')[:80]}\"."}
+        done = [r for r in parcels if r["cat"] == "delivered" or (r.get("resolved") or {}).get("outcome") == "delivered"]
         if not done:
             continue
-        shop = [r for r in parcels if r["row_kind"] in ("tracking", "shipment")]
-        shop_done = bool(shop) and all(r["cat"] == "delivered" for r in shop)
-        waiting = any(r["row_kind"] == "order" for r in parcels)            # something not dispatched yet
         delivered_by = {(r["tracking_number"] or "").upper(): r for r in done if r["tracking_number"]}
         for r in parcels:
             if r["cat"] == "delivered" or r.get("resolved"):
                 continue
             rs = r.get("reshipped") or {}
             new = delivered_by.get((rs.get("newTracking") or "").upper()) if rs else None
-            if new is None and rs and not rs.get("newTracking") and rs.get("newStatus") == "delivered":
-                new = max(done, key=lambda x: iso(x["deliveredAt"]) or "")
-            extra = r["row_kind"] == "amazon" and r.get("amazon_extra") and shop_done and not waiting
-            if not (new or extra):
-                continue
-            via = [new] if new else shop
-            last = max((x["deliveredAt"] for x in via if x.get("deliveredAt")), default=None)
-            what = ", ".join(f"{x['carrier_name'] or 'Unknown'} {x['tracking_number']}".strip() for x in via if x["tracking_number"])
+            via = [new] if new else [x for x in done if x is not r]
+            times: list[datetime] = [t for t in (x.get("deliveredAt") or x.get("lastScan") for x in via) if t]
+            last = max(times, default=None)
+            what = ", ".join(f"{x['carrier_name'] or 'Unknown'} {x['tracking_number']}".strip()
+                             for x in via if x["tracking_number"]) or "another parcel"
+            this = "This parcel has no tracking number" if r["missingTracking"] else "This parcel is still open"
             r["resolved"] = {"outcome": "delivered", "label": "Delivered", "by": "order", "who": None, "at": iso(last),
                              "detail": (f"The parcel that replaced it was delivered ({what})" if new else
-                                        f"Every parcel on the Shopify order was delivered ({what})")
-                                       + (f", last on {last.date().isoformat()}." if last else ".")}
+                                        f"The order was delivered ({what})")
+                                       + (f", last on {last.date().isoformat()}" if last else "")
+                                       + f". {this} in Shopify or Amazon."}
 
 
 def build(brand: str | None, now: datetime | None = None, snap: Snapshot | None = None) -> Dataset:
