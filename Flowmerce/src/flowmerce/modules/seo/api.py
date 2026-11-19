@@ -22,8 +22,8 @@ from .integrations.google import check_access, ga4_configured, gsc_configured, s
 from .integrations.shopify_public import fetch_public_articles
 from .integrations.status import all_statuses, mark_error, mark_success, record_check, status_of
 from .permissions import PERMISSIONS, ROLE_LABELS, is_role, perms_for
-from .services import ai_jobs, analytics, articles, excel, home, keyword_file, publishing, workflow
-from .services.brands import all_brands, brand, brand_public, update_brand_settings
+from .services import ai_budget, ai_jobs, analytics, articles, autopilot, calendar_plan, excel, home, keyword_file, publishing, workflow
+from .services.brands import all_brands, brand, brand_public, brand_settings, update_brand_settings
 from .services.demo import clear_demo, demo_loaded, load_demo
 from .services.sync import products_for, sync_ga4, sync_gsc, sync_shopify
 from .util import HttpError, add_days, days_between, norm_keyword, s, safe_json, today
@@ -283,6 +283,7 @@ def article_detail(aid: str, request: Request):
         "topic": get("SELECT * FROM topics WHERE id = ?", a["topic_id"]) if a["topic_id"] else None,
         "queries": analytics.article_queries(a["brand_id"], a["live_url"]) if a["live_url"] else None,
         "assignees": all_rows("SELECT id, name, role FROM users WHERE active = 1 AND role IN ('seo_manager','admin') ORDER BY name"),
+        "aiNotes": safe_json(a.get("ai_notes_json"), {}),
     }
 
 
@@ -644,6 +645,118 @@ def ai_job_retry(jid: str, request: Request):
 @api.post("/ai/jobs/{jid}/cancel")
 def ai_job_cancel(jid: str, request: Request):
     return {"job": ai_jobs.public(ai_jobs.cancel_job(auth.require_perm(request, "workflow:run"), jid))}
+
+
+# ---------------- Claude: daily limit and Ask Claude ----------------
+
+@api.get("/ai/budget")
+def ai_budget_status(request: Request):
+    auth.require_perm(request, "view")
+    return ai_budget.status()
+
+
+@api.patch("/ai/budget")
+def ai_budget_update(request: Request, body: dict = JSONBody):
+    u = auth.require_perm(request, "integrations:manage")
+    st = ai_budget.update_settings(body, u["id"])
+    audit(u, "ai.budget", "app_settings", "claude_budget", "", f"Monthly Claude budget ${st['monthlyBudgetUsd']:.2f}")
+    return ai_budget.status()
+
+
+@api.post("/ai/assist")
+def ai_assist(request: Request, body: dict = JSONBody):
+    """Ask Claude for one suggestion while filling in a form (a topic, its keywords, an article's SEO fields). Synchronous and
+    counted against the daily limit. Nothing is saved: the browser shows the suggestion and the person applies it or not."""
+    kind = s(body.get("kind"), 30)
+    if kind not in claude.ASSIST_KINDS:
+        raise HttpError(400, f"kind must be one of {', '.join(claude.ASSIST_KINDS)}.")
+    auth.require_perm(request, "article:write" if kind == "seo_fields" else "topic:write")
+    b = brand_param(body.get("brand"))
+    if not claude.configured():
+        raise HttpError(412, "ANTHROPIC_API_KEY is not set on the server.", "pending_setup")
+    ctx = body.get("context") if isinstance(body.get("context"), dict) else {}
+    ai_budget.check("assist")
+    titles = workflow.topic_research_context(b)["existing_titles"] if kind == "topic" else None
+    try:
+        data, model = claude.assist(brand(b), brand_settings(b), kind, ctx, titles, calendar_plan.upcoming_for_prompt(b) if kind == "topic" else None)
+    except claude.ClaudeError as e:
+        ai_budget.record(claude.take_usage(), b, "assist")
+        raise HttpError(502 if e.retryable else 422, str(e), e.kind)
+    cost = ai_budget.record(claude.take_usage(), b, "assist")
+    return {"suggestion": data, "model": model, "costUsd": cost, "budget": ai_budget.status()}
+
+
+# ---------------- content calendar ----------------
+
+@api.get("/calendar")
+def calendar_view(request: Request):
+    auth.require_perm(request, "view")
+    b = brand_q(request)
+    is_day = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    start = q(request, "from") if is_day.match(q(request, "from")) else ai_budget.today()[:8] + "01"
+    end = q(request, "to") if is_day.match(q(request, "to")) else add_days(start, 41)
+    if start > end or days_between(start, end) > 400:
+        raise HttpError(400, "Choose a range of up to 400 days.")
+    return {"from": start, "to": end, "events": calendar_plan.events_between(b, start, end), "schedule": calendar_plan.list_schedule(b, start, end),
+            "upcoming": calendar_plan.upcoming(b), "budget": ai_budget.status(),
+            "scheduledPublishes": all_rows("SELECT id, brand_id, title, publish_at FROM articles WHERE publish_at IS NOT NULL AND substr(publish_at,1,10) BETWEEN ? AND ?"
+                                           + (" AND brand_id = ?" if b else ""), start, end, *([b] if b else []))}
+
+
+@api.post("/calendar/events")
+def calendar_event_add(request: Request, body: dict = JSONBody):
+    return calendar_plan.add_event(auth.require_perm(request, "topic:write"), body)
+
+
+@api.delete("/calendar/events/{eid}")
+def calendar_event_delete(eid: str, request: Request):
+    calendar_plan.delete_event(auth.require_perm(request, "topic:write"), to_int(eid))
+    return {"ok": True}
+
+
+@api.post("/calendar/schedule")
+def calendar_schedule_add(request: Request, body: dict = JSONBody):
+    return calendar_plan.add_entry(auth.require_perm(request, "workflow:run"), body)
+
+
+@api.patch("/calendar/schedule/{eid}")
+def calendar_schedule_update(eid: str, request: Request, body: dict = JSONBody):
+    return calendar_plan.update_entry(auth.require_perm(request, "workflow:run"), to_int(eid), body)
+
+
+@api.delete("/calendar/schedule/{eid}")
+def calendar_schedule_delete(eid: str, request: Request):
+    calendar_plan.delete_entry(auth.require_perm(request, "workflow:run"), to_int(eid))
+    return {"ok": True}
+
+
+@api.post("/calendar/plan")
+def calendar_plan_suggest(request: Request, body: dict = JSONBody):
+    """Fill the schedule for upcoming events that have no entries yet (research, then drafting), one Claude task per day at most."""
+    u = auth.require_perm(request, "workflow:run")
+    made = calendar_plan.suggest_plan(u, brand_param(body.get("brand")))
+    return {"created": made, "count": len(made)}
+
+
+# ---------------- Write a blog (autopilot) ----------------
+
+@api.post("/autopilot", status_code=202)
+def autopilot_start(request: Request, body: dict = JSONBody):
+    """One click: research, pick, draft, approve and save as a hidden Shopify draft. Never publishes."""
+    u = auth.require_perm(request, "workflow:run")
+    return autopilot.start(u, brand_param(body.get("brand")), s(body.get("focus"), 500))
+
+
+@api.get("/autopilot")
+def autopilot_runs(request: Request):
+    auth.require_perm(request, "view")
+    return {"runs": autopilot.list_runs(brand_q(request), 10), "budget": ai_budget.status()}
+
+
+@api.get("/autopilot/{rid}")
+def autopilot_run(rid: str, request: Request):
+    auth.require_perm(request, "view")
+    return autopilot.get_run(to_int(rid))
 
 
 async def _read_limited(request: Request, limit: int) -> bytes:

@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { More } from '../components/More';
 import Link from 'next/link';
 import { useNavigate, useSearchParams } from '../lib/nav';
 import { api, useApi, qs, download } from '../lib/api';
@@ -35,7 +36,7 @@ export default function Analytics() {
         }
     };
     return (<>
-      <PageHead title="SEO & traffic" sub={<>Blog pages only (URLs containing /blogs/); site-wide traffic is not collected. Ridhi and CPC are never added together. Search Console and GA4 are reported separately: Search Console counts Google search clicks; GA4 counts sessions from every channel. {fmtDate(range.from)} – {fmtDate(range.to)}, compared with the previous period of equal length.</>} actions={can('analytics:sync') ? <>
+      <PageHead title="SEO & traffic" sub={<>Blog pages · {fmtDate(range.from)} – {fmtDate(range.to)} vs the previous period</>} actions={can('analytics:sync') ? <>
           <Button size="sm" icon="refresh" loading={syncing === 'gsc'} onClick={() => sync('gsc')}>Sync Search Console</Button>
           <Button size="sm" icon="refresh" loading={syncing === 'ga4'} onClick={() => sync('ga4')}>Sync GA4</Button>
         </> : null}/>
@@ -67,11 +68,13 @@ function GscTab() {
     return (<div className="col" style={{ gap: 16 }}>
       <GscKpis parts={brands} short={short}/>
       {any ? (<>
-          <div className="grid cols-2">
-            <Card title="Clicks per day" actions={<Sources brands={brands}/>}><LineChart ariaLabel="Clicks per day" series={seriesFrom(brands, 'clicks', short)}/></Card>
+          <Card title="Clicks per day" actions={<Sources brands={brands}/>}><LineChart ariaLabel="Clicks per day" series={seriesFrom(brands, 'clicks', short)}/></Card>
+            <Card title="Declining pages" sub="Clicks down 25%+ against the previous period (min. 5 clicks before)" flush>
+              <PageTable rows={brands.flatMap((b) => b.declining.map((p) => ({ ...p, brand: b.brand })))} empty="No page lost a quarter of its clicks." cols="decline"/>
+            </Card>
+          <More id="seo-gsc" label="Show impressions, position, top pages, queries and opportunities">
             <Card title="Impressions per day" actions={<Sources brands={brands}/>}><LineChart ariaLabel="Impressions per day" series={seriesFrom(brands, 'impressions', short)}/></Card>
-          </div>
-          <Card title="Average position per day" sub="Lower is better; weighted by impressions"><LineChart ariaLabel="Average position per day" series={seriesFrom(brands, 'position', short)} yFormat={(n) => n.toFixed(0)} invertY height={180}/></Card>
+            <Card title="Average position per day" sub="Lower is better; weighted by impressions"><LineChart ariaLabel="Average position per day" series={seriesFrom(brands, 'position', short)} yFormat={(n) => n.toFixed(0)} invertY height={180}/></Card>
           <div className="grid cols-2">
             <Card title="Top blog pages" sub="Clicks" flush>
               <div style={{ padding: 8 }}>
@@ -94,10 +97,6 @@ function GscTab() {
               </div>
             </Card>
           </div>
-          <div className="grid cols-2">
-            <Card title="Declining pages" sub="Clicks down 25%+ against the previous period (min. 5 clicks before)" flush>
-              <PageTable rows={brands.flatMap((b) => b.declining.map((p) => ({ ...p, brand: b.brand })))} empty="No page lost a quarter of its clicks." cols="decline"/>
-            </Card>
             <Card title="Optimization opportunities" sub="Queries ranking 4–20 with 20+ impressions: improve title, headings or internal links" flush>
               <div className="table-wrap">
                 <table className="t compact">
@@ -112,7 +111,7 @@ function GscTab() {
                 </table>
               </div>
             </Card>
-          </div>
+          </More>
         </>) : null}
     </div>);
 }
@@ -150,10 +149,11 @@ function Ga4Tab() {
     const brands = r.data.brands;
     const any = brands.some((b) => b.totals);
     return (<div className="col" style={{ gap: 16 }}>
-      <div className="callout info"><Icon name="info"/>GA4 counts sessions whose landing page is a blog URL, from any channel (search, social, email, direct). Use Search Console for Google search clicks specifically.</div>
+      <div className="muted small">Sessions that start on a blog page, from any channel.</div>
       <Ga4Kpis parts={brands} short={short}/>
       {any ? (<>
           <Card title="Sessions per day" actions={<Sources brands={brands}/>}><LineChart ariaLabel="Sessions per day" series={seriesFrom(brands, 'sessions', short)}/></Card>
+          <More id="seo-ga4" label="Show landing pages">
           <Card title="Blog landing pages" flush>
             <div className="table-wrap">
               <table className="t compact">
@@ -167,6 +167,7 @@ function Ga4Tab() {
               </table>
             </div>
           </Card>
+          </More>
         </>) : null}
     </div>);
 }

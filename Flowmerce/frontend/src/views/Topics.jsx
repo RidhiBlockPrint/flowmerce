@@ -9,13 +9,14 @@ import { BrandTag, Button, Empty, ErrorState, Field, PageHead, Pill, Skeleton, T
 import { Dialog, useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import KeywordFile from './KeywordFile';
+import { AskClaude } from '../components/claude';
 const TOPIC_TONE = { proposed: 'neutral', validated: 'info', approved: 'ok', rejected: 'crit', in_production: 'accent', published: 'ok' };
 const INTENTS = ['informational', 'commercial', 'transactional', 'navigational'];
 export default function Topics() {
     const [sp, setSp] = useSearchParams();
     const tab = sp.get('tab') === 'keywords' ? 'keywords' : 'topics';
     return (<>
-      <PageHead title="Topics & keywords" sub="Ideas move from proposed → validated (keyword data checked) → approved → in production. Volumes come only from imported keyword data or Search Console, never estimated."/>
+      <PageHead title="Topics & keywords" sub="Proposed → validated → approved → in production"/>
       <Tabs value={tab} onChange={(t) => { const n = new URLSearchParams(); if (t === 'keywords')
         n.set('tab', 'keywords'); setSp(n, { replace: true }); }} tabs={[{ key: 'topics', label: <><Icon name="topics" size="sm"/>Topics</> }, { key: 'keywords', label: <><Icon name="target" size="sm"/>Keywords</> }]}/>
       {tab === 'topics' ? <TopicList /> : <KeywordList />}
@@ -170,10 +171,31 @@ function TopicDialog({ topic, onClose, onSaved }) {
         }
     };
     const set = (k, v) => setF({ ...f, [k]: v });
+    const [ideas, setIdeas] = useState(null);
+    const [kwNote, setKwNote] = useState('');
+    const applyIdea = (s) => { setF({ ...f, title: s.title, primary_keyword: s.primary_keyword, secondary_keywords: s.secondary_keywords.join(', '), intent: s.intent,
+        notes: f.notes || s.rationale }); setIdeas(null); };
+    const applyKeywords = (s) => { setF({ ...f, primary_keyword: s.primary_keyword, secondary_keywords: s.secondary_keywords.join(', '), intent: s.intent }); setKwNote(s.rationale); };
+    const keywordsLocked = topic && ['approved', 'in_production'].includes(topic.status);
     return (<Dialog wide title={topic ? 'Topic' : 'New topic'} sub={topic ? <>Source: {topic.source} · updated {timeAgo(topic.updated_at)}</> : 'Duplicates are refused: one topic per primary keyword per brand.'} onClose={onClose} footer={ro ? <Button onClick={onClose}>Close</Button> : <><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} disabled={!f.title.trim() || !f.primary_keyword.trim()} onClick={save}>{topic ? 'Save' : 'Add topic'}</Button></>}>
       <div className="form-grid">
         {!topic ? (<div className="field full"><label>Brand</label>
             <div className="seg">{me.brands.map((b) => <button key={b.id} aria-pressed={f.brand_id === b.id} onClick={() => set('brand_id', b.id)}><span className={`brand-dot ${b.id}`}/>{b.name}</button>)}</div>
+          </div>) : null}
+        {!ro ? (<div className="field full">
+            <div className="row-wrap" style={{ gap: 8 }}>
+              {!topic ? <AskClaude brand={f.brand_id} kind="topic" context={() => ({ typed_title: f.title, typed_keyword: f.primary_keyword, notes: f.notes })} onResult={(s) => setIdeas(s.suggestions)} label={f.title.trim() ? 'Ask Claude to improve this topic' : 'Ask Claude for topic ideas'}/> : null}
+              {!keywordsLocked ? <AskClaude brand={f.brand_id} kind="keywords" disabled={!f.title.trim()} context={() => ({ title: f.title, current_keyword: f.primary_keyword, notes: f.notes })} onResult={applyKeywords} label="Ask Claude for keywords"/> : null}
+              <span className="small muted">Uses the daily Claude limit. Nothing is saved until you add the topic.</span>
+            </div>
+            {ideas?.length ? (<div className="col mt-8" style={{ gap: 6 }}>
+                {ideas.map((s, i) => (<button key={i} className="card" style={{ textAlign: 'left', padding: '8px 12px', cursor: 'pointer' }} onClick={() => applyIdea(s)}>
+                    <div className="strong">{s.title}</div>
+                    <div className="small muted">{s.primary_keyword} · {s.intent}{s.secondary_keywords.length ? ` · ${s.secondary_keywords.join(', ')}` : ''}</div>
+                    {s.rationale ? <div className="small">{s.rationale}</div> : null}
+                  </button>))}
+              </div>) : null}
+            {kwNote ? <div className="small muted mt-4"><Icon name="sparkle" size="sm"/> {kwNote}</div> : null}
           </div>) : null}
         <Field label="Working title" full><input className="input" data-autofocus value={f.title} onChange={(e) => set('title', e.target.value)} readOnly={ro}/></Field>
         <Field label="Primary keyword" hint={topic && ['validated', 'approved'].includes(topic.status) ? 'Changing it sends the topic back through validation.' : undefined}><input className="input" value={f.primary_keyword} onChange={(e) => set('primary_keyword', e.target.value)} readOnly={ro}/></Field>

@@ -14,7 +14,7 @@ const bare = (dest) => dest.split('?')[0];
 test('the menu has exactly the agreed modules and pages, in order', () => {
     assert.deepEqual(NAV.map((e) => [e.label, e.kind === 'module' ? e.items.map((i) => i.label) : null]), [
         ['Home', null],
-        ['SEO & Blog', ['Articles', 'Topics & keywords', 'Publishing', 'SEO & traffic', 'Automation']],
+        ['SEO & Blog', ['Articles', 'Topics & keywords', 'Content calendar', 'Publishing', 'SEO & traffic', 'Automation']],
         ['Shipping', null],
     ]);
     assert.deepEqual(SETTINGS.items.map((i) => i.label), ['Integrations', 'Brands', 'Data management', 'Audit log']);
@@ -27,7 +27,7 @@ test('Automation lives inside SEO & Blog, and Shipping is one top-level entry', 
 });
 
 test('each page belongs to one module, so the sidebar can expand and highlight the right parent', () => {
-    for (const p of ['/articles', '/articles/42', '/topics', '/publishing', '/analytics', '/automation'])
+    for (const p of ['/articles', '/articles/42', '/topics', '/calendar', '/publishing', '/analytics', '/automation'])
         assert.equal(moduleOf(p), 'seo', p);
     assert.equal(moduleOf('/'), 'home');
     assert.equal(moduleOf('/shipping'), 'shipping');

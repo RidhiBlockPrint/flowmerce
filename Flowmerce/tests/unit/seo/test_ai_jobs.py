@@ -180,7 +180,7 @@ def test_content_generation_needs_an_approved_topic_without_an_article(ai_env):
 def _fake_topics(monkeypatch, result=None):
     calls = []
 
-    def fake(b, st, titles, products, queries, count, focus=""):
+    def fake(b, st, titles, products, queries, count, focus="", events=None):
         calls.append((b.id, count))
         return (result or TOPIC_RESULT), "test-model"
     monkeypatch.setattr(claude, "research_topics", fake)
@@ -254,7 +254,7 @@ def test_concurrency_is_bounded(ai_env, monkeypatch):
         ai_jobs.create_job(None, "ridhi", "topic_research", {"count": n + 1})
     gate, entered = threading.Event(), threading.Event()
 
-    def slow(b, st, titles, products, queries, count, focus=""):
+    def slow(b, st, titles, products, queries, count, focus="", events=None):
         entered.set()
         gate.wait(5)
         return TOPIC_RESULT, "test-model"
@@ -630,7 +630,7 @@ def test_a_reclaimed_job_ignores_the_first_executions_late_result_in_a_real_runn
     gates, entered, seen = [threading.Event(), threading.Event()], [threading.Event(), threading.Event()], []
     lock = threading.Lock()
 
-    def fake(b, st, titles, products, queries, count, focus=""):
+    def fake(b, st, titles, products, queries, count, focus="", events=None):
         with lock:
             n = len(seen)
             seen.append(n)

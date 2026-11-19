@@ -8,6 +8,7 @@ import { BrandTag, Button, Card, Empty, ErrorState, LoadingBlock, PageHead, Pill
 import { useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import { AuthorizeDialog, MODE_LABEL, RejectDialog } from '../components/publish';
+import { Greeting, Journey } from '../components/dash';
 export default function Publishing() {
     const brand = useBrandParam();
     const { can, me } = useApp();
@@ -29,7 +30,7 @@ export default function Publishing() {
     } };
     const mayAuthorize = (r) => can('publish:authorize') && (r.requested_by !== me.user.id || me.user.role === 'admin');
     return (<>
-      <PageHead title="Publishing" sub="Nothing reaches a storefront without an approved request, a second person's authorization and a typed confirmation."/>
+      <PageHead title="Publishing" sub="Going live needs an approved request and a second person."/>
       {d?.demo ? <div className="callout info mb-16"><Icon name="info"/><div><b>Demo mode.</b> Authorizing a request only changes this demo's sample records and the audit log. Nothing is sent to Shopify or any storefront.</div></div> : d ? (d.livePublishingEnabled
             ? <div className="callout ok mb-16"><Icon name="shield"/><div><b>Live publishing is enabled on this server.</b> Authorizing a request changes the live storefront.</div></div>
             : <div className="callout warn mb-16"><Icon name="lock"/><div><b>Live publishing is switched off on this server</b> (ALLOW_LIVE_PUBLISH is not set). Requests can be made and reviewed; authorizing them is refused and nothing is sent to Shopify. Hidden drafts still work.</div></div>) : null}
@@ -37,21 +38,32 @@ export default function Publishing() {
       {q.loading && !d ? <LoadingBlock rows={6}/> : null}
       {q.loading && d ? <div className="muted small row mb-8"><Icon name="loader" className="spin" size="sm"/>Refreshing…</div> : null}
       {d && q.error ? <div className="muted small mb-8">Showing the last data that loaded. It may be out of date.</div> : null}
+      {d ? (<>
+          <Greeting count={open.length + failed.length} noun="request" calm="No publish request is waiting."
+            parts={[open.length ? `${open.length} waiting for authorization` : '', failed.length ? `${failed.length} failed and ready to retry` : '',
+                d.readyForRequest.length ? `${d.readyForRequest.length} approved article${d.readyForRequest.length === 1 ? '' : 's'} not yet put forward` : '']}/>
+          <Journey compact label="Publishing stages" steps={[
+              { key: 'ready', label: 'Approved, not requested', value: d.readyForRequest.length, calm: 'Nothing waiting' },
+              { key: 'open', label: 'Waiting for authorization', value: open.length, calm: 'Nothing waiting',
+                flags: failed.length ? [{ label: 'failed', value: failed.length, tone: 'crit' }] : [] },
+              { key: 'done', label: 'Decided', value: history.length, done: true, calm: 'Published, rejected or withdrawn' },
+          ]}/>
+        </>) : null}
       {d ? (<div className="col" style={{ gap: 16 }}>
           {failed.length ? (<Card title={`Failed · ${failed.length}`} sub="Shopify refused or could not be reached. The text has not changed since approval, so a retry is safe.">
-              <div className="col gap-12">{failed.map((r) => <RequestRow key={r.id} r={r} actions={<>
+              <Paged rows={failed} size={5} resetKey={brand}>{(pageRows) => <div className="col gap-12">{pageRows.map((r) => <RequestRow key={r.id} r={r} actions={<>
                   {mayAuthorize(r) ? <Button size="sm" variant="primary" icon="refresh" onClick={() => setAuth({ req: r, retry: true })}>Retry…</Button> : null}
                   {can('publish:authorize') ? <Button size="sm" onClick={() => setReject(r)}>Reject</Button> : null}
-                </>}/>)}</div>
+                </>}/>)}</div>}</Paged>
             </Card>) : null}
 
           <Card title={`Waiting for authorization · ${open.length}`} flush={!open.length}>
-            {open.length ? (<div className="col gap-12">{open.map((r) => <RequestRow key={r.id} r={r} actions={<>
+            {open.length ? (<Paged rows={open} size={5} resetKey={brand}>{(pageRows) => <div className="col gap-12">{pageRows.map((r) => <RequestRow key={r.id} r={r} actions={<>
                   {mayAuthorize(r) ? <Button size="sm" variant="primary" icon="shield" onClick={() => setAuth({ req: r })}>Authorize…</Button> : null}
                   {can('publish:authorize') ? <Button size="sm" onClick={() => setReject(r)}>Reject</Button> : null}
                   {r.requested_by === me.user.id || me.user.role === 'admin' ? <Button size="sm" variant="ghost" onClick={() => withdraw(r)}>Withdraw</Button> : null}
                   {r.requested_by === me.user.id && me.user.role !== 'admin' ? <span className="muted xs">Needs another person to authorize</span> : null}
-                </>}/>)}</div>) : <Empty icon="checkCircle" title="No requests waiting">Approved articles can be put forward from their Publishing tab.</Empty>}
+                </>}/>)}</div>}</Paged>) : <Empty icon="checkCircle" title="No requests waiting">Approved articles can be put forward from their Publishing tab.</Empty>}
           </Card>
 
           <div className="grid cols-2">
@@ -117,8 +129,10 @@ function RequestRow({ r, actions }) {
 function ArticleMeta({ a }) {
     return (<span className="row-wrap gap-4"><ShopifyStatePill state={a.shopify_state}/><Pill tone="outline" title="Where Flowmerce first got this article">{originLabel(a.origin)}</Pill><span className="row nowrap gap-4"><span className="muted xs nowrap">Flowmerce status:</span><StatusPill status={a.status}/></span></span>);
 }
+/** A short list inside a card: 5 rows at a time, the rest on the next pages, so long lists do not stretch the page. */
 function List({ rows, render, empty }) {
+    const brand = useBrandParam();
     if (!rows.length)
         return <div className="card-body muted small">{empty}</div>;
-    return <div className="alert-list">{rows.map((r) => <div key={r.id} className="alert-item"><span className={`brand-dot ${r.brand_id}`} style={{ marginTop: 6 }}/><span className="col gap-4" style={{ minWidth: 0 }}>{render(r)}</span></div>)}</div>;
+    return <Paged rows={rows} size={5} resetKey={brand}>{(pageRows) => <div className="alert-list">{pageRows.map((r) => <div key={r.id} className="alert-item"><span className={`brand-dot ${r.brand_id}`} style={{ marginTop: 6 }}/><span className="col gap-4" style={{ minWidth: 0 }}>{render(r)}</span></div>)}</div>}</Paged>;
 }

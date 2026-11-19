@@ -35,7 +35,7 @@ export default function Audit() {
     };
     useEffect(() => { const t = setTimeout(() => void load(), 200); return () => clearTimeout(t); }, [brand, action, user]); // eslint-disable-line react-hooks/exhaustive-deps
     return (<>
-      <PageHead title="Audit log" sub="Append-only record of edits, approvals, publishing, imports, exports, sign-ins and integration failures." actions={<Button icon="download" onClick={() => download(`/data/export/audit${qs({ brand, from: range.from, to: range.to })}`).catch(toast.error)}>Export range</Button>}/>
+      <PageHead title="Audit log" sub="Every edit, approval and publish, in order." actions={<Button icon="download" onClick={() => download(`/data/export/audit${qs({ brand, from: range.from, to: range.to })}`).catch(toast.error)}>Export range</Button>}/>
       <div className="toolbar">
         <select className="select sm" style={{ width: 'auto' }} value={action} onChange={(e) => setAction(e.target.value)} aria-label="Action">{GROUPS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         <div className="input-icon" style={{ width: 220 }}><Icon name="search"/><input className="input sm" placeholder="Filter by user email" value={user} onChange={(e) => setUser(e.target.value)}/></div>

@@ -162,7 +162,8 @@ def create_article(user: dict | None, brand_id: str, inp: dict, origin: str = "a
         return get_article(r.last_id)
 
 
-def save_article(user: dict, aid: int, inp: dict, note: str = "") -> Row:
+def save_article(user: dict | None, aid: int, inp: dict, note: str = "") -> Row:
+    """Save edited content. user=None means an AI job saved it (a Claude revision); the same version and approval rules apply."""
     with tx():
         a = get_article(aid)
         if inp.get("expected_version") is not None and int(inp["expected_version"]) != a["version"]:
@@ -203,7 +204,7 @@ def save_article(user: dict, aid: int, inp: dict, note: str = "") -> Row:
         changed = [f for f in CONTENT_FIELDS if c[f] != before[f]]
         run(f"UPDATE articles SET {', '.join(f + ' = ?' for f in CONTENT_FIELDS)}, content_hash = ?, version = ?, status = ?, updated_at = ? WHERE id = ?",
             *[c[f] for f in CONTENT_FIELDS], h, version, status, now(), aid)
-        snapshot(aid, version, c, user["id"], note or f"Edited {', '.join(changed)}")
+        snapshot(aid, version, c, user["id"] if user else None, note or f"Edited {', '.join(changed)}")
         audit(user, "article.edit", "article", aid, a["brand_id"], f"v{version}: {', '.join(changed)}",
               {"fields": changed, "statusBefore": a["status"], "statusAfter": status, "cancelledRequests": cancelled})
         return get_article(aid)

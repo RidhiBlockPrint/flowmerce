@@ -54,7 +54,7 @@ export default function Integrations() {
     };
     const items = (q.data?.items ?? []).filter((i) => !brand || !i.brand || i.brand === brand);
     return (<>
-      <PageHead title="Integrations" sub={q.data?.demo ? 'Demo build: every connection below is simulated or not connected. Nothing here sends a request to Shopify, Google, Supabase or an AI service.' : 'Connection status, last successful sync and setup for every data source. Credentials are set as server environment variables and are never shown or sent to the browser.'}/>
+      <PageHead title="Integrations" sub={q.data?.demo ? 'Demo: nothing is connected.' : 'Connection status and setup.'}/>
       <ErrorState error={q.error} onRetry={q.reload}/>
       {q.loading && !q.data ? <LoadingBlock rows={6}/> : null}
       {q.data ? (<>

@@ -2,6 +2,75 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-19 (Shorter lists on Content calendar and Publishing)
+
+- **Changed** long lists no longer stretch the page; they use the same Previous / Next pager as the other lists.
+  Content calendar: "Coming up" shows 5 events per page (it used to stop at 8, so every upcoming event can now be
+  reached) and "Schedule this month" 10 rows per page. Publishing: Failed, Waiting for authorization, Ready to request,
+  Scheduled by Flowmerce, Scheduled in Shopify and Unpublished in Shopify show 5 per page. Display only; no data or
+  behaviour changed.
+
+## 2026-11-19 (Blog: one-click "Write a blog", the 6-hour rule, calmer pages)
+
+Verified: 620 backend tests pass (new: 8 autopilot / 6-hour-rule tests; the 1 failure is the existing
+`test_unfinished_pages_are_not_mounted`; `tests/unit/cro`, another session's work in progress, was not run), 54 frontend
+tests, Next.js build. Home, Automation, Shipping and Articles checked in the browser on a copy of the data. "Write a blog"
+was not clicked live (it would have saved a real hidden draft to Shopify); its chain is covered by tests.
+
+- **Added** "Write a blog" (Articles, Content calendar, Automation): one click runs topic research, picks and approves the
+  best new topic, writes the draft, picks an image if needed, approves it and saves it as a HIDDEN Shopify draft, with live
+  progress. About $1.20 of the daily limit; one run per brand at a time. Owner decision 2026-11-19.
+- **Added** the 6-hour rule: an article scheduled on the content calendar that nobody approved by 6 hours before its
+  publish time is approved automatically and saved as a hidden Shopify draft. Nothing is ever published automatically; an
+  article a reviewer sent back with changes requested is never auto-approved.
+- **Changed** calendar drafting tasks run the same chain (they also approve the event's proposed topic).
+- **Changed** every automatic approval is recorded as "Flowmerce (auto)" in review history, topic notes and the audit log.
+  Claude is told that automatic approval of hidden drafts is allowed, so it does not flag it.
+- **Changed** page subtitles are one short line. Pages, cards and dialogs animate in gently; buttons and cards respond to
+  hover and clicks; all motion is off when the computer asks for reduced motion.
+- **Changed** Home, SEO & traffic, Automation and Shipping show only the daily essentials; the rest is under "Show more"
+  (remembered per browser). Automation shows only stages that need attention.
+- **Architecture** new table `autopilot_runs` (migration 6). New `services/autopilot.py`, `components/More.jsx`.
+
+## 2026-11-19 (Blog: Claude writes with each brand's own guides; content calendar; daily Claude limit)
+
+Verified: 611 backend tests pass (new: 19 in `tests/unit/seo/test_blog_ai.py`; the 1 failure is the existing
+`test_unfinished_pages_are_not_mounted`, about the `login` page folder), 54 frontend tests, Next.js build. Checked
+in the browser on a copy of the data (calendar, planning). One real draft per brand was written on that copy.
+
+- **Added** brand knowledge: CPC's and Ridhi's own guides (voice, claims, products, playbooks) in
+  `modules/seo/knowledge/<brand>/`, sent as cached context with every Claude request for that brand.
+- **Added** drafts fill every field the SEO check scores (the rules are in the prompt) and pick a featured image from
+  the synced product photos. Claude's notes (claims to confirm, recommendations, admin checks, sources, next article,
+  photo brief) are stored with the draft (`articles.ai_notes_json`) and shown beside it. An image that is not a
+  product photo is removed; a link that is not a known page is listed for a person to check.
+- **Added** "Claude instructions" in the article editor: standing instructions per brand (sent after the brand
+  documents) and "Revise this draft" (AI job `content_revision`, saved as a new version through the normal save path).
+- **Added** Ask Claude buttons for a new topic (ideas, keywords) and for an article's SEO fields. Nothing is saved
+  until the person applies the suggestion.
+- **Added** the daily Claude limit: monthly budget / days in the month, no carry-over. Every call is recorded with its
+  token counts and estimated cost (`claude_usage`); a call that would pass today's limit is refused, and a queued job
+  waits for the next day without using a retry. Budget $90 a month (about $3 a day), which is also the ceiling; admins can set it lower on the Content calendar page. A warning shows on every SEO & Blog page, in the limit meter and after Ask Claude once 80% of the day or the month is used.
+- **Added** Content calendar (SEO & Blog): built-in events and seasons with publish-by dates, the team's own events,
+  a schedule (research, draft, publish request) run by the scheduler within the daily limit, and "Plan upcoming
+  events" (at most one Claude task per day). A scheduled publish only creates a publish request; a reviewer still
+  authorizes it. Topic research is told about upcoming events.
+- **Changed** drafts get the products whose names match the topic first (with their images), not the first 60.
+- **Architecture** new tables `app_settings`, `claude_usage`, `calendar_events`, `content_schedule`, column `articles.ai_notes_json` (migration 5).
+
+## 2026-11-19 (Shipping pages load faster: the built board is cached)
+
+Verified: 103 shipping tests (new: one build serves repeated requests, a new snapshot / team mark / 5 minutes
+rebuilds it, 6 parallel requests make one build), 592 backend tests pass (the 1 failure also fails on 7cd0758),
+54 frontend tests, build, smoke test, no new mypy or ruff findings. Locally a repeated Shipping request went
+from 128 ms to 6 ms; on the hosting's small CPU each request rebuilt the board in ~2 s.
+
+- **Changed** every Shipping request used to rebuild the whole board from the cached snapshot (every parcel
+  enriched, Amazon laid over it, the reship / delivered rules). The built board is now kept per brand and reused
+  until the snapshot is reloaded, a team mark or outcome changes it, or 5 minutes pass; parallel requests for one
+  brand wait for a single build. After each background reload (scheduler, MCF sheet sync, stale cache) the "all"
+  board is built in the background so the next page does not wait.
+
 ## 2026-11-19 (Shipping: delivered in Shopify means delivered in Flowmerce)
 
 - **Fixed** an order Shopify shows as delivered could stay on the Shipping board as "no tracking / pending" (CPC #6948).

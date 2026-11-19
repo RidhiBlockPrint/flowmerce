@@ -3,10 +3,12 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from '../lib/nav';
 import { api, useApi, qs, download } from '../lib/api';
 import { useApp, useBrandParam } from '../lib/app';
+import { WriteBlog } from '../components/claude';
 import { fmtDate, timeAgo } from '../lib/format';
 import { Button, PageHead, ErrorState, StatusPill, LivePill, ShopifyStatePill, BrandTag, Empty, RoleTag, Skeleton } from '../components/ui';
 import { Dialog, useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
+import { Journey } from '../components/dash';
 const GROUPS = [
     { key: '', label: 'All', statuses: '' },
     { key: 'drafts', label: 'Drafts', statuses: 'idea,draft,changes_requested' },
@@ -72,15 +74,24 @@ export default function Articles() {
         }
     };
     return (<>
-      <PageHead title="Articles" sub="Every article across both stores: drafts, reviews, Shopify status and live posts. Filter by brand with the selector above." actions={<>
+      <PageHead title="Articles" sub="Drafts, reviews and live posts." actions={<>
           <Button icon="download" onClick={exportList}>Export</Button>
-          {can('article:write') ? <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>New article</Button> : null}
+          {can('workflow:run') && brand ? <WriteBlog brand={brand} onDone={() => list.reload()}/> : null}
+          {can('article:write') ? <Button variant={can('workflow:run') && brand ? 'secondary' : 'primary'} icon="plus" onClick={() => setCreating(true)}>New article</Button> : null}
         </>}/>
+      <Journey compact label="Article stages" steps={GROUPS.filter((g) => g.key && g.key !== 'failed').map((g) => ({
+          key: g.key, label: g.label, value: counts.data ? countFor(g.statuses) : '…', done: g.key === 'published',
+          selected: status === g.statuses,
+          onClick: () => update({ status: status === g.statuses ? null : g.statuses, page: null }),
+          flags: g.key === 'drafts' && counts.data && countFor('changes_requested')
+              ? [{ label: 'sent back', value: countFor('changes_requested'), tone: 'warn', onClick: () => update({ status: 'changes_requested', page: null }) }]
+              : g.key === 'published' && counts.data && countFor('failed')
+                  ? [{ label: 'failed', value: countFor('failed'), tone: 'crit', onClick: () => update({ status: 'failed', page: null }) }] : [],
+      }))}/>
       <div className="toolbar">
         <div className="chips" role="group" aria-label="Status">
-          {GROUPS.map((g) => (<button key={g.key} className="chip" aria-pressed={status === g.statuses} onClick={() => update({ status: g.statuses || null, page: null })}>
-              {g.label}<span className="n">{counts.data ? countFor(g.statuses) : ''}</span>
-            </button>))}
+          <button className="chip" aria-pressed={!status} onClick={() => update({ status: null, page: null })}>All articles<span className="n">{counts.data ? countFor('') : ''}</span></button>
+          {status && !GROUPS.some((g) => g.statuses === status && g.key !== 'failed') ? <button className="chip" aria-pressed onClick={() => update({ status: null, page: null })}>{GROUPS.find((g) => g.statuses === status)?.label ?? status.replace(/_/g, ' ')} ✕</button> : null}
         </div>
         <span className="spacer"/>
         <select className="select sm" style={{ width: 'auto' }} value={live} onChange={(e) => update({ live: e.target.value || null, page: null })} aria-label="Live filter">

@@ -4,6 +4,7 @@ run, its error, and how many items are waiting at that stage."""
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -121,10 +122,16 @@ def topic_research_context(brand_id: str) -> dict:
     }
 
 
-def draft_links(brand_id: str) -> list[dict]:
-    """Real internal-link targets a draft may use: synced products and already published articles."""
-    return all_rows("SELECT title, url FROM products WHERE brand_id = ? LIMIT 60", brand_id) + \
-        all_rows("SELECT title, live_url AS url FROM articles WHERE brand_id = ? AND shopify_published = 1 AND live_url IS NOT NULL LIMIT 20", brand_id)
+def draft_links(brand_id: str, about: str = "") -> list[dict]:
+    """Real internal-link targets a draft may use: synced products (with their images) and already published articles.
+    With `about` (the topic's title and keywords), the products whose titles share the most words with it come first."""
+    words = {w for w in re.findall(r"[a-z0-9]+", about.lower()) if len(w) > 2}
+    products = all_rows("SELECT title, url, image_url FROM products WHERE brand_id = ?", brand_id)
+    if words:
+        products.sort(key=lambda p: -len(words & set(re.findall(r"[a-z0-9]+", p["title"].lower()))))
+    return [{**p, "kind": "product"} for p in products[:60]] + [
+        {**a, "kind": "article"} for a in
+        all_rows("SELECT title, live_url AS url FROM articles WHERE brand_id = ? AND shopify_published = 1 AND live_url IS NOT NULL LIMIT 20", brand_id)]
 
 
 def _keyword_validation(brand_id: str) -> dict:

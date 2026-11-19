@@ -37,14 +37,16 @@ from ..db import all_rows, get, now, run, tx
 from ..integrations import ai_worker, claude
 from ..integrations.status import mark_error, mark_success, status_of
 from ..util import HttpError, s
-from . import ai_results, workflow
+from . import ai_budget, ai_results, calendar_plan, workflow
 from .brands import brand, brand_settings
 
 log = logging.getLogger(__name__)
 
 Job = dict[str, Any]   # a database row or its public view
 
-TASKS = {"topic_research": "topic_research", "content_generation": "content_generation"}   # task type -> workflow stage
+# task type -> workflow stage. A revision is content work on an existing draft, so it runs in the content stage.
+TASKS = {"topic_research": "topic_research", "content_generation": "content_generation", "content_revision": "content_generation"}
+MAX_INSTRUCTIONS = 4000
 TRANSITIONS: dict[str, frozenset[str]] = {
     "pending": frozenset({"queued", "running", "failed", "cancelled"}),
     "queued": frozenset({"running", "succeeded", "failed", "cancelled"}),
@@ -220,6 +222,19 @@ def _shape_input(brand_id: str, task_type: str, raw: Any) -> Job:
         if raw.get("focus"):
             out["focus"] = s(raw["focus"], 500).strip()
         return out
+    if task_type == "content_revision":
+        extra = set(raw) - {"article_id", "instructions", "base_version"}
+        if extra:
+            raise HttpError(400, f"input has fields this task does not accept: {', '.join(sorted(extra))}.")
+        aid, ver = raw.get("article_id"), raw.get("base_version")
+        if isinstance(aid, bool) or not isinstance(aid, int) or isinstance(ver, bool) or not isinstance(ver, int):
+            raise HttpError(400, "article_id and base_version are required.")
+        text = raw.get("instructions")
+        if not isinstance(text, str) or not text.strip():
+            raise HttpError(400, "Say what Claude should change.")
+        if len(text) > MAX_INSTRUCTIONS:
+            raise HttpError(400, f"The change request is longer than {MAX_INSTRUCTIONS} characters.")
+        return {"article_id": aid, "base_version": ver, "instructions": text.strip()}
     extra = set(raw) - {"topic_id"}
     if extra:
         raise HttpError(400, f"input has fields this task does not accept: {', '.join(sorted(extra))}.")
@@ -231,6 +246,15 @@ def _shape_input(brand_id: str, task_type: str, raw: Any) -> Job:
 
 def _check_state(brand_id: str, task_type: str, clean: Job) -> None:
     """Business-state checks that depend on the database (not part of the idempotency fingerprint)."""
+    if task_type == "content_revision":
+        a = get("SELECT id, version, status FROM articles WHERE id = ? AND brand_id = ?", clean["article_id"], brand_id)
+        if not a:
+            raise HttpError(404, "That article does not exist for this brand.")
+        if a["status"] == "scheduled":
+            raise HttpError(409, "This article is scheduled on Shopify. Cancel the schedule before asking for changes.", "scheduled")
+        if a["version"] != clean["base_version"]:
+            raise HttpError(409, f"The article is now at version {a['version']}. Save or reload before asking Claude for changes.", "version_conflict")
+        return
     if task_type != "content_generation":
         return
     t = get("SELECT * FROM topics WHERE id = ? AND brand_id = ?", clean["topic_id"], brand_id)
@@ -278,6 +302,8 @@ def create_job(user: Job | None, brand_id: str, task_type: str, job_input: Any =
     if ps["state"] in ("pending_setup", "disabled"):
         raise HttpError(412, ps["reason"], "pending_setup")
     _check_state(brand_id, task_type, clean)
+    if ps["mode"] == "anthropic_api":
+        ai_budget.check(task_type)
     try:
         with tx():
             if idempotency_key:
@@ -394,14 +420,35 @@ def build_input(job: Job) -> Job:
     own = json.loads(job["input_json"] or "{}")
     base: Job = {"brand": {"id": b.id, "name": b.name, "domain": b.storefront_domain, "voice": st.get("voice", ""), "audience": st.get("audience", ""), "avoid": st.get("avoid", "")}}
     if job["task_type"] == "topic_research":
-        return {**base, "count": own.get("count") or st["topicsPerRun"], "focus": own.get("focus") or st["researchFocus"], **workflow.topic_research_context(job["brand_id"])}
+        return {**base, "count": own.get("count") or st["topicsPerRun"], "focus": own.get("focus") or st["researchFocus"],
+                "events": calendar_plan.upcoming_for_prompt(job["brand_id"]), **workflow.topic_research_context(job["brand_id"])}
+    if job["task_type"] == "content_revision":
+        a = get("SELECT * FROM articles WHERE id = ? AND brand_id = ?", own.get("article_id"), job["brand_id"])
+        if not a:
+            raise JobError("The article does not exist any more.")
+        if a["version"] != own.get("base_version"):
+            raise JobError(f"The article was edited (now version {a['version']}) after the change request, so Claude did not revise it. Ask again.")
+        return {**base, "article": {k: a[k] for k in claude.REVISABLE}, "instructions": own["instructions"],
+                "links": workflow.draft_links(job["brand_id"], f"{a['title']} {a['primary_keyword']}")}
     t = get("SELECT * FROM topics WHERE id = ? AND brand_id = ?", own.get("topic_id"), job["brand_id"])
     if not t or t["status"] != "approved":
         raise JobError("The topic is not approved any more.")
-    return {**base, "topic": {k: t[k] for k in ("title", "primary_keyword", "secondary_keywords", "intent", "notes")}, "links": workflow.draft_links(job["brand_id"])}
+    return {**base, "topic": {k: t[k] for k in ("title", "primary_keyword", "secondary_keywords", "intent", "notes")},
+            "links": workflow.draft_links(job["brand_id"], f"{t['title']} {t['primary_keyword']} {t['secondary_keywords']}")}
 
 
 # ---------------------------------------------------------------- failure and retry policy
+
+def _wait_for_budget(job_id: str, owner: str | None, message: str) -> Job | None:
+    """Today's Claude limit is used up: the job goes back to pending until the limit resets. This is not a failed attempt,
+    so it does not use one of the job's retries."""
+    with tx():
+        cur = get("SELECT * FROM ai_jobs WHERE id = ?", job_id)
+        if not cur or cur["status"] != "running" or (owner is not None and not _holds(cur, owner)):
+            return None
+        return _update(job_id, "pending", next_attempt_at=_in(ai_budget.seconds_until_reset()), lease_owner=None, lease_expires_at=None,
+                       message="Waiting for tomorrow's Claude limit", event=("retry_scheduled", s(message, 300)))
+
 
 def _after_failure(job_id: str, owner: str | None, message: str, kind: str, retryable: bool, retry_after: float | None = None) -> Job | None:
     """Apply the retry policy to a failed attempt: a retryable failure goes back to pending with exponential backoff (or the
@@ -505,19 +552,30 @@ def _run_direct(job: Job, token: str) -> None:
     try:
         inp = build_input(job)
         b, st = brand(job["brand_id"]), brand_settings(job["brand_id"])
+        ai_budget.check(job["task_type"])   # a job queued yesterday still waits for today's limit
         if job["task_type"] == "topic_research":
-            data, _model = claude.research_topics(b, st, inp["existing_titles"], inp["products"], inp["queries"], inp["count"], inp["focus"])
+            data, _model = claude.research_topics(b, st, inp["existing_titles"], inp["products"], inp["queries"], inp["count"], inp["focus"],
+                                                  events=inp.get("events"))
+        elif job["task_type"] == "content_revision":
+            data, _model = claude.revise_draft(b, st, inp["article"], inp["instructions"], inp["links"])
         else:
             data, _model = claude.generate_draft(b, st, inp["topic"], inp["links"])
     except claude.ClaudeError as e:
-        claude.take_usage()
+        ai_budget.record(claude.take_usage(), job["brand_id"], job["task_type"], job["id"])   # a call that ran is paid for even if its answer is unusable
         msg = str(e) + (" (it may have been processed; check before retrying)" if e.ambiguous else "")
         _after_failure(job["id"], owner, msg, e.kind, e.retryable, e.retry_after)
         return
-    except (JobError, HttpError) as e:
-        _after_failure(job["id"], owner, getattr(e, "message", None) or str(e), "rejected", False)
+    except HttpError as e:
+        if getattr(e, "code", None) == "daily_limit":
+            _wait_for_budget(job["id"], owner, e.message)
+        else:
+            _after_failure(job["id"], owner, e.message, "rejected", False)
+        return
+    except JobError as e:
+        _after_failure(job["id"], owner, str(e), "rejected", False)
         return
     usage = claude.take_usage()
+    ai_budget.record(usage, job["brand_id"], job["task_type"], job["id"])
     try:
         clean = ai_results.validate(job["task_type"], data, ai_results.requested_count(job))
     except ai_results.ResultError as e:
@@ -618,6 +676,11 @@ class Runner:
 
     def tick(self) -> int:
         recover()
+        try:
+            from . import autopilot   # imported here: autopilot imports this module
+            autopilot.advance_all()   # move "Write a blog" runs on as their jobs finish
+        except Exception:  # noqa: BLE001 — the queue below must still run
+            log.exception("Autopilot step failed")
         started = 0
         while not self._stop.is_set():
             with self._lock:

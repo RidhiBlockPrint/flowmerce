@@ -31,7 +31,7 @@ export default function DataReports() {
         }
     };
     return (<>
-      <PageHead title="Data import/export" sub={IS_DEMO ? 'Demo build: download a CSV template, fill it in and upload it to see real row-by-row validation in your browser. Nothing is uploaded, and imports only change this demo\'s sample data.' : 'Shopify, Search Console and GA4 supply articles and performance live. Import only what they cannot: keyword research, topic plans, offline review notes — and Search Console / GA4 exports for days an API did not cover. Imports never replace synced data.'}/>
+      <PageHead title="Data import/export" sub={IS_DEMO ? 'Demo: try a template and upload it.' : 'Import what the live connections cannot supply.'}/>
       <ErrorState error={kinds.error || health.error} onRetry={() => { kinds.reload(); health.reload(); }}/>
       {!kinds.data ? (kinds.error ? null : <LoadingBlock rows={6}/>) : (<div className="col" style={{ gap: 16 }}>
           <div className="grid main-side">

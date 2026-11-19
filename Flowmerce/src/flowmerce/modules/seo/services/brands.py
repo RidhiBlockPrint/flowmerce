@@ -7,6 +7,7 @@ from ..db import get, now, run
 from ..integrations import shopify
 from ..integrations.google import ga4_configured, gsc_configured
 from ..util import s, safe_json
+from .knowledge import knowledge_files
 
 # Editable, non-secret brand settings. Credentials are environment-only and not part of this.
 DEFAULTS = {
@@ -17,6 +18,7 @@ DEFAULTS = {
         "defaultAuthor": "Ridhi Block Print",
         "topicsPerRun": 5, "draftsPerRun": 1,
         "researchFocus": "Table linen, bedding and seasonal hosting with block-print textiles.",
+        "claudeInstructions": "",
     },
     "cpc": {
         "voice": "Elegant, inviting and seasonal; focuses on tablescapes, gatherings and gifting with block-printed cotton.",
@@ -25,6 +27,7 @@ DEFAULTS = {
         "defaultAuthor": "Cotton Print Club",
         "topicsPerRun": 5, "draftsPerRun": 1,
         "researchFocus": "Holiday and seasonal tablescapes, formal table settings, bundles and gifting.",
+        "claudeInstructions": "",
     },
 }
 
@@ -53,6 +56,8 @@ def update_brand_settings(bid: str, patch: dict, user_id: int) -> dict:
         "avoid": s(patch["avoid"], 1000) if "avoid" in patch else cur["avoid"],
         "defaultAuthor": s(patch["defaultAuthor"], 120) if "defaultAuthor" in patch else cur["defaultAuthor"],
         "researchFocus": s(patch["researchFocus"], 500) if "researchFocus" in patch else cur["researchFocus"],
+        # Standing instructions sent with every Claude request for this brand (after the brand documents).
+        "claudeInstructions": s(patch["claudeInstructions"], 8000).strip() if "claudeInstructions" in patch else cur.get("claudeInstructions", ""),
         "topicsPerRun": _clamp(patch.get("topicsPerRun"), cur["topicsPerRun"], 1, 15) if "topicsPerRun" in patch else cur["topicsPerRun"],
         "draftsPerRun": _clamp(patch.get("draftsPerRun"), cur["draftsPerRun"], 1, 5) if "draftsPerRun" in patch else cur["draftsPerRun"],
     }
@@ -73,6 +78,7 @@ def brand_public(bid: str) -> dict:
         "ga4PropertyId": f"…{b.ga4_property_id[-4:]}" if b.ga4_property_id else "",
         "configured": {"shopifyAdmin": shopify.configured(b), "gsc": gsc_configured(b), "ga4": ga4_configured(b)},
         "settings": brand_settings(bid),
+        "knowledge": knowledge_files(bid),
     }
 
 

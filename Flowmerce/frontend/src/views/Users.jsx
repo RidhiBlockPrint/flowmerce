@@ -15,7 +15,7 @@ export default function Users() {
     if (!can('users:manage'))
         return <ErrorState error={new Error('Only administrators can view users.')}/>;
     return (<>
-      <PageHead title="Users" sub="Stored user records, kept for audit history, record ownership and article assignments."/>
+      <PageHead title="Users" sub="User records for history and assignments."/>
       <div className="callout info mb-16" role="note">
         <Icon name="info"/>
         <div>

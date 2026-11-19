@@ -18,8 +18,10 @@ import json
 import logging
 import threading
 import time
+from datetime import date
 
 from ..config import BrandConfig, config
+from ..services.knowledge import brand_knowledge   # a leaf module: it only reads the brand's files
 from ..util import HttpError
 
 log = logging.getLogger(__name__)
@@ -93,11 +95,11 @@ def _classify(e: Exception) -> ClaudeError:
     return ClaudeError(f"Unexpected Claude error: {type(e).__name__}", "server")
 
 
-def _structured(system: str, prompt: str, schema: dict, effort: str) -> tuple[dict, str]:
+def _structured(system: str | list[dict], prompt: str, schema: dict, effort: str, max_tokens: int = 32000) -> tuple[dict, str]:
     import anthropic
     client = _get_client()
     extra: dict = {"output_config": {"effort": effort, "format": {"type": "json_schema", "schema": schema}}}
-    params = dict(model=config.claude_model, max_tokens=32000, thinking={"type": "adaptive"}, system=system,
+    params = dict(model=config.claude_model, max_tokens=max_tokens, thinking={"type": "adaptive"}, system=system,
                   messages=[{"role": "user", "content": prompt}])
     started, attempt, message = time.monotonic(), 0, None
     while True:
@@ -122,6 +124,8 @@ def _structured(system: str, prompt: str, schema: dict, effort: str) -> tuple[di
     u = getattr(message, "usage", None)
     _usage.last = {"model": message.model, "requestId": getattr(message, "_request_id", None), "attempts": attempt,
                    "inputTokens": getattr(u, "input_tokens", None), "outputTokens": getattr(u, "output_tokens", None),
+                   "cacheWriteTokens": getattr(u, "cache_creation_input_tokens", None) or 0,
+                   "cacheReadTokens": getattr(u, "cache_read_input_tokens", None) or 0,
                    "durationMs": int((time.monotonic() - started) * 1000), "stopReason": message.stop_reason}
     log.info("Claude call finished: %s", _usage.last)
     if message.stop_reason == "refusal":
@@ -138,70 +142,234 @@ def _structured(system: str, prompt: str, schema: dict, effort: str) -> tuple[di
     return data, message.model
 
 
-def _brand_system(b: BrandConfig, v: dict) -> str:
-    lines = [
-        f"You are the SEO content strategist for {b.name} ({b.storefront_domain}), an online store selling hand block-printed cotton home textiles made by artisans in India.",
-        f"Brand voice: {v['voice']}" if v.get("voice") else "",
-        f"Audience: {v['audience']}" if v.get("audience") else "",
+# ---------------------------------------------------------------- the system prompt
+
+def _brand_system(b: BrandConfig, v: dict) -> list[dict]:
+    """System prompt as two blocks. The first (role, ground rules and the brand's own documents) is identical for every
+    request of a brand, so it is cached. The second holds what people edit on the dashboard (voice fields and standing
+    instructions); it sits after the cache breakpoint, so editing it never invalidates the cached documents."""
+    docs = brand_knowledge(b.id)
+    head = "\n".join([
+        f"You are the SEO content strategist and blog writer for {b.name} ({b.storefront_domain}), an online store selling hand block-printed cotton home textiles.",
+        "Write for people first and search engines second. Do not invent statistics, awards, certifications, prices, shipping promises, reviews, "
+        "quotes, product facts or URLs. If a fact about the store is not given to you, leave it out or list it under notes.needs_confirmation.",
+        "Internal business figures (sales, revenue, order counts, shares) are background only: never put them in public article text.",
+        "",
+        f"{b.name}'s own brand documents follow. They are your operating specification: follow their voice, vocabulary, banned words, "
+        "claims rules and approved article shape exactly.",
+        "Some documents describe tools and steps you do not have here (Shopify or Dropbox connectors, saving drafts, publishing, approval gates). "
+        "In this setting you only return the JSON asked for; Flowmerce saves it as an unpublished draft and people review and publish it. "
+        "Put anything those steps need a person to check under notes.",
+        "Approval in this setup: the owner has allowed Flowmerce to approve topics and drafts automatically and save them as hidden "
+        "Shopify drafts. Going live still needs a person. Do not list missing topic or draft approvals as a problem; do list facts to confirm.",
+    ])
+    first: dict = {"type": "text", "text": f"{head}\n\n{docs}" if docs else head}
+    if docs:
+        first["cache_control"] = {"type": "ephemeral"}
+    tail = [
+        f"Voice note from the dashboard: {v['voice']}" if v.get("voice") else "",
+        f"Audience note from the dashboard: {v['audience']}" if v.get("audience") else "",
         f"Never: {v['avoid']}" if v.get("avoid") else "",
-        "Write for people first and search engines second. Do not invent statistics, awards, certifications, prices, shipping promises or customer quotes. If a fact about the store is not given to you, leave it out.",
     ]
-    return "\n".join(x for x in lines if x)
+    standing = str(v.get("claudeInstructions") or "").strip()
+    if standing:
+        tail += ["", "Standing instructions from the team (follow them; where they conflict with the documents they win, "
+                     "except that you still never invent facts):", standing]
+    blocks = [first]
+    tail_text = "\n".join(tail).strip()
+    if tail_text:
+        blocks.append({"type": "text", "text": tail_text})
+    return blocks
 
 
-def research_topics(b: BrandConfig, v: dict, existing_titles: list[str], products: list[str], queries: list[str], count: int, focus: str = "") -> tuple[dict, str]:
-    schema = {
-        "type": "object", "additionalProperties": False, "required": ["topics"],
-        "properties": {"topics": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False,
-            "required": ["title", "primary_keyword", "secondary_keywords", "intent", "rationale"],
-            "properties": {
-                "title": {"type": "string"}, "primary_keyword": {"type": "string"},
-                "secondary_keywords": {"type": "array", "items": {"type": "string"}},
-                "intent": {"type": "string", "enum": ["informational", "commercial", "transactional", "navigational"]},
-                "rationale": {"type": "string"},
-            }}}},
-    }
+def _events_lines(events: list[dict] | None) -> list[str]:
+    if not events:
+        return []
+    return ["", "Upcoming events and seasons (event date, name, the latest date an article for it should be live):",
+            *[f"- {e['date']}: {e['name']} (publish by {e['publish_by']})" + (f" - {e['note']}" if e.get("note") else "") for e in events[:20]]]
+
+
+# ---------------------------------------------------------------- topics
+
+TOPIC_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["title", "primary_keyword", "secondary_keywords", "intent", "rationale"],
+    "properties": {
+        "title": {"type": "string"}, "primary_keyword": {"type": "string"},
+        "secondary_keywords": {"type": "array", "items": {"type": "string"}},
+        "intent": {"type": "string", "enum": ["informational", "commercial", "transactional", "navigational"]},
+        "rationale": {"type": "string"},
+    }}
+
+
+def research_topics(b: BrandConfig, v: dict, existing_titles: list[str], products: list[str], queries: list[str], count: int, focus: str = "",
+                    events: list[dict] | None = None) -> tuple[dict, str]:
+    schema = {"type": "object", "additionalProperties": False, "required": ["topics"],
+              "properties": {"topics": {"type": "array", "items": TOPIC_SCHEMA}}}
     parts = [
-        f"Propose {count} new blog topics for {b.name}.",
+        f"Today is {date.today().isoformat()}. Propose {count} new blog topics for {b.name}.",
         f"Focus: {focus}" if focus else "",
-        "Each topic needs one primary keyword a shopper would actually type, 2–5 secondary keywords, the search intent, and one or two sentences on why it fits this store.",
+        "Each topic needs one primary keyword a shopper would actually type, 2-5 secondary keywords, the search intent, "
+        "and one or two sentences on why it fits this store and this moment.",
+        "Prefer topics that fit the brand documents' content pillars and gaps, and upcoming events whose publish-by date is still ahead.",
         "Do not repeat or closely overlap these existing articles:",
         *[f"- {t}" for t in existing_titles[:80]],
         ("\nProducts the store sells (link-worthy):\n" + "\n".join(f"- {p}" for p in products[:60])) if products else "",
         ("\nSearch queries that already bring visitors to the blog (from Search Console):\n" + "\n".join(f"- {q}" for q in queries[:40])) if queries else "",
+        *_events_lines(events),
         "You have no keyword-volume data: do not state or guess search volumes.",
     ]
     return _structured(_brand_system(b, v), "\n".join(p for p in parts if p), schema, "medium")
 
 
+# ---------------------------------------------------------------- drafts
+
+# The dashboard's SEO score (frontend/src/lib/seo.js). Keep the two in step.
+SEO_RULES = """The dashboard scores every article with these checks. Meet all of them:
+- title: 30-70 characters, contains the primary keyword (the exact phrase, any case).
+- meta_title: 60 characters or fewer, contains the primary keyword.
+- meta_description: 120-160 characters (aim for 140-155), contains the primary keyword, says what the reader gets.
+- body_html: the exact primary keyword appears in the first <p> and in at least one <h2>; at least 2 <h2> headings; no <h1> (the theme renders the title).
+- body_html: at least 900 words of useful text (usually 1,200-1,800). Never pad.
+- body_html: at least 2 internal links (aim for 3-8, never more than 10: link only where it helps the reader), with hrefs copied exactly from the link list below, and descriptive anchor text. Do not link the same page twice.
+- handle: lowercase words joined by hyphens, 75 characters or fewer, containing the main words of the primary keyword.
+- image_url: the featured image. Copy the image URL of the most relevant product from the product list exactly, or "" if none fits.
+- image_alt: describe what that product photo shows, using its product name; not a keyword list. Empty when image_url is empty.
+- Prefer no inline <img>. If you add one, it needs alt text and its src must be a product image from the list."""
+
+BODY_HTML_RULES = ("body_html: clean HTML using only <h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>, <a>, <blockquote>, "
+                   "<table>, <thead>, <tbody>, <tr>, <th>, <td>. No inline styles, no scripts. Open with a short answer paragraph "
+                   "(40-70 words) that answers the main question and contains the primary keyword. Use the article shape the brand "
+                   "documents approve. Add an FAQ (an <h2> with <h3> questions) only for questions the body does not already answer.")
+
+NOTES_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["secondary_keywords", "needs_confirmation", "recommendations", "technical_checks", "sources", "next_article", "image_brief"],
+    "properties": {
+        "secondary_keywords": {"type": "array", "items": {"type": "string"}},
+        "needs_confirmation": {"type": "array", "items": {"type": "string"}},
+        "recommendations": {"type": "array", "items": {"type": "string"}},
+        "technical_checks": {"type": "array", "items": {"type": "string"}},
+        "sources": {"type": "array", "items": {"type": "string"}},
+        "next_article": {"type": "string"},
+        "image_brief": {"type": "string"},
+    }}
+NOTES_RULES = """notes (shown to the team beside the draft, never published):
+- secondary_keywords: the related terms the article covers.
+- needs_confirmation: every claim, fact or brand decision a person must confirm before publishing (open questions from the brand documents that this article touches, facts you could not verify). Be specific.
+- recommendations: concrete actions that would make this article or its results better (photos to take, older posts that should link here, a product page to fix, outreach ideas). At most 8.
+- technical_checks: checks an admin should do in Shopify or Search Console for this article (indexing, schema the theme already outputs, broken pages the documents mention).
+- sources: the brand documents (by file name) and any external sources you relied on. Never invent a URL.
+- next_article: the next helpful article in the reader's journey, as a working title.
+- image_brief: if no product photo fits, a short brief for the photo to take; otherwise ""."""
+
+ARTICLE_FIELDS = ["title", "handle", "meta_title", "meta_description", "summary_html", "body_html", "tags", "image_url", "image_alt", "notes"]
+ARTICLE_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ARTICLE_FIELDS,
+    "properties": {**{f: {"type": "string"} for f in ARTICLE_FIELDS if f not in ("tags", "notes")},
+                   "tags": {"type": "array", "items": {"type": "string"}}, "notes": NOTES_SCHEMA},
+}
+
+
+def _link_lines(links: list[dict]) -> list[str]:
+    products = [x for x in links if x.get("kind") != "article"]
+    articles = [x for x in links if x.get("kind") == "article"]
+    out = ["", "Internal link targets (use these hrefs exactly; pages the brand documents list as verified live may also be used):"]
+    out += [f"- Product: {x['title']} | {x['url']}" + (f" | image: {x['image_url']}" if x.get("image_url") else "") for x in products[:60]]
+    out += [f"- Article: {x['title']} | {x['url']}" for x in articles[:20]]
+    return out
+
+
 def generate_draft(b: BrandConfig, v: dict, topic: dict, links: list[dict]) -> tuple[dict, str]:
-    fields = ["title", "handle", "meta_title", "meta_description", "summary_html", "body_html", "tags", "image_alt"]
-    schema = {
-        "type": "object", "additionalProperties": False, "required": fields,
-        "properties": {**{f: {"type": "string"} for f in fields if f != "tags"}, "tags": {"type": "array", "items": {"type": "string"}}},
-    }
     parts = [
-        f"Write a complete blog article for {b.name}.",
+        f"Today is {date.today().isoformat()}. Write a complete blog article for {b.name}.",
         f"Working title: {topic['title']}",
         f"Primary keyword: {topic['primary_keyword']}",
         f"Secondary keywords: {topic['secondary_keywords']}" if topic.get("secondary_keywords") else "",
         f"Search intent: {topic['intent']}",
         f"Editor notes: {topic['notes']}" if topic.get("notes") else "",
         "",
-        "Requirements:",
-        "- body_html: 1,200–1,800 words of clean HTML using only <h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>, <a>, <blockquote>. No <h1> (the theme renders the title), no inline styles, no scripts, no images.",
-        "- Use the primary keyword in the first paragraph and in at least one <h2>, naturally.",
-        "- Add 2–4 internal links, chosen only from the list below, with descriptive anchor text. Use the URLs exactly as given.",
-        "- End with a short FAQ section (<h2>Frequently asked questions</h2> with 3–4 <h3> questions).",
-        "- meta_title at most 60 characters; meta_description 140–155 characters; handle is a short lowercase-hyphenated URL slug.",
-        "- summary_html: one or two sentences in a <p> for the blog listing.",
-        "- tags: 3–6 short tags. image_alt: alt text for a featured image of the main product type.",
+        SEO_RULES,
         "",
-        "Internal link targets:",
-        *[f"- {l['title']}: {l['url']}" for l in links[:40]],
+        "Other fields:",
+        f"- {BODY_HTML_RULES}",
+        "- summary_html: one or two sentences in a <p> for the blog listing.",
+        "- tags: 3-6 short, useful tags (categories for readers, not keyword lists).",
+        "",
+        NOTES_RULES,
+        *_link_lines(links),
     ]
-    return _structured(_brand_system(b, v), "\n".join(parts), schema, "high")
+    return _structured(_brand_system(b, v), "\n".join(parts), ARTICLE_SCHEMA, "high")
+
+
+REVISABLE = ("title", "handle", "primary_keyword", "meta_title", "meta_description", "summary_html", "body_html", "tags", "image_url", "image_alt")
+
+
+def revise_draft(b: BrandConfig, v: dict, article: dict, instructions: str, links: list[dict]) -> tuple[dict, str]:
+    """Apply a person's change request to an existing draft and return the whole updated article (same shape as a new draft)."""
+    current = {f: article.get(f, "") or "" for f in REVISABLE}
+    parts = [
+        f"Today is {date.today().isoformat()}. Revise this {b.name} blog draft.",
+        "",
+        "Requested changes from the team:",
+        instructions.strip(),
+        "",
+        "Apply the requested changes. Keep everything else as it is unless a change is needed to keep the brand rules or the SEO checks below.",
+        f"The primary keyword stays: {current['primary_keyword']}" if current["primary_keyword"] else "",
+        "Return the complete updated article, not only the changed parts. Start notes.recommendations with one line saying what you changed.",
+        "",
+        "Current draft (JSON):",
+        json.dumps(current, ensure_ascii=False),
+        "",
+        SEO_RULES,
+        "",
+        f"- {BODY_HTML_RULES}",
+        "",
+        NOTES_RULES,
+        *_link_lines(links),
+    ]
+    return _structured(_brand_system(b, v), "\n".join(parts), ARTICLE_SCHEMA, "high")
+
+
+# ---------------------------------------------------------------- Ask Claude (small, synchronous helpers)
+
+ASSIST_KINDS = ("topic", "keywords", "seo_fields")
+_ASSIST_SCHEMAS: dict[str, dict] = {
+    "topic": {"type": "object", "additionalProperties": False, "required": ["suggestions"],
+              "properties": {"suggestions": {"type": "array", "items": TOPIC_SCHEMA}}},
+    "keywords": {"type": "object", "additionalProperties": False, "required": ["primary_keyword", "secondary_keywords", "intent", "rationale"],
+                 "properties": {"primary_keyword": {"type": "string"}, "secondary_keywords": {"type": "array", "items": {"type": "string"}},
+                                "intent": {"type": "string", "enum": ["informational", "commercial", "transactional", "navigational"]},
+                                "rationale": {"type": "string"}}},
+    "seo_fields": {"type": "object", "additionalProperties": False,
+                   "required": ["title", "meta_title", "meta_description", "handle", "summary", "tags", "image_alt"],
+                   "properties": {"title": {"type": "string"}, "meta_title": {"type": "string"}, "meta_description": {"type": "string"},
+                                  "handle": {"type": "string"}, "summary": {"type": "string"},
+                                  "tags": {"type": "array", "items": {"type": "string"}}, "image_alt": {"type": "string"}}},
+}
+
+
+def assist(b: BrandConfig, v: dict, kind: str, context: dict, existing_titles: list[str] | None = None,
+           events: list[dict] | None = None) -> tuple[dict, str]:
+    """One quick suggestion for a field a person is filling in. Nothing is saved: the dashboard shows it and the person decides."""
+    ctx = json.dumps(context, ensure_ascii=False)[:20000]
+    if kind == "topic":
+        parts = [f"Today is {date.today().isoformat()}. Suggest 3 blog topics for {b.name} based on what the person has typed so far (it may be partial or empty):",
+                 ctx, "Each needs a title, one primary keyword a shopper would actually type, 2-5 secondary keywords, the intent and a one-sentence rationale.",
+                 "Avoid overlapping these existing articles:", *[f"- {t}" for t in (existing_titles or [])[:80]], *_events_lines(events),
+                 "You have no keyword-volume data: do not state or guess search volumes."]
+    elif kind == "keywords":
+        parts = [f"Choose the keywords for this {b.name} blog topic:", ctx,
+                 "Return the one primary keyword a shopper would actually type (a phrase that can appear naturally in the title), "
+                 "3-6 secondary keywords, the intent, and one sentence on why.",
+                 "You have no keyword-volume data: do not state or guess search volumes."]
+    elif kind == "seo_fields":
+        parts = [f"Write the SEO fields for this {b.name} article. The current values and the article text follow:", ctx, "", SEO_RULES,
+                 "summary: one or two sentences for the blog listing (plain text). tags: 3-6 useful tags. "
+                 "image_alt: describe the featured image if its product is known, else \"\"."]
+    else:
+        raise ValueError(f"unknown assist kind {kind}")
+    return _structured(_brand_system(b, v), "\n".join(p for p in parts if p), _ASSIST_SCHEMAS[kind], "low", max_tokens=16000)
 
 
 def ping() -> dict:

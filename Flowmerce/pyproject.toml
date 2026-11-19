@@ -31,6 +31,10 @@ flowmerce = "flowmerce.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Brand guides Claude reads with every request (modules/seo/knowledge/<brand>/).
+"flowmerce.modules.seo" = ["knowledge/*.md", "knowledge/*/*.md", "knowledge/*/*.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --import-mode=importlib"

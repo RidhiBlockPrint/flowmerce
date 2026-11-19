@@ -1,6 +1,11 @@
-"""Background refresh. Only reads: it runs the Performance tracking stage (Shopify, Search Console, GA4)
-for each brand when the last SUCCESSFUL run is more than 6 hours old. It never generates content, creates
-Shopify drafts or publishes — those need a person to start them. Paused brands are skipped.
+"""Background work. Two jobs:
+
+1. Refresh: runs the Performance tracking stage (Shopify, Search Console, GA4) for each brand when the last
+   SUCCESSFUL run is more than 6 hours old. Paused brands are skipped.
+2. The content calendar: runs schedule entries a person created (topic research, drafting, and publish requests)
+   when their day comes, within the daily Claude limit (services/calendar_plan.py), and the 6-hour rule
+   (services/autopilot.py): a scheduled article nobody approved 6 hours before its publish time is approved
+   automatically and saved as a HIDDEN Shopify draft. It never publishes: a reviewer still authorizes going live.
 
 After a failed run it does not wait the full 6 hours: it retries with a growing delay (30 min, 1 h, 2 h,
 4 h, then every 6 h) so a temporary outage heals quickly without hammering a service that keeps failing."""
@@ -12,6 +17,7 @@ import time
 
 from ..config import BRAND_IDS
 from ..util import ms_since
+from . import autopilot, calendar_plan
 from .runs import failures_since_success, last_run, last_successful_run
 from .workflow import is_paused, run_stage
 
@@ -43,6 +49,11 @@ def is_due(brand_id: str, stage: str = "performance_tracking") -> bool:
 
 
 def tick() -> None:
+    try:
+        autopilot.enforce_deadlines()   # the 6-hour rule: approve and save hidden drafts nobody approved in time
+        calendar_plan.run_due()
+    except Exception:  # noqa: BLE001 — the refresh below must still run
+        log.exception("Content calendar run failed")
     for b in BRAND_IDS:
         if is_paused(b) or not is_due(b):
             continue

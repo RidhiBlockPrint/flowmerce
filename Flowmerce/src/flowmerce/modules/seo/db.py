@@ -359,6 +359,81 @@ MIGRATIONS: list[str] = [
     ALTER TABLE shipping_order_marks ADD COLUMN outcome_at TEXT;
     ALTER TABLE shipping_order_marks ADD COLUMN outcome_by TEXT;
     """,
+    # Blog: Claude's notes beside a draft (needs confirmation, recommendations, checks, sources); app-wide settings
+    # (the monthly Claude budget); one row per Claude call for the daily limit; the content calendar and its schedule.
+    """
+    ALTER TABLE articles ADD COLUMN ai_notes_json TEXT NOT NULL DEFAULT '{}';
+    CREATE TABLE app_settings (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      updated_by INTEGER
+    );
+    CREATE TABLE claude_usage (
+      id INTEGER PRIMARY KEY,
+      ts TEXT NOT NULL,
+      day TEXT NOT NULL,
+      brand_id TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL,
+      model TEXT NOT NULL DEFAULT '',
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      job_id TEXT
+    );
+    CREATE INDEX claude_usage_day ON claude_usage(day);
+    CREATE TABLE calendar_events (
+      id INTEGER PRIMARY KEY,
+      brand_id TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL,
+      date TEXT NOT NULL,
+      lead_days INTEGER NOT NULL DEFAULT 30,
+      note TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE content_schedule (
+      id INTEGER PRIMARY KEY,
+      brand_id TEXT NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('research','draft','publish')),
+      run_on TEXT NOT NULL,
+      event_key TEXT NOT NULL DEFAULT '',
+      event_name TEXT NOT NULL DEFAULT '',
+      focus TEXT NOT NULL DEFAULT '',
+      topic_id INTEGER REFERENCES topics(id) ON DELETE SET NULL,
+      article_id INTEGER REFERENCES articles(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','done','skipped','failed')),
+      job_id TEXT,
+      message TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX content_schedule_due ON content_schedule(status, run_on);
+    """,
+    # Blog: one-click "Write a blog" runs (research -> draft -> approve -> hidden Shopify draft), see services/autopilot.py.
+    """
+    CREATE TABLE autopilot_runs (
+      id INTEGER PRIMARY KEY,
+      brand_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','failed')),
+      step TEXT NOT NULL,
+      message TEXT NOT NULL DEFAULT '',
+      focus TEXT NOT NULL DEFAULT '',
+      research_job_id TEXT,
+      topic_id INTEGER REFERENCES topics(id) ON DELETE SET NULL,
+      draft_job_id TEXT,
+      article_id INTEGER REFERENCES articles(id) ON DELETE SET NULL,
+      source TEXT NOT NULL DEFAULT 'button',
+      created_by INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT
+    );
+    CREATE INDEX autopilot_runs_brand ON autopilot_runs(brand_id, status);
+    """,
 ]
 
 _conn: sqlite3.Connection | None = None

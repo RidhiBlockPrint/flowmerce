@@ -13,6 +13,7 @@ export const NAV = [
     { id: 'seo', kind: 'module', label: 'SEO & Blog', icon: 'blogs', items: [
         { to: '/articles', label: 'Articles', icon: 'blogs' },
         { to: '/topics', label: 'Topics & keywords', icon: 'topics' },
+        { to: '/calendar', label: 'Content calendar', icon: 'calendar' },
         { to: '/publishing', label: 'Publishing', icon: 'publish', badge: 'publishing' },
         { to: '/analytics', label: 'SEO & traffic', icon: 'analytics' },
         { to: '/automation', label: 'Automation', icon: 'automation' },

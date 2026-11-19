@@ -4,8 +4,10 @@ may only create records of the kind that task is allowed to create:
 
   topic_research      -> new topics with status "proposed" (a person still validates and approves them)
   content_generation  -> one article with status "draft", linked to the already approved topic named in the job
+  content_revision    -> a new version of the article named in the job (only if nobody edited it since the request)
 
-A result never approves, publishes, schedules, or changes an existing record. validate() has no side effects;
+A result never approves, publishes or schedules anything, and changes an existing record only as a content_revision:
+through the normal save path, so a changed text drops any earlier approval. validate() has no side effects;
 store() writes, and is called inside the caller's transaction so the job and its result change together."""
 from __future__ import annotations
 
@@ -13,10 +15,12 @@ import json
 import re
 from typing import Any
 
+from ..config import config
 from ..db import all_rows, get, now, run
-from ..util import norm_keyword, s, strip_html
-from .articles import create_article
+from ..util import HttpError, norm_keyword, s, strip_html
+from .articles import create_article, save_article
 from .brands import brand_settings
+from .knowledge import brand_knowledge
 
 Job = dict[str, Any]
 MAX_RESULT_BYTES = 256 * 1024
@@ -24,7 +28,10 @@ MAX_TOPICS = 50          # absolute ceiling; a job is held to the count it asked
 MAX_REQUESTED = 20       # the most topics one research job may ask for
 INTENTS = ("informational", "commercial", "transactional", "navigational")
 TOPIC_FIELDS = {"title", "primary_keyword", "secondary_keywords", "intent", "rationale"}
-DRAFT_FIELDS = {"title", "handle", "meta_title", "meta_description", "summary_html", "body_html", "tags", "image_alt"}
+DRAFT_FIELDS = {"title", "handle", "meta_title", "meta_description", "summary_html", "body_html", "tags", "image_alt", "image_url", "notes"}
+NOTE_LISTS = {"secondary_keywords": 20, "needs_confirmation": 30, "recommendations": 20, "technical_checks": 20, "sources": 30}
+NOTE_TEXTS = {"next_article": 300, "image_brief": 1000}
+REVISION_FIELDS = ("title", "handle", "meta_title", "meta_description", "summary_html", "body_html", "tags", "image_url", "image_alt")
 _DANGEROUS = re.compile(r"<\s*/?\s*(script|iframe|object|embed|form|svg|math|style|link|meta|base)\b|<[^>]*\bon\w+\s*=|javascript\s*:|data\s*:\s*text/html", re.I)
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _HANDLE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -101,7 +108,7 @@ def validate(task_type: str, result: Any, limit: int | None = None) -> Job:
         raise ResultError(f"The result is larger than {MAX_RESULT_BYTES // 1024} KB.")
     if task_type == "topic_research":
         return _validate_topics(result, limit)
-    if task_type == "content_generation":
+    if task_type in ("content_generation", "content_revision"):
         return _validate_draft(result)
     raise ResultError(f"Task type {task_type!r} does not accept results.")
 
@@ -137,9 +144,61 @@ def _validate_draft(result: Job) -> Job:
     body = _text(result, "body_html", 200_000)
     if len(strip_html(body)) < 100:
         raise ResultError("body_html has too little text to be an article.")
+    image_url = _text(result, "image_url", 2000, required=False)
+    if image_url and not image_url.lower().startswith("https://"):
+        raise ResultError("image_url must be an https:// address.")
     return {"title": _text(result, "title", 255), "handle": handle, "meta_title": _text(result, "meta_title", 120, required=False),
             "meta_description": _text(result, "meta_description", 400, required=False), "summary_html": _text(result, "summary_html", 5000, required=False),
-            "body_html": body, "tags": _text_list(result, "tags", 30, 60), "image_alt": _text(result, "image_alt", 300, required=False)}
+            "body_html": body, "tags": _text_list(result, "tags", 30, 60), "image_alt": _text(result, "image_alt", 300, required=False),
+            "image_url": image_url, "notes": _validate_notes(result.get("notes"))}
+
+
+def _validate_notes(notes: Any) -> Job:
+    """Claude's notes for the team (never published). Optional, so a worker that does not send them still works."""
+    if notes is None:
+        return {}
+    _exact_keys(notes, set(NOTE_LISTS) | set(NOTE_TEXTS), "notes")
+    out: Job = {k: _text_list(notes, k, n, 1000) for k, n in NOTE_LISTS.items()}
+    out.update({k: _text(notes, k, n, required=False) for k, n in NOTE_TEXTS.items()})
+    return out
+
+
+_HREF = re.compile(r"""<a\s[^>]*href=["']([^"']+)["']""", re.I)
+_IMG = re.compile(r"""<img\s[^>]*src=["']([^"']+)["'][^>]*>""", re.I)
+
+
+def check_against_store(brand_id: str, clean: Job) -> Job:
+    """Hold Claude to the store's real pages and pictures. The featured image must be a synced product image (otherwise it is
+    removed), and so must every inline image. Internal links that are not a synced product, a published article or a page
+    named in the brand's documents are kept, but listed under notes.needs_confirmation for a person to check."""
+    images = {r["image_url"] for r in all_rows("SELECT image_url FROM products WHERE brand_id = ? AND image_url != ''", brand_id)}
+    known = {r["url"] for r in all_rows("SELECT url FROM products WHERE brand_id = ? UNION SELECT live_url FROM articles WHERE brand_id = ? AND live_url IS NOT NULL",
+                                        brand_id, brand_id)}
+    host = config.brands[brand_id].storefront_domain
+    docs = brand_knowledge(brand_id)
+    notes = dict(clean.get("notes") or {})
+    confirm = list(notes.get("needs_confirmation") or [])
+    added: list[str] = []
+    out = dict(clean)
+    if out.get("image_url") and out["image_url"] not in images:
+        added.append(f"Claude picked a featured image that is not a synced product photo ({out['image_url'][:120]}); it was removed. Choose one in the editor.")
+        out["image_url"], out["image_alt"] = "", ""
+
+    def drop_foreign(m: re.Match[str]) -> str:
+        if m.group(1) in images:
+            return m.group(0)
+        added.append(f"An inline image that is not a product photo was removed ({m.group(1)[:120]}).")
+        return ""
+    out["body_html"] = _IMG.sub(drop_foreign, out["body_html"])
+    for href in sorted(set(_HREF.findall(out["body_html"]))):
+        internal = href.startswith("/") or host in href
+        path = href.split(host, 1)[1] if host in href else href
+        if internal and href not in known and f"https://{host}{path}" not in known and path.split("?")[0].split("#")[0].rstrip("/") not in docs:
+            added.append(f"Check the link {href}: it is not a synced product, a published article or a page listed in the brand documents.")
+    if added:
+        notes["needs_confirmation"] = (confirm + added)[:40]
+        out["notes"] = notes
+    return out
 
 
 def store(job: Job, clean: Job) -> Job:
@@ -149,6 +208,8 @@ def store(job: Job, clean: Job) -> Job:
         return _store_topics(job, clean)
     if job["task_type"] == "content_generation":
         return _store_draft(job, clean)
+    if job["task_type"] == "content_revision":
+        return _store_revision(job, clean)
     raise ResultError("This task type does not accept results.")
 
 
@@ -176,9 +237,36 @@ def _store_draft(job: Job, clean: Job) -> Job:
     if all_rows("SELECT id FROM articles WHERE topic_id = ? LIMIT 1", topic["id"]):
         raise ResultError("This topic already has an article, so the draft was not saved.")
     st = brand_settings(job["brand_id"])
+    clean = check_against_store(job["brand_id"], clean)
+    notes = clean.pop("notes", {}) or {}
     a = create_article(None, job["brand_id"], {
         **clean, "primary_keyword": topic["primary_keyword"], "tags": clean["tags"], "author": st["defaultAuthor"], "topic_id": topic["id"],
     }, "claude", "draft")
+    run("UPDATE articles SET ai_notes_json = ? WHERE id = ?", json.dumps({**notes, "jobId": job["id"], "at": now()}, ensure_ascii=False), a["id"])
     run("UPDATE topics SET status='in_production', updated_at=? WHERE id=?", now(), topic["id"])
     run("UPDATE article_revisions SET note=? WHERE article_id=? AND version=1", f"First draft by an AI job ({job['id']})", a["id"])
     return {"kind": "article", "articleId": a["id"], "topicId": topic["id"], "summary": f"Draft saved: {a['title']}"}
+
+
+def _store_revision(job: Job, clean: Job) -> Job:
+    """Save Claude's revision as the next version of the article, through the normal save path (approval rules apply)."""
+    own = json.loads(job["input_json"])
+    a = get("SELECT * FROM articles WHERE id = ? AND brand_id = ?", own.get("article_id"), job["brand_id"])
+    if not a:
+        raise ResultError("The article does not exist any more, so the revision was not saved.")
+    clean = check_against_store(job["brand_id"], clean)
+    notes = clean.pop("notes", {}) or {}
+    patch = {k: v for k, v in clean.items() if k in REVISION_FIELDS}
+    if a["shopify_published"]:
+        patch.pop("handle", None)   # a live article keeps its public URL
+    if not patch.get("image_url"):   # no valid new picture: keep the one the article has
+        patch.pop("image_url", None)
+        patch.pop("image_alt", None)
+    try:
+        saved = save_article(None, a["id"], {**patch, "expected_version": own.get("base_version")},
+                             f"Revised by Claude: {s(own.get('instructions', ''), 160)}")
+    except HttpError as e:
+        raise ResultError(e.message) from e
+    run("UPDATE articles SET ai_notes_json = ? WHERE id = ?",
+        json.dumps({**notes, "jobId": job["id"], "at": now(), "revision": own.get("instructions", "")}, ensure_ascii=False), a["id"])
+    return {"kind": "article", "articleId": a["id"], "version": saved["version"], "summary": f"Revised: {saved['title']} (v{saved['version']})"}

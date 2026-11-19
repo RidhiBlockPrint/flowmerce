@@ -61,7 +61,7 @@ export default function Blogs() {
         }
     };
     return (<>
-      <PageHead title="Blogs" sub="Every article across both stores — drafts, reviews, Shopify drafts and live posts." actions={<>
+      <PageHead title="Blogs" actions={<>
           <Button icon="download" onClick={exportList}>Export</Button>
           {can('article:write') ? <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>New article</Button> : null}
         </>}/>

@@ -1,5 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { More } from '../components/More';
+import { WriteBlog } from '../components/claude';
 import Link from 'next/link';
 import { api, useApi, qs } from '../lib/api';
 import { useApp, useBrandParam } from '../lib/app';
@@ -73,23 +75,15 @@ export default function Automation() {
         toast.error(e);
     } };
     return (<>
-      <PageHead title="Automation" sub="Topic research → keyword validation → topic approval → content generation → content approval → image selection → Shopify draft → publication approval → performance tracking. Automated stages run only when someone starts them; the background job only refreshes data."/>
+      <PageHead title="Automation" sub="Research → draft → approval → Shopify draft → tracking"/>
       <ErrorState error={q.error} onRetry={q.reload}/>
       {q.loading && !q.data ? <LoadingBlock rows={8}/> : null}
       {q.data ? (<div className="col" style={{ gap: 20 }}>
           {['pending_setup', 'disabled'].includes(q.data.configured.ai?.state) ? <div className="callout warn"><Icon name="plug"/><div><b>AI execution is {q.data.configured.ai.state === 'disabled' ? 'switched off' : 'pending setup'}.</b> {q.data.configured.ai.reason} Topic research and content generation run as background AI jobs and wait for this. Everything else works. <Link href="/settings/integrations">Integrations</Link></div></div> : null}
-          {q.data.brands.map((b) => (<section key={b.brand}>
-              <div className="row-wrap mb-12">
-                <span className={`brand-dot ${b.brand}`}/>
-                <h2 className="serif" style={{ fontSize: 20 }}>{brandOf(b.brand).name}</h2>
-                {b.paused ? <Pill tone="neutral" dot>Paused {b.pause?.paused_by_name ? `by ${b.pause.paused_by_name}` : ''} {timeAgo(b.pause?.paused_at)}{b.pause?.reason ? ` — ${b.pause.reason}` : ''}</Pill> : <Pill tone="ok" dot>Active</Pill>}
-                <span className="spacer"/>
-                {can('workflow:run') ? (b.paused
-                    ? <Button size="sm" icon="play" onClick={() => resume(b.brand)}>Resume automation</Button>
-                    : <Button size="sm" icon="pause" onClick={() => setPause(b.brand)}>Pause automation</Button>) : null}
-              </div>
-              <div className="stages">
-                {b.stages.map((s, i) => (<div key={s.key} className={`stage ${s.state}`}>
+          {q.data.brands.map((b) => {
+              const urgent = b.stages.filter((s) => s.state === 'failed' || s.state === 'running' || s.humanAction || s.setupGap);
+              const stageList = (list) => (<div className="stages">
+                {list.map((s) => { const i = b.stages.indexOf(s); return (<div key={s.key} className={`stage ${s.state}`}>
                     <div className="row">
                       <span className="stage-num">{i + 1}</span>
                       <span className="strong" style={{ flex: 1 }}>{s.label}</span>
@@ -110,11 +104,25 @@ export default function Automation() {
                         {s.state === 'failed' && s.lastRun && s.lastRun.trigger !== 'ai_job' ? <Button size="sm" variant="primary" icon="refresh" loading={busy === `run:${s.lastRun.id}`} disabled={b.paused} onClick={() => retry(s.lastRun.id)}>Retry</Button> : null}
                         <Button size="sm" icon="play" loading={busy === `${b.brand}:${s.key}`} disabled={b.paused || !!s.setupGap || s.state === 'running'} title={['topic_research', 'content_generation'].includes(s.key) ? 'Queues a background AI job' : undefined} onClick={() => runStage(b.brand, s.key, s.label)}>{['topic_research', 'content_generation'].includes(s.key) ? 'Queue AI job' : 'Run now'}</Button>
                       </div>) : null}
-                  </div>))}
+                  </div>); })}
+              </div>);
+              return (<section key={b.brand}>
+              <div className="row-wrap mb-12">
+                <span className={`brand-dot ${b.brand}`}/>
+                <h2 className="serif" style={{ fontSize: 20 }}>{brandOf(b.brand).name}</h2>
+                {b.paused ? <Pill tone="neutral" dot>Paused {b.pause?.paused_by_name ? `by ${b.pause.paused_by_name}` : ''} {timeAgo(b.pause?.paused_at)}{b.pause?.reason ? ` — ${b.pause.reason}` : ''}</Pill> : <Pill tone="ok" dot>Active</Pill>}
+                <span className="spacer"/>
+                {can('workflow:run') && !b.paused ? <WriteBlog brand={b.brand}/> : null}
+                {can('workflow:run') ? (b.paused
+                    ? <Button size="sm" icon="play" onClick={() => resume(b.brand)}>Resume automation</Button>
+                    : <Button size="sm" icon="pause" onClick={() => setPause(b.brand)}>Pause automation</Button>) : null}
               </div>
-            </section>))}
+              {urgent.length ? stageList(urgent) : <div className="muted small"><Icon name="checkCircle" size="sm"/> Nothing needs attention.</div>}
+              <More id={`auto-${b.brand}`} label={`Show all ${b.stages.length} stages`}>{stageList(b.stages)}</More>
+            </section>); })}
 
 
+          <More id="auto-history" label="Show AI jobs and run history" forceOpen={!!focusJob}>
           <AiJobs brand={brand} focusJobId={focusJob} onFocusHandled={() => setFocusJob(null)} refreshKey={jobsTick} />
 
           <Card title="Run history" sub="Runs started here, by the background refresh, or reported by external agents through the webhook" flush>
@@ -138,6 +146,7 @@ export default function Automation() {
             </div>
 </>)}</Paged>
           </Card>
+          </More>
         </div>) : null}
       {pause ? <PauseDialog brand={pause} onClose={() => setPause(null)} onDone={() => { setPause(null); q.reload(); }}/> : null}
     </>);

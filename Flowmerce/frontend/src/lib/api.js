@@ -67,6 +67,7 @@ export const api = {
     get: (path, signal) => request('GET', path, undefined, { signal }),
     post: (path, body, headers) => request('POST', path, body ?? {}, { headers }),
     patch: (path, body) => request('PATCH', path, body),
+    del: (path) => request('DELETE', path),
 };
 export function qs(params) {
     const p = new URLSearchParams();

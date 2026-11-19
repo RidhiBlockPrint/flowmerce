@@ -13,6 +13,7 @@ import { ConfirmDialog, Dialog, useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import { ScoreRing } from '../components/charts';
 import { AuthorizeDialog, MODE_LABEL, RejectDialog } from '../components/publish';
+import { AskClaude, ClaudeInstructions, ClaudeNotes } from '../components/claude';
 const EDITABLE = ['title', 'handle', 'primary_keyword', 'meta_title', 'meta_description', 'summary_html', 'body_html', 'tags', 'author', 'image_url', 'image_alt'];
 const pick = (a) => Object.fromEntries(EDITABLE.map((k) => [k, a[k] ?? '']));
 export default function ArticleEditor() {
@@ -226,7 +227,7 @@ export default function ArticleEditor() {
             { key: 'performance', label: 'Performance' },
         ]}/>
 
-      {tab === 'edit' ? <EditTab draft={draft} set={set} article={a} detail={data} editable={editable} rteKey={rteKey} storefront={brand.storefrontUrl} onAssign={async (v) => { try {
+      {tab === 'edit' ? <EditTab draft={draft} set={set} article={a} detail={data} editable={editable} dirty={dirty} onRevised={reload} rteKey={rteKey} storefront={brand.storefrontUrl} onAssign={async (v) => { try {
         await api.patch(`/articles/${a.id}`, { assignee_id: v || null });
         reload();
         toast.ok('Assignee updated.');
@@ -242,7 +243,7 @@ export default function ArticleEditor() {
     </div>);
 }
 /* ---------------- Edit ---------------- */
-function EditTab({ draft, set, article, detail, editable, rteKey, storefront, onAssign }) {
+function EditTab({ draft, set, article, detail, editable, dirty, onRevised, rteKey, storefront, onAssign }) {
     const { checks, score, words } = useMemo(() => seoChecks(draft, new URL(storefront).host), [draft, storefront]);
     const [mode, setMode] = useState('visual');
     const [linkOpen, setLinkOpen] = useState(false);
@@ -276,6 +277,25 @@ function EditTab({ draft, set, article, detail, editable, rteKey, storefront, on
             document.execCommand('insertHTML', false, `<a href="${url.replace(/"/g, '&quot;')}">${(text || url).replace(/</g, '&lt;')}</a>`);
         if (rte.current)
             set('body_html', rte.current.innerHTML);
+    };
+    const [seoSuggestion, setSeoSuggestion] = useState(null);
+    const seoContext = () => ({ title: draft.title, primary_keyword: draft.primary_keyword, meta_title: draft.meta_title, meta_description: draft.meta_description,
+        handle: draft.handle, tags: draft.tags, featured_image: draft.image_url ? (products.data ?? []).find((p) => p.image_url === draft.image_url)?.title ?? draft.image_url : '',
+        article_text: draft.body_html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 12000) });
+    const applySeo = (withTitle) => {
+        const s = seoSuggestion;
+        set('meta_title', s.meta_title);
+        set('meta_description', s.meta_description);
+        if (!article.shopify_published && s.handle)
+            set('handle', s.handle.toLowerCase().replace(/[^a-z0-9-]/g, '-'));
+        set('tags', s.tags.join(', '));
+        if (s.summary)
+            set('summary_html', `<p>${s.summary.replace(/</g, '&lt;')}</p>`);
+        if (draft.image_url && s.image_alt)
+            set('image_alt', s.image_alt);
+        if (withTitle && s.title)
+            set('title', s.title);
+        setSeoSuggestion(null);
     };
     const metaTitleShown = draft.meta_title || draft.title;
     const host = new URL(storefront).host;
@@ -319,6 +339,8 @@ function EditTab({ draft, set, article, detail, editable, rteKey, storefront, on
         <Card title="Listing summary" sub="Shown on the blog index page">
           <textarea className="textarea" rows={3} value={draft.summary_html.replace(/<\/?p>/g, '')} onChange={(e) => set('summary_html', e.target.value ? `<p>${e.target.value}</p>` : '')} readOnly={!editable} aria-label="Summary"/>
         </Card>
+        <ClaudeInstructions article={article} dirty={dirty} onRevised={onRevised}/>
+        <ClaudeNotes notes={detail.aiNotes}/>
       </div>
 
       <div className="col" style={{ gap: 16, minWidth: 0 }}>
@@ -337,8 +359,25 @@ function EditTab({ draft, set, article, detail, editable, rteKey, storefront, on
             <div className="d">{draft.meta_description || <span style={{ color: '#9aa0a6' }}>Google will pick text from the page when there is no meta description.</span>}</div>
           </div>
         </Card>
-        <Card title="SEO fields">
+        <Card title="SEO fields" actions={editable ? <AskClaude brand={article.brand_id} kind="seo_fields" context={seoContext} onResult={setSeoSuggestion} label="Ask Claude"/> : null}>
           <div className="col gap-12">
+            {seoSuggestion ? (<div className="callout info" style={{ display: 'block' }}>
+                <div className="small strong mb-8">Claude suggests (nothing is changed until you apply it):</div>
+                <div className="small col" style={{ gap: 4 }}>
+                  {seoSuggestion.title && seoSuggestion.title !== draft.title ? <div><b>Title:</b> {seoSuggestion.title}</div> : null}
+                  <div><b>SEO title:</b> {seoSuggestion.meta_title} <span className="faint">({seoSuggestion.meta_title.length})</span></div>
+                  <div><b>Meta description:</b> {seoSuggestion.meta_description} <span className="faint">({seoSuggestion.meta_description.length})</span></div>
+                  {!article.shopify_published ? <div><b>URL handle:</b> <span className="mono">{seoSuggestion.handle}</span></div> : null}
+                  <div><b>Tags:</b> {seoSuggestion.tags.join(', ')}</div>
+                  {seoSuggestion.summary ? <div><b>Listing summary:</b> {seoSuggestion.summary}</div> : null}
+                  {draft.image_url && seoSuggestion.image_alt ? <div><b>Image alt text:</b> {seoSuggestion.image_alt}</div> : null}
+                </div>
+                <div className="row-wrap mt-8" style={{ gap: 6 }}>
+                  <Button size="sm" variant="primary" onClick={() => applySeo(false)}>Apply</Button>
+                  {seoSuggestion.title && seoSuggestion.title !== draft.title ? <Button size="sm" onClick={() => applySeo(true)}>Apply with the title</Button> : null}
+                  <Button size="sm" variant="ghost" onClick={() => setSeoSuggestion(null)}>Dismiss</Button>
+                </div>
+              </div>) : null}
             {article.shopify_sync === 'public_feed' ? <div className="callout info"><Icon name="info"/><div className="small">SEO title and meta description are not available from the public feed, so blank fields here do not mean Shopify has none.</div></div> : null}
             <Field label="Primary keyword"><input className="input" value={draft.primary_keyword} onChange={(e) => set('primary_keyword', e.target.value)} readOnly={!editable}/></Field>
             <Field label="SEO title" counter={{ n: draft.meta_title.length, max: 60 }} hint="Leave empty to use the article title."><input className="input" value={draft.meta_title} onChange={(e) => set('meta_title', e.target.value)} readOnly={!editable}/></Field>

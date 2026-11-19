@@ -29,3 +29,7 @@ logs/*
 
 # Staging area for external projects awaiting integration (may hold real data and secrets)
 incoming/
+
+# Brand guides Claude reads (internal: sales figures, briefs). The repository is public: they stay on the
+# operator's computer only. The folder's README.md (file list) is committed.
+src/flowmerce/modules/seo/knowledge/*/

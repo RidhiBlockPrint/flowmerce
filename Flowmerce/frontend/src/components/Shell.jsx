@@ -11,6 +11,8 @@ import { api, useApi, qs } from '../lib/api';
 import { useApp, presetRange } from '../lib/app';
 import { fmtDate, timeAgo } from '../lib/format';
 import { DemoBanner } from './DemoBanner';
+import { AmbientBackground } from './AmbientBackground';
+import { BudgetWarning } from './claude';
 import { IS_DEMO } from '../demo';
 import { NAV, SETTINGS, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../lib/routes.mjs';
 export function Shell({ children }) {
@@ -44,6 +46,7 @@ export function Shell({ children }) {
     return (<>
       <a className="skip-link" href="#main">Skip to content</a>
       {IS_DEMO ? <DemoBanner /> : null}
+      <AmbientBackground />
       <div className="shell">
         {navOpen ? <div className="sidebar-scrim" onClick={() => setNavOpen(false)}/> : null}
         <aside id="sidebar" className={`sidebar ${navOpen ? 'open' : ''}`} aria-label="Main navigation" {...(navOpen ? { role: 'dialog', 'aria-modal': true } : {})}>
@@ -76,12 +79,20 @@ export function Shell({ children }) {
           </header>
           <main className="content" id="main" tabIndex={-1}>
             {loc.pathname !== '/' ? <div className="page-back"><BackButton /></div> : null}
+            {moduleOf(loc.pathname) === 'seo' && !IS_DEMO ? <ClaudeBudgetBanner pathname={loc.pathname}/> : null}
             {children}
           </main>
         </div>
       </div>
       {tasksOpen ? <TasksDrawer tasks={tasks.data ?? []} loading={tasks.loading} onClose={() => setTasksOpen(false)}/> : null}
     </>);
+}
+/** On SEO & Blog pages: a warning when today's Claude limit or the month's budget is nearly used. Re-read on each page. */
+function ClaudeBudgetBanner({ pathname }) {
+    const b = useApi('/ai/budget');
+    const { reload } = b;
+    useEffect(() => { reload(); }, [pathname, reload]);
+    return b.data?.warning ? <div className="mb-12"><BudgetWarning budget={b.data}/></div> : null;
 }
 /** Goes back one page; when this tab has no earlier page (opened directly), goes to the parent section or Home. */
 function BackButton() {

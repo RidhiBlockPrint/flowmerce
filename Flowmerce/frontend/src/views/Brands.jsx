@@ -21,7 +21,7 @@ export default function Brands() {
     const { me } = useApp();
     const integrations = useApi('/integrations');
     return (<>
-      <PageHead title="Brands" sub="Store details, connection status and the voice guidance used for each brand. Credentials are never shown here; they are set on the server."/>
+      <PageHead title="Brands" sub="Store details, connections and voice."/>
       <ErrorState error={integrations.error} onRetry={integrations.reload}/>
       <div className="col" style={{ gap: 24 }}>
         {me.brands.map((b) => (<BrandBlock key={b.id} brand={b} items={integrations.data?.items.filter((i) => i.brand === b.id)} loading={integrations.loading && !integrations.data} failed={!!integrations.error && !integrations.data}/>))}
