@@ -2,6 +2,32 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-19 (Shipping: delivered in Shopify means delivered in Flowmerce)
+
+- **Fixed** an order Shopify shows as delivered could stay on the Shipping board as "no tracking / pending" (CPC #6948).
+  Two causes: (1) Flowmerce's own Shopify copy was last read before the delivery, and the order then passed the 60-day
+  limit of Flowmerce's Shopify keys, so the copy never updated, while the refresh ignored the hub's newer "delivered".
+  `ops.refresh_from_shopify_orders()` (105) now counts a fulfilment as delivered when the hub's copy of it says so,
+  unless Shopify cancelled it. (2) Two orders sent in one parcel share one tracking number (#6948 and #6949), but
+  only one of them owned the tracking row, so the other showed "Tracking missing". `ops.flow_board` (108) now gives
+  that order the shared parcel's number, status and last scan, plus the real dispatch time instead of the time
+  Flowmerce stored the row. The board resolves both orders as Delivered once the shared number is delivered.
+- **Fixed** any tracking number on a parcel's Shopify fulfilment now counts, not only the one its row shows: CPC #8446
+  lists TBA336415473219 (delivered by Amazon on 18 Nov), whose tracking row belongs to #8426, and stayed on the board.
+- **Fixed** "Marked DONE by the team, but Shopify shows not fulfilled" (Checks tab) listed delivered orders, many marked
+  critical with "Package delivered near the front door" from Amazon (114 rows, now 47). Delivered orders, by any
+  source, are left out.
+- **Fixed** dispatch time is the earlier of the Shopify fulfilment and the carrier's first movement (108): # RBP8183 went
+  out through Amazon on 5 Nov but was entered in Shopify on 19 Nov, and showed "On track, 0 days".
+- **Fixed** the age figures add up to the active total: the Overview ring, "Shipments by age" and "Aging by carrier"
+  now include the parcels no carrier reports on ("Unconfirmed", 58), and the Overview headline names every open-check
+  type (it named 4 of 8, so 53 orders read as 41).
+- **Fixed** the team's "still in transit" count no longer includes a parcel whose order was delivered after the mark
+  (# RBP7010); the order drawer shows the Amazon (MCF) line only on the Amazon parcel, not on a FedEx parcel of the same
+  order; the drawer has side padding (its text touched or was cut at the left edge on narrow screens).
+  **Run `db/central/105_refresh_from_shopify_orders.sql` and `108_flow_board_amazon.sql` (or `supabase_setup.sql`) in the
+  Supabase SQL editor.** 108 changed again after the first run today, so run it once more.
+
 ## 2026-11-19 (Shipping: a delivered order is never an alert)
 
 Verified: 100 shipping tests (new: a no-tracking fulfilment on a delivered order, a last scan that says

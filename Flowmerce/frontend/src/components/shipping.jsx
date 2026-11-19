@@ -188,39 +188,75 @@ function TeamMark({ parcel, onSaved }) {
     </div>);
 }
 
+const JOURNEY = ['Ordered', 'Dispatched', 'In transit', 'Out for delivery', 'Delivered'];
+/** Where a parcel is on the five-step journey (0-4), from its stage and carrier status. */
+function journeyIndex(p) {
+    if (p.cat === 'delivered')
+        return 4;
+    if (p.stage === 'pre_dispatch')
+        return 0;
+    if (p.status === 'out_for_delivery')
+        return 3;
+    return ['', 'pending', 'info_received'].includes(p.status || '') ? 1 : 2;
+}
+
+/** One parcel in the order drawer: key facts, the journey bar, the carrier timeline and the next step. */
+function ParcelPanel({ p, order, many, onSaved }) {
+    const at = journeyIndex(p);
+    const bad = ['red', 'orange', 'lost', 'failed'].includes(p.cat) || p.exception || p.noMove;
+    const warn = p.cat === 'yellow';
+    const events = [...(p.events ?? [])].reverse();
+    const extra = [
+        ...(p.resolved?.by === 'order' ? [['Delivered', p.resolved.detail]] : p.resolved ? [['Resolved', `${p.resolved.label} (${p.resolved.by === 'team' ? `team${p.resolved.who ? `: ${p.resolved.who}` : ''}` : `carrier: ${p.resolved.detail || 'last update'}`})${p.resolved.at ? ` · ${timeAgo(p.resolved.at)}` : ''}`]] : []),
+        ...(p.reshipped ? [['Reshipped', `${p.reshipped.detail}${p.reshipped.newOrder && p.reshipped.newOrder !== order ? ` New order ${p.reshipped.newOrder}.` : ''}${p.reshipped.newTracking ? ` New tracking ${p.reshipped.newTracking}.` : ''} Close this old parcel in Shopify / Amazon.`]] : []),
+        ...(p.amazonStatus ? [['Amazon (MCF)', `${p.amazonStatus}${p.amazonAt ? ` · ${timeAgo(p.amazonAt)}` : ''}${p.amazonTracking && p.amazonTracking !== p.tracking ? ` · tracking ${p.amazonTracking}` : ''}`]] : []),
+        ...(p.manual ? [['Team mark', `${TEAM_LABEL[p.manual.status] ?? p.manual.status}${p.manual.at ? ` · ${timeAgo(p.manual.at)}` : ''}`]] : []),
+        ...(p.delayReason ? [['Delay reason', p.delayReason]] : []),
+    ];
+    return (<section className="parcel">
+      <div className="parcel-head">
+        <div style={{ minWidth: 0 }}>
+          <div className="parcel-carrier">{p.carrier || 'Unknown carrier'}{many && p.tracking ? <span className="mono faint"> {p.tracking}</span> : null}</div>
+          <div className="row-wrap mt-4" style={{ gap: 4 }}><CatPill cat={p.cat} resolved={p.resolved}/>{p.noMove ? <Pill tone="warn">No movement</Pill> : null}{p.exception ? <Pill tone="crit">Exception</Pill> : null}</div>
+        </div>
+        <div className="parcel-days">{p.unconfirmed ? <span className="faint small">No delivery data</span> : <>{dayText(p.days)}<span>{STAGE_LABEL[p.stage] ?? p.stage}</span></>}</div>
+      </div>
+      <div className="parcel-meta">
+        <div><small>Tracking</small><b className="mono">{p.missingTracking ? 'Missing' : p.trackUrl ? <a href={p.trackUrl} target="_blank" rel="noreferrer">{p.tracking}</a> : (p.tracking || '—')}</b></div>
+        <div><small>Carrier status</small><b>{(p.status || '').replace(/_/g, ' ') || '—'}</b></div>
+        <div><small>Ordered</small><b>{p.orderCreatedAt ? fmtDateTime(p.orderCreatedAt) : '—'}</b></div>
+        <div><small>Dispatched</small><b>{p.dispatchedAt ? fmtDateTime(p.dispatchedAt) : 'Not yet'}</b></div>
+        <div><small>Promised by</small><b>{p.promisedAt ? fmtDateTime(p.promisedAt) : '—'}</b></div>
+        <div><small>Last scan</small><b>{p.lastScanAt ? timeAgo(p.lastScanAt) : 'No scan data'}</b></div>
+      </div>
+      <div className="parcel-journey" aria-label={`Journey: ${JOURNEY[at]}`}>
+        {JOURNEY.map((label, i) => <span key={label} className={`pj-seg${i < at ? ' done' : i === at ? (at === 4 ? ' done' : bad ? ' crit' : warn ? ' warn' : ' now') : ''}`} title={label}/>)}
+      </div>
+      <div className="pj-labels">{JOURNEY.map((label, i) => <span key={label} className={i === at ? 'on' : ''}>{label}</span>)}</div>
+      <div className="parcel-sub">Tracking history</div>
+      {events.length ? (<ol className="ptl">{events.map((e, i) => (
+          <li key={e.at + e.description} className={`ptl-ev${i === 0 ? (e.status === 'delivered' ? ' done' : bad ? ' crit' : ' now') : ' done'}`}>
+            <b>{e.description}</b><span>{fmtDateTime(e.at)}{e.location ? ` · ${e.location}` : ''}</span>
+          </li>))}</ol>)
+        : <div className="muted small">{p.missingTracking ? 'No tracking number, so there are no scans.' : 'No carrier scan has been recorded yet.'}</div>}
+      {extra.length ? <div className="mt-12"><Kv items={extra}/></div> : null}
+      <div className={`parcel-next${bad ? ' crit' : ''}`}><b>Next step</b>{p.action}</div>
+      <div className="row-wrap mt-8">
+        {p.trackUrl ? <a className="btn sm" href={p.trackUrl} target="_blank" rel="noreferrer">Track on carrier site <Icon name="external" size="sm"/></a> : null}
+      </div>
+      {p.unconfirmed && p.trackingId ? <TeamMark parcel={p} onSaved={onSaved}/> : null}
+    </section>);
+}
+
 export function OrderDrawer({ order, brand, onClose }) {
     const q = useApi(`/shipping/shipments/${encodeURIComponent(order)}${brand ? `?brand=${brand}` : ''}`);
     const d = q.data;
     return (<Drawer title={`Order ${order}`} onClose={onClose}>
-      {q.error ? <ErrorState error={q.error} onRetry={q.reload}/> : !d ? <LoadingBlock rows={6}/> : (<div className="col" style={{ gap: 16 }}>
+      {q.error ? <ErrorState error={q.error} onRetry={q.reload}/> : !d ? <LoadingBlock rows={6}/> : (<div className="col" style={{ gap: 16, padding: '16px 18px 24px' }}>
           {d.shopifyUrl ? <div><ShopifyOrderLink url={d.shopifyUrl} label="Open in Shopify"/></div> : null}
           {d.excluded ? <div className="callout warn"><Icon name="info"/><div>This order is {d.excluded}, so it is left out of the active figures.</div></div> : null}
-          {d.packages.map((p) => (<Card key={p.key} title={<span className="row">{p.carrier || 'Unknown carrier'} <CatPill cat={p.cat} resolved={p.resolved}/></span>} sub={p.tracking ? undefined : 'No tracking number yet'}>
-              <Kv items={[
-                  ['Tracking', p.missingTracking ? 'Missing' : p.trackUrl ? <a href={p.trackUrl} target="_blank" rel="noreferrer">{p.tracking}</a> : p.tracking],
-                  ['Stage', STAGE_LABEL[p.stage] ?? p.stage],
-                  ['In stage', p.unconfirmed ? 'No delivery data for this carrier' : dayText(p.days)],
-                  ['Order placed', p.orderCreatedAt ? fmtDateTime(p.orderCreatedAt) : '—'],
-                  ['Dispatched', p.dispatchedAt ? fmtDateTime(p.dispatchedAt) : 'Not yet'],
-                                    ['Last scan', p.lastScanAt ? `${fmtDateTime(p.lastScanAt)} — ${p.scanDescription || 'no description'}${p.location ? `, ${p.location}` : ''}` : 'No scan data'],
-                  ['Carrier status', p.status.replace(/_/g, ' ') || '—'],
-                  ...(p.resolved?.by === 'order' ? [['Delivered', p.resolved.detail]] : p.resolved ? [['Resolved', `${p.resolved.label} (${p.resolved.by === 'team' ? `team${p.resolved.who ? `: ${p.resolved.who}` : ''}` : `carrier: ${p.resolved.detail || 'last update'}`})${p.resolved.at ? ` · ${timeAgo(p.resolved.at)}` : ''}`]] : []),
-                  ...(p.reshipped ? [['Reshipped', `${p.reshipped.detail}${p.reshipped.newOrder && p.reshipped.newOrder !== order ? ` New order ${p.reshipped.newOrder}.` : ''}${p.reshipped.newTracking ? ` New tracking ${p.reshipped.newTracking}.` : ''} Close this old parcel in Shopify / Amazon.`]] : []),
-                  ...(p.amazonStatus ? [['Amazon (MCF)', `${p.amazonStatus}${p.amazonAt ? ` · ${timeAgo(p.amazonAt)}` : ''}${p.amazonTracking && p.amazonTracking !== p.tracking ? ` · tracking ${p.amazonTracking}` : ''}`]] : []),
-                  ['Team mark', p.manual ? `${TEAM_LABEL[p.manual.status] ?? p.manual.status}${p.manual.at ? ` · ${timeAgo(p.manual.at)}` : ''}` : 'None'],
-                  ['Promised delivery', p.promisedAt ? fmtDateTime(p.promisedAt) : '—'],
-                  ...(p.delayReason ? [['Delay reason', p.delayReason]] : []),
-              ]}/>
-              <p className="small" style={{ margin: '10px 0 0' }}><b>Next step:</b> {p.action}</p>
-              {p.unconfirmed && p.trackingId ? <TeamMark parcel={p} onSaved={q.reload}/> : null}
-              </Card>))}
-          {d.packages.map((p) => (<Card key={`ev-${p.key}`} title="Tracking timeline" sub={d.packages.length > 1 ? `${p.carrier || 'Unknown carrier'} ${p.tracking || ''}` : undefined}>
-              {p.events?.length ? (<ol className="alert-list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>{[...p.events].reverse().map((e) => (<li key={e.at + e.description} className="alert-item"><span className={`sev ${e.status === 'delivered' ? 'info' : e.status === 'returned' || e.status === 'failed_delivery' ? 'critical' : 'warning'}`}/>
-                    <span className="small"><b>{e.description}</b><span className="muted xs" style={{ display: 'block' }}>{fmtDateTime(e.at)}{e.location ? ` · ${e.location}` : ''}</span></span></li>))}</ol>) : <div className="muted small">{p.missingTracking ? 'No tracking number, so there are no scans.' : 'No carrier scan has been recorded yet.'}</div>}
-            </Card>))}
-          <Card title="Destination">
-            <Kv items={[['Destination', d.destination ? `${d.destination.city}, ${d.destination.state} (city and state only)` : '—'], ...(d.items ?? []).map((i) => [`${i.qty} x`, i.name])]}/>
-          </Card>
+          {d.packages.map((p) => <ParcelPanel key={p.key} p={p} order={order} many={d.packages.length > 1} onSaved={q.reload}/>)}
+          {d.destination ? <div className="muted small">Ship to {d.destination.city}, {d.destination.state} <span className="faint">(city and state only)</span></div> : null}
           <OrderActions order={order} detail={d} setData={q.setData} brand={brand}/>
           <Card title="Order check">
             {d.check ? (<Kv items={[

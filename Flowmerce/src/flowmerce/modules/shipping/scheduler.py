@@ -27,6 +27,7 @@ def _loop(minutes: int) -> None:
             log.info("shipping refresh ok: %s", res.get("result"))
             from . import board
             board.snapshot(force=True)  # reload the Shipping page's data here, so no page waits for it
+            board.warm()                # and build the page's figures from it
         except SupabaseError as e:
             log.warning("shipping refresh failed (%s): %s", e.state, e.message)
         except Exception:           # never let the thread die

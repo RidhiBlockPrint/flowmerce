@@ -240,32 +240,30 @@ class ServiceTest(unittest.TestCase):
 
 
 class HomeSnapshotTest(unittest.TestCase):
-    """Shipping figures on the Home page: per brand, never added across brands by mistake, never an error."""
+    """Shipping figures on the Home page come from the Shipping board itself (same numbers as the Shipping page),
+    per brand, never added across brands by mistake, and never an error. The figures are checked in
+    test_board.BoardTest.test_home_figures_match_the_board."""
 
-    SUMMARY = [{"store": "RBP", "open_tracking": 10, "in_transit": 3, "out_for_delivery": 1, "delivered_30d": 20, "exceptions": 2, "unverified": 4},
-               {"store": "CPC", "open_tracking": 5, "in_transit": 1, "out_for_delivery": 0, "delivered_30d": 9, "exceptions": 1, "unverified": 2}]
+    def setUp(self):
+        from flowmerce.modules.shipping import board
+        board.forget()
 
-    def test_one_brand_only_counts_its_store(self):
-        rec = use({"shipping_summary": self.SUMMARY, "shipment_list": [
-            {"order_name": "#R1", "store": "RBP", "carrier_name": None, "days_since_dispatch": 12, "last_scan_place": "X", "tracking_id": "t1"}]})
-        s = service.home_snapshot(["ridhi"])
-        self.assertEqual(s["all"]["active"], 10)
-        self.assertEqual(s["all"]["inTransit"], 4)
-        self.assertEqual(s["all"]["problems"], 2)
-        self.assertEqual(list(s["byBrand"]), ["ridhi"])
-        self.assertEqual(s["all"]["top"][0], {"order": "#R1", "brand": "ridhi", "carrier": "Unknown", "days": 12, "place": "X", "trackingId": "t1"})
-        self.assertIn(("store", "in.(RBP)"), rec.params())
-
-    def test_both_brands_kept_separate_in_by_brand(self):
-        use({"shipping_summary": self.SUMMARY, "shipment_list": []})
-        s = service.home_snapshot(["ridhi", "cpc"])
-        self.assertEqual(s["all"]["problems"], 3)
-        self.assertEqual((s["byBrand"]["ridhi"]["problems"], s["byBrand"]["cpc"]["problems"]), (2, 1))
+    def test_home_never_waits_for_the_first_board_read(self):
+        from unittest import mock
+        from flowmerce.modules.shipping import board
+        with mock.patch.object(board, "reload_in_background") as bg:
+            self.assertEqual(service.home_snapshot(["ridhi"]), {"loading": True})
+        bg.assert_called_once()
 
     def test_supabase_down_gives_none_not_an_error(self):
-        use({"shipping_summary": httpx.Response(500, json={"message": "boom"})})
-        self.assertIsNone(service.home_snapshot(["ridhi"]))
+        from unittest import mock
+        from flowmerce.modules.shipping import board
+        with mock.patch.object(board, "loaded", return_value=True),                 mock.patch.object(board, "dataset", side_effect=SupabaseError("unreachable", "boom")):
+            self.assertIsNone(service.home_snapshot(["ridhi"]))
+
+    def test_no_known_brand_gives_none(self):
         self.assertIsNone(service.home_snapshot([]))
+        self.assertIsNone(service.home_snapshot(["unknown"]))
 
 
 class ShopifySourceTest(unittest.TestCase):

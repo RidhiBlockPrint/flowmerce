@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
-SKIP = {"node_modules", ".next", "out"}
+SKIP = {"node_modules", ".next", ".next-preview", "out"}  # build output (.next-preview: a second preview server's)
 
 
 def frontend_files() -> list[Path]:

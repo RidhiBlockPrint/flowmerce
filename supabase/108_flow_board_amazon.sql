@@ -44,7 +44,9 @@ select 'tracking'::text                 as row_kind,
        t.shipment_id, t.kind,
        t.carrier_name, t.tracking_number, t.track_url,
        t.status, t.raw_status, t.source,
-       t.shipped_at, t.last_scan_at, t.last_scan_place, sh.last_scan_text,
+       -- dispatched = the earlier of Shopify's fulfilment and the carrier's first movement: a parcel Amazon sent on
+       -- 5 Nov but entered in Shopify on 19 Nov (# RBP8183) is 14 days old, not 0
+       least(t.shipped_at, tk.picked_up_at) as shipped_at, t.last_scan_at, t.last_scan_place, sh.last_scan_text,
        t.delivered_at, t.eta, t.last_check_ok_at,
        t.team_mark, t.team_mark_at,
        t.open_exceptions,
@@ -54,18 +56,27 @@ select 'tracking'::text                 as row_kind,
 from ops.shipment_list t
 join ops.shipments sh on sh.id = t.shipment_id
 join ops.orders o     on o.id  = t.order_id
+left join ops.tracking_numbers tk on tk.id = t.tracking_id
 left join hub h       on h.id  = t.order_id
 left join amz_order a on a.order_id = t.order_id
 
 union all
 
+-- A fulfilment with no tracking row of its own. Usually Shopify has no number for it. But two orders sent in ONE
+-- parcel share one number, and the number's tracking row belongs to only one of them (e.g. CPC #6948 and #6949,
+-- DHL 4503128464): the other order then reads that shared parcel's number, status and last scan, so it is neither
+-- "no tracking number" nor stuck once the parcel is delivered. Dispatch time is the fulfilment's own time, not
+-- when Flowmerce first stored the row.
 select 'shipment', sh.id::text, null::uuid,
        sh.store, o.id, o.name, o.placed_at,
        sh.id, sh.kind,
-       coalesce(c.name, nullif(sh.carrier, '')), null::text, null::text,
-       'pending'::text, null::text, 'shopify'::text,
-       sh.created_at, null::timestamptz, sh.last_scan_place, sh.last_scan_text,
-       sh.delivered_at, sh.eta, null::timestamptz,
+       coalesce(c.name, nullif(sh.carrier, '')), tn.tracking_number, null::text,
+       coalesce(tn.status, 'pending'), tn.raw_status, 'shopify'::text,
+       least(coalesce(case when (sh.step_times->>'shipped') ~ '^\d{4}-' then (sh.step_times->>'shipped')::timestamptz end,
+                      sh.created_at),
+             case when (sh.step_times->>'transit') ~ '^\d{4}-' then (sh.step_times->>'transit')::timestamptz end),
+       tn.last_scan_at, coalesce(sh.last_scan_place, tn.last_scan_place), coalesce(sh.last_scan_text, tn.last_scan_text),
+       coalesce(sh.delivered_at, tn.delivered_at), coalesce(sh.eta, tn.eta), tn.last_check_ok_at,
        null::text, null::timestamptz,
        0,
        o.total, o.currency, o.financial_status, o.fulfillment_status, o.cancelled_at,
@@ -76,6 +87,14 @@ join ops.orders o on o.id = sh.order_id
 left join ops.carriers c on c.id = sh.carrier_id
 left join hub h on h.id = o.id
 left join amz_order a on a.order_id = o.id
+left join lateral (select t.tracking_number, t.status, t.raw_status, t.last_scan_at, t.delivered_at, t.eta,
+                          t.last_check_ok_at, s2.last_scan_place, s2.last_scan_text
+                     from ops.tracking_numbers t
+                     join ops.shipments s2 on s2.id = t.shipment_id
+                    where t.carrier_id = sh.carrier_id and t.store = sh.store
+                      and t.tracking_number = any(sh.tracking)
+                    order by (t.status = 'delivered') desc, t.updated_at desc
+                    limit 1) tn on true
 where sh.step not in ('cancelled')
   and not exists (select 1 from ops.tracking_numbers t where t.shipment_id = sh.id)
 

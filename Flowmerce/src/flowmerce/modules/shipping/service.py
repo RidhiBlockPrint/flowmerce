@@ -10,7 +10,6 @@ from __future__ import annotations
 import csv
 import io
 import re
-from datetime import datetime, timezone
 from typing import Any
 
 from .rules import (ALLOWED_FILTERS, ALLOWED_SORTS, TEAM_MARKS, clamp_int, freshness, search_filter,
@@ -99,37 +98,25 @@ def summary(brand: str | None) -> dict[str, Any]:
 
 
 BRAND_FOR_STORE = {"RBP": "ridhi", "CPC": "cpc"}
-HOME_TOP = 4
-
-
-def _snap(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    n = lambda k: sum(int(r.get(k) or 0) for r in rows)  # noqa: E731
-    return {"active": n("open_tracking"), "inTransit": n("in_transit") + n("out_for_delivery"),
-            "delivered30d": n("delivered_30d"), "problems": n("exceptions"), "unverified": n("unverified")}
 
 
 def home_snapshot(brand_ids: list[str]) -> dict[str, Any] | None:
-    """Shipping figures for the Home page: all selected brands together (`all`), each brand (`byBrand`) and the
-    parcels with an open delivery problem, longest since dispatch first. Two reads. None when Supabase is not set up
-    or not reachable, so Shipping can never break Home."""
-    stores = [s for s in (STORE_FOR_BRAND.get(b) for b in brand_ids) if s]
-    if not stores:
+    """Shipping figures for the Home page, read from the Shipping page's own cached board (board.home_figures), so
+    Home costs no extra Supabase reads once Shipping data is loaded and shows the same numbers as Shipping.
+    None when Supabase is not set up or not reachable, so Shipping can never break Home."""
+    from . import board
+    brands = [b for b in brand_ids if b in BRAND_FOR_STORE.values()]
+    if not brands:
         return None
+    if not board.loaded():
+        # Right after start-up the first board read takes several seconds; Home never waits for it.
+        board.reload_in_background()
+        return {"loading": True}
     try:
-        c = client()
-        per_store = [r for r in c.select("shipping_summary", [("select", "*")]).rows if r.get("store") in stores]
-        top = c.select("shipment_list", [("select", "order_name,store,carrier_name,days_since_dispatch,last_scan_place,tracking_id"),
-                                         ("active", "is.true"), ("open_exceptions", "gt.0"),
-                                         ("store", f"in.({','.join(stores)})"),
-                                         ("order", "days_since_dispatch.desc.nullslast,tracking_id.asc")], limit=HOME_TOP).rows
-    except (SupabaseError, RuntimeError, ValueError):
+        ds = board.dataset("all")    # the board Shipping already built; home_figures keeps only the selected brands
+    except (SupabaseError, RuntimeError, ValueError, board.HttpError):
         return None
-    allv = _snap(per_store)
-    allv["asOf"] = datetime.now(timezone.utc).isoformat()
-    allv["top"] = [{"order": r.get("order_name"), "brand": BRAND_FOR_STORE.get(r.get("store") or ""), "carrier": r.get("carrier_name") or "Unknown",
-                    "days": r.get("days_since_dispatch"), "place": r.get("last_scan_place"), "trackingId": r.get("tracking_id")} for r in top]
-    by = {BRAND_FOR_STORE[s]: _snap([r for r in per_store if r.get("store") == s]) for s in stores}
-    return {"all": allv, "byBrand": by}
+    return board.home_figures(ds, brands)
 
 
 # ---------------------------------------------------------------------------------------- list

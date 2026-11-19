@@ -144,6 +144,7 @@ def _loop() -> None:
             if res["state"] == "ok":
                 from . import board
                 board.snapshot(force=True)
+                board.warm()
             elif res["state"] == "failed":
                 _stop.wait(3600)                 # sheet not readable: try again in an hour, not in a tight loop
         except Exception:

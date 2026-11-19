@@ -57,6 +57,48 @@ class BoardTest(unittest.TestCase):
         self.assertEqual((s["stage"]["preDispatch"], s["stage"]["dispatched"], s["delivered"], s["unfulfilled"]), (1, 3, 1, 1))
         self.assertIn("1 shipment(s) are 9+ days", s["banner"])
 
+    def test_journey_splits_active_parcels_by_tracking_status(self):
+        d = self.ds([
+            row(row_id="a", tracking_number="A", order_name="#1", status="pending", last_scan_at=None, shipped_at=ago(1)),
+            row(row_id="b", tracking_number="B", order_name="#2", status="in_transit", shipped_at=ago(2)),
+            row(row_id="c", tracking_number="C", order_name="#3", status="in_transit", shipped_at=ago(12), last_scan_at=ago(10)),
+            row(row_id="e", tracking_number="E", order_name="#4", status="out_for_delivery", shipped_at=ago(3)),
+            row(row_id="o", row_kind="order", order_name="#5", placed_at=ago(11), tracking_number=None,
+                carrier_name=None, status=None, shipped_at=None, last_scan_at=None),
+            row(row_id="d", tracking_number="D", order_name="#6", status="delivered", delivered_at=ago(2)),
+        ])
+        s = board.summary(d)
+        j = {x["key"]: x for x in s["journey"]}
+        self.assertEqual([x["key"] for x in s["journey"]], ["ordered", "dispatched", "in_transit", "out_for_delivery", "delivered"])
+        self.assertEqual({k: v["value"] for k, v in j.items()},
+                         {"ordered": 1, "dispatched": 1, "in_transit": 2, "out_for_delivery": 1, "delivered": 1})
+        # the three parcel stages add up to the active total
+        self.assertEqual(j["dispatched"]["value"] + j["in_transit"]["value"] + j["out_for_delivery"]["value"], s["activeTotal"])
+        self.assertEqual(j["ordered"]["flags"], [{"label": "waiting 9+ days", "value": 1, "tone": "warn", "cat": ""}])
+        self.assertIn({"label": "no movement", "value": 1, "tone": "crit", "cat": "nomove"}, j["in_transit"]["flags"])
+        self.assertEqual(s["delivery30"]["delivered"], 1)
+
+    def test_home_figures_match_the_board(self):
+        d = self.ds([
+            row(row_id="a", tracking_number="A", order_name="#1", status="exception", raw_status="FAILURE",
+                shipped_at=ago(20), last_scan_at=ago(2), last_scan_text="Delivery attempted"),
+            row(row_id="b", tracking_number="B", order_name="#2", shipped_at=ago(2)),
+            row(row_id="c", tracking_number="C", order_name="#3", store="CPC", shipped_at=ago(1)),
+            row(row_id="d", tracking_number="D", order_name="#4", status="delivered", delivered_at=ago(2)),
+            row(row_id="u", tracking_number="U", order_name="#5", carrier_name="Amazon Logistics US", status="pending",
+                last_scan_at=None, shipped_at=ago(20)),
+        ])
+        brand_of = {r["order_number"]: r["brand"] for r in d.rows}
+        ridhi, cpc = brand_of["#1"], brand_of["#3"]
+        h = board.home_figures(d, [ridhi, cpc])
+        s = board.summary(d)
+        self.assertEqual(h["all"]["active"], s["activeTotal"])           # Home and Shipping agree
+        self.assertEqual((h["all"]["problems"], h["all"]["unverified"], h["all"]["delivered30d"]), (1, 1, 1))
+        self.assertEqual((h["byBrand"][ridhi]["active"], h["byBrand"][cpc]["active"]), (3, 1))
+        self.assertEqual([t["order"] for t in h["all"]["top"]], ["#1"])
+        only_cpc = board.home_figures(d, [cpc])
+        self.assertEqual((only_cpc["all"]["active"], only_cpc["all"]["top"], list(only_cpc["byBrand"])), (1, [], [cpc]))
+
     def test_amazon_without_updates_is_unconfirmed_never_critical(self):
         d = self.ds([
             row(row_id="a", tracking_number="A", carrier_name="Amazon Logistics US", status="pending", last_scan_at=None, shipped_at=ago(20)),
@@ -147,6 +189,39 @@ class BoardTest(unittest.TestCase):
         ])
         m = board.mcf_report(d)
         self.assertEqual([(r["order"], r["level"]) for r in m["rows"]], [("#9", "critical")])
+
+    def test_done_list_leaves_out_delivered_orders(self):
+        d = self.ds([
+            # partially fulfilled; its Shopify parcel is delivered (#3873)
+            row(row_id="a", tracking_number="A", order_id=3873, order_name="#3873", note_done=True, placed_at=ago(90),
+                fulfillment_status="PARTIALLY_FULFILLED", status="delivered", delivered_at=ago(80), shipped_at=ago(85)),
+            # Amazon's own word on the order is delivered, Shopify never updated
+            row(row_id="b", tracking_number="B", order_id=4640, order_name="#4640", note_done=True, placed_at=ago(70),
+                fulfillment_status="PARTIALLY_FULFILLED", amazon_status="Package delivered near the front door or porch."),
+            # out for delivery is not delivered: still listed
+            row(row_id="c", tracking_number="C", order_id=8447, order_name="#8447", note_done=True, placed_at=ago(12),
+                fulfillment_status="PARTIALLY_FULFILLED", amazon_status="Package is out for delivery."),
+        ])
+        self.assertEqual([r["order"] for r in board.mcf_report(d)["rows"]], ["#8447"])
+
+    def test_amazon_word_shows_only_on_the_amazon_parcel(self):
+        common = dict(order_id=8183, order_name="#R8183", amazon_status="Shipped by Amazon",
+                      amazon_tracking="9361289715870156749864")
+        d = self.ds([row(row_id="u", carrier_name="USPS", tracking_number="9361289715870156749864", **common),
+                     row(row_id="f", carrier_name="FedEx", tracking_number="385114394936", **common)])
+        by = {r["row_id"]: board.public_row(d, r, {}) for r in d.everything}
+        self.assertEqual(by["u"]["amazonStatus"], "Shipped by Amazon")
+        self.assertIsNone(by["f"]["amazonStatus"])
+
+    def test_team_in_transit_mark_does_not_count_once_the_order_is_delivered(self):
+        rows = [
+            # # RBP7010: the team marked the Amazon parcel "still in transit"; another parcel of the order was delivered later
+            row(row_id="a", tracking_number="A", order_id=7010, order_name="#R7010", carrier_name="Unknown carrier",
+                status="pending", last_scan_at=None, team_mark="in_transit", team_mark_at=ago(0.3)),
+            row(row_id="b", tracking_number="B", order_id=7010, order_name="#R7010", status="delivered", delivered_at=ago(0.1)),
+        ]
+        team = board.verify_report(self.ds(rows))["team"]
+        self.assertEqual((team["inTransit"], team["notChecked"]), (0, 0))
 
     def test_value_at_risk_counts_each_order_once(self):
         d = self.ds([row(row_id="a", tracking_number="A", total=40.0), row(row_id="b", tracking_number="B", total=40.0),
@@ -373,6 +448,59 @@ class BoardTest(unittest.TestCase):
         self.assertIn("no tracking number", nt["resolved"]["detail"])
         self.assertEqual(board.public_row(d, nt, {})["cat"], "delivered")
 
+    def test_two_orders_in_one_parcel_are_both_delivered(self):
+        rows = [
+            # CPC #6949 owns the tracking row of DHL 4503128464 and it is delivered
+            row(row_id="a", store="CPC", tracking_number="4503128464", order_id=6949, order_name="#6949",
+                shipment_id="s1", status="delivered", delivered_at=ago(1), shipped_at=ago(6), placed_at=ago(60)),
+            # #6948 went in the same box: a fulfilment row that only reads the shared number (still "in transit")
+            row(row_id="b", row_kind="shipment", store="CPC", tracking_number="4503128464", order_id=6948,
+                order_name="#6948", shipment_id="s2", status="in_transit", shipped_at=ago(6), placed_at=ago(60)),
+            # same number in the other store is a different parcel
+            row(row_id="c", row_kind="shipment", store="RBP", tracking_number="4503128464", order_id=7000,
+                order_name="#R7000", shipment_id="s3", status="in_transit", shipped_at=ago(6), placed_at=ago(8)),
+        ]
+        sn = board.Snapshot(rows, [{"source": "shopify", "kind": "import", "last_ok_at": ago(0.05), "last_status": "ok"}], NOW,
+                            items={}, replacements=[], reship_notes=set())
+        d = board.build("all", now=NOW, snap=sn)
+        b = next(r for r in d.everything if r["row_id"] == "b")
+        self.assertFalse(b["missingTracking"])                     # the shared number counts as its tracking
+        self.assertEqual(b["resolved"]["outcome"], "delivered")
+        self.assertIn("#6949", b["resolved"]["detail"])
+        self.assertEqual({r["order_number"] for r in d.active}, {"#R7000"})
+        self.assertNotIn("#6948", {e["order"] for e in board.exception_rows(d)})
+        self.assertEqual(board.public_row(d, b, {})["cat"], "delivered")
+
+    def test_any_number_on_the_fulfilment_counts_when_another_order_owns_its_row(self):
+        rows = [
+            # CPC #8426 owns the tracking row of TBA336415473219, delivered by Amazon
+            row(row_id="a", store="CPC", carrier_name="Amazon Logistics US", tracking_number="TBA336415473219",
+                order_id=8426, order_name="#8426", shipment_id="s1", status="delivered", delivered_at=ago(1),
+                shipped_at=ago(5), placed_at=ago(10)),
+            # #8446's fulfilment lists TBA336415473219 AND a USPS number; its row shows only the USPS one
+            row(row_id="b", store="CPC", carrier_name="USPS", tracking_number="9361289704070543546395", order_id=8446,
+                order_name="#8446", shipment_id="s2", status="pending", last_scan_at=None, shipped_at=ago(5),
+                placed_at=ago(10)),
+            # a parcel whose fulfilment lists only its own number stays open
+            row(row_id="c", store="CPC", tracking_number="OPEN1", order_id=8500, order_name="#8500", shipment_id="s3",
+                shipped_at=ago(3), placed_at=ago(4)),
+        ]
+        sn = board.Snapshot(rows, [{"source": "shopify", "kind": "import", "last_ok_at": ago(0.05), "last_status": "ok"}], NOW,
+                            items={}, replacements=[], reship_notes=set(),
+                            numbers={"s1": {"TBA336415473219"}, "s2": {"TBA336415473219", "9361289704070543546395"},
+                                     "s3": {"OPEN1"}})
+        d = board.build("all", now=NOW, snap=sn)
+        b = next(r for r in d.everything if r["row_id"] == "b")
+        self.assertEqual(b["resolved"]["outcome"], "delivered")
+        self.assertIn("#8426", b["resolved"]["detail"])
+        self.assertEqual({r["order_number"] for r in d.active}, {"#8500"})
+
+    def test_fulfilment_without_any_number_is_still_missing_tracking(self):
+        d = self.ds([row(row_id="d", row_kind="shipment", tracking_number=None, order_name="#R1", status="pending",
+                         last_scan_at=None, shipped_at=ago(4), placed_at=ago(6))])
+        self.assertTrue(d.everything[0]["missingTracking"])
+        self.assertIn("missing_tracking", {e["type"] for e in board.exception_rows(d)})
+
     def test_amazon_extra_parcel_is_delivered_when_the_shopify_order_arrived(self):
         # #7254: Shopify lists two Amazon parcels, both delivered; Amazon's extra parcel said "delivery date unavailable"
         rows = [
@@ -589,6 +717,62 @@ class BoardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BuiltBoardCacheTest(unittest.TestCase):
+    """The built board is reused per brand until the data or a team mark changes (pages were ~2 s each)."""
+
+    @classmethod
+    def setUpClass(cls):
+        open_db(":memory:")
+
+    def setUp(self):
+        self.snaps = [snap([row(row_id="a", tracking_number="A", order_name="#1", shipped_at=ago(10))])]
+        self.builds = 0
+        self._snapshot, self._build = board.snapshot, board.build
+        board.snapshot = lambda force=False: self.snaps[-1]
+
+        def counting_build(*a, **kw):
+            self.builds += 1
+            return self._build(*a, **kw)
+        board.build = counting_build
+        board.forget_built()
+
+    def tearDown(self):
+        board.snapshot, board.build = self._snapshot, self._build
+        board.forget_built()
+
+    def test_one_build_serves_every_request_until_something_changes(self):
+        first = board.dataset("all")
+        self.assertIs(board.dataset("all"), first)
+        self.assertIs(board.dataset(None), first)                       # None is the "all" board
+        self.assertEqual(self.builds, 1)
+        board.dataset("ridhi")                                          # each brand has its own board
+        self.assertEqual(self.builds, 2)
+        self.snaps.append(snap([row(row_id="b", tracking_number="B", order_name="#2", shipped_at=ago(1))]))
+        self.assertIsNot(board.dataset("all"), first)                   # a reloaded snapshot: rebuilt
+        self.assertEqual(self.builds, 3)
+        board.forget_built()                                            # a team mark or outcome
+        board.dataset("all")
+        self.assertEqual(self.builds, 4)
+
+    def test_an_old_build_is_not_reused_forever(self):
+        first = board.dataset("all")
+        key = "all"
+        at, sn, ds = board._built[key]
+        board._built[key] = (at - board.BUILT_SECONDS - 1, sn, ds)
+        self.assertIsNot(board.dataset("all"), first)
+
+    def test_parallel_requests_wait_for_one_build(self):
+        import threading
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(board.dataset("all"))) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(self.builds, 1)
+        self.assertTrue(all(x is out[0] for x in out))
 
 
 class ShopifyOrderLinkTest(unittest.TestCase):

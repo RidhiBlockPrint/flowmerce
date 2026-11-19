@@ -214,8 +214,8 @@ begin
     true,
     lower(nullif(btrim(f.value->>'status'), '')),
     nullif(btrim(f.value->'tracking'->0->>'company'), ''),
-    coalesce(le.status, nullif(btrim(f.value->>'display_status'), '')),
-    upper(coalesce(le.status, nullif(btrim(f.value->>'display_status'), ''))),
+    coalesce(case when hd.at is not null then 'DELIVERED' end, le.status, nullif(btrim(f.value->>'display_status'), '')),
+    upper(coalesce(case when hd.at is not null then 'DELIVERED' end, le.status, nullif(btrim(f.value->>'display_status'), ''))),
     nullif(f.value->>'created_at', '')::timestamptz,
     nullif(f.value->>'updated_at', '')::timestamptz,
     nullif(btrim(f.value->>'service'), ''),
@@ -226,7 +226,7 @@ begin
            where nullif(btrim(t->>'number'), '') is not null),
     'shopify',
     nullif(f.value->>'eta', '')::timestamptz,
-    nullif(f.value->>'delivered_at', '')::timestamptz,
+    coalesce(nullif(f.value->>'delivered_at', '')::timestamptz, hd.at),
     nullif(f.value->>'in_transit_at', '')::timestamptz,
     case when jsonb_typeof(f.value->'events') = 'array' then f.value->'events' else '[]'::jsonb end,
     null, null, null, null, null
@@ -244,6 +244,21 @@ begin
                       where nullif(e->>'at', '') is not null and nullif(e->>'status', '') is not null
                       order by (upper(e->>'status') = 'DELIVERED') desc, (e->>'at')::timestamptz desc, e->>'id' desc
                       limit 1) le on true
+  -- A delivered order is delivered, whichever copy says so. Flowmerce's own read can be older than the hub's: Shopify
+  -- lets Flowmerce's keys read only orders up to 60 days old, so a parcel delivered just before (or after) that limit
+  -- stays "in transit" in Flowmerce's copy forever (e.g. CPC #6948, DHL delivered 18 Nov, copy last read 18 Nov 04:57
+  -- in transit, order 60 days old the next morning). When the hub's copy of the same fulfillment says delivered, the
+  -- fulfillment is delivered, timed by the hub's last update of it unless Flowmerce has Shopify's own delivery time.
+  left join lateral (select coalesce(nullif(hf->>'updated_at', '')::timestamptz, hp.shop_updated_at) as at
+                       from public.orders hp
+                       cross join lateral jsonb_array_elements(case when jsonb_typeof(hp.raw->'fulfillments') = 'array'
+                                                                    then hp.raw->'fulfillments' else '[]'::jsonb end) hf
+                      where hp.id = s.id
+                        and upper(btrim(coalesce(hf->>'shipment_status', ''))) = 'DELIVERED'
+                        and nullif(regexp_replace(coalesce(hf->>'id', ''), '\D', '', 'g'), '') = f.value->>'id'
+                        -- a fulfilment Shopify cancelled stays cancelled (10 such on 19 Nov still read "delivered" in the hub)
+                        and lower(coalesce(f.value->>'status', '')) not in ('cancelled', 'error', 'failure')
+                      limit 1) hd on true
   where p_store is null or s.store = p_store;
 
   select count(*) filter (where not complete or fulfillment_id is null) into n_incomplete from _f;

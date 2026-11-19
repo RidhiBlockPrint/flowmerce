@@ -1,16 +1,18 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { More } from '../components/More';
 import { api } from '../lib/api';
 import { useSearchParams } from '../lib/nav';
 import { useApi, qs, download } from '../lib/api';
 import { useBrandParam } from '../lib/app';
 import { fmtDateTime, fmtInt, timeAgo } from '../lib/format';
 import { AGE_FILTERS, CAT, CHIPS, SORTS, dayText, fmtMoney } from '../lib/shipping';
-import { Button, Card, Empty, ErrorState, LoadingBlock, PageHead, Pill, Tabs } from '../components/ui';
+import { Button, Card, Empty, ErrorState, LoadingBlock, PAGE_SIZE, PageHead, Paged, Pill, Tabs } from '../components/ui';
 import { useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import { BarList, LineChart } from '../components/charts';
-import { ImportPreview, OrderDrawer, ShipmentsTable, ShopifyOrderLink, SourceGate, TONE_VAR, Tile } from '../components/shipping';
+import { Greeting, Journey, MiniGrid, MiniStat, RingCard, SectionHead, joinParts } from '../components/dash';
+import { ImportPreview, OrderDrawer, ShipmentsTable, ShopifyOrderLink, SourceGate, Tile } from '../components/shipping';
 
 const TABS = [
     { key: 'overview', label: 'Overview' },
@@ -55,7 +57,7 @@ export default function Shipping() {
         setSp(next, { replace: true });
     };
     return (<>
-      <PageHead title="Shipping" sub="Where every parcel is, what is late and what needs a decision. Read from Shopify through Supabase, refreshed every 15 minutes. Figures follow the brand picker; All shows both brands, each parcel labelled."
+      <PageHead title="Shipping" sub="Where every parcel is and what needs a decision."
         actions={<Button icon="refresh" loading={refreshing} onClick={refresh} title="Read the latest changes from Shopify into Flowmerce now">Refresh now</Button>}/>
       <Tabs value={tab} onChange={(t) => update({ tab: t === 'overview' ? null : t, page: null })} tabs={TABS}/>
       <div className="mt-16" key={rev}>
@@ -72,34 +74,20 @@ export default function Shipping() {
 /* ------------------------------------------------------------------ Overview */
 function OverviewTab({ brand, update, onOpen, onChanged }) {
     const q = useApi(`/shipping/summary${qs({ brand })}`);
-    const top = useApi(`/shipping/shipments${qs({ brand, size: 6, sort: 'priority', cat: 'red' })}`);
+    const ck = useApi(`/shipping/checks${qs({ brand })}`);
     const toast = useToast();
     return (<SourceGate query={q}>
       {(d) => (<>
-          {d.banner ? <div className="callout crit" role="alert"><Icon name="alert"/><div style={{ flex: 1 }}><b>{d.banner}</b></div>
-            <Button size="sm" icon="download" onClick={() => download(`/shipping/export/escalation${qs({ brand })}`).catch(toast.error)}>Escalation list (CSV)</Button></div> : null}
-          <div className="kpis">
-            {d.kpis.map((k) => (<Tile key={k.key || 'all'} label={k.label} value={k.value} tone={k.key === '' ? undefined : TONE_VAR[k.tone]}
-                onClick={() => update(k.key === 'unfulfilled' ? { tab: 'unfulfilled', page: null } : { tab: 'shipments', cat: k.key || null, page: null })}/>))}
+          <TodayHeadline d={d} ex={ck.data?.exceptions}
+            onEscalate={() => download(`/shipping/export/escalation${qs({ brand })}`).catch(toast.error)}/>
+          <div className="ov-hero">
+            <AgeCard kpis={d.kpis} go={(cat) => update({ tab: 'shipments', cat: cat || null, page: null })}/>
+            <HeadlineNumbers d={d} update={update}/>
           </div>
-          <div className="grid main-side">
-            <div className="col" style={{ gap: 16, minWidth: 0 }}>
-              <Card title="Most critical" sub={`In stage ${d.thresholds.red}+ days`} actions={<Button size="sm" onClick={() => update({ tab: 'shipments', cat: 'red', page: null })}>See all critical</Button>} flush>
-                {top.data?.rows?.length ? <ShipmentsTable rows={top.data.rows} onOpen={onOpen}/> : top.error ? <div className="card-body"><ErrorState error={top.error} onRetry={top.reload}/></div> : top.data ? <Empty icon="checkCircle" title="Nothing is critical">No active shipment has been in its stage for {d.thresholds.red}+ days.</Empty> : <div className="card-body"><LoadingBlock rows={3}/></div>}
-              </Card>
-              <div className="grid cols-3">
-                <Card title="Not dispatched"><div className="kpi-value">{fmtInt(d.stage.preDispatch)}</div><div className="muted small">Clock runs from the order date</div></Card>
-                <Card title="Dispatched"><div className="kpi-value">{fmtInt(d.stage.dispatched)}</div><div className="muted small">Clock runs from the dispatch date</div></Card>
-                <Card title="Delivered"><div className="kpi-value">{fmtInt(d.delivered)}</div><div className="muted small">Last {d.deliveredWindowDays} days · left the active queue</div></Card>
-              </div>
-            </div>
-            <div className="col" style={{ gap: 16, minWidth: 0 }}>
-              <Card title="Value at risk" sub="Critical orders, each counted once">
-                {!d.valueAtRisk.available ? <div className="muted small">Unavailable: {d.valueAtRisk.reason}</div>
-                    : d.valueAtRisk.orders === 0 ? <div className="muted small">No critical orders.</div>
-                        : d.valueAtRisk.total === null ? <div className="muted small">{d.valueAtRisk.note} ({d.valueAtRisk.orders} orders)</div>
-                            : <><div className="kpi-value">{fmtMoney(d.valueAtRisk.total, d.valueAtRisk.currency)}</div><div className="muted small">{d.valueAtRisk.orders} order{d.valueAtRisk.orders === 1 ? '' : 's'}</div></>}
-              </Card>
+          <JourneyStrip steps={d.journey ?? []} update={update}/>
+          <Triage query={ck} onOpen={onOpen} update={update}/>
+          <More id="ship-overview" label="Show order checks and data source">
+            <div className="grid cols-2">
               <Card title="Order checks" sub="Orders whose note says DONE but the shop shows them as not fulfilled">
                 {d.checks.mcf ? (<div className="row-wrap">
                     <Pill tone="crit">{d.checks.mcf.critical} critical</Pill><Pill tone="warn">{d.checks.mcf.watch} watch</Pill><Pill tone="info">{d.checks.mcf.alert} alert</Pill>
@@ -109,9 +97,161 @@ function OverviewTab({ brand, update, onOpen, onChanged }) {
               </Card>
               <SyncCard source={d.source} onChanged={onChanged}/>
             </div>
-          </div>
+          </More>
         </>)}
     </SourceGate>);
+}
+
+/* How each open-check type reads in the headline ("15 with a carrier exception"). A type the server adds later still
+   shows, with its own label. */
+const ISSUE_PHRASE = {
+    carrier_exception: 'with a carrier exception',
+    stuck: 'with no carrier movement',
+    missing_tracking: 'sent without a tracking number',
+    overdue: 'past the promised date',
+    delivered_not_marked: 'delivered but not marked',
+    duplicate_tracking: 'with a duplicate tracking number',
+    amazon_not_in_shopify: 'shipped by Amazon but open in Shopify',
+    amazon_tracking_missing: 'with an Amazon parcel not on the Shopify order',
+};
+
+/** One sentence that says how much needs a person today, from the open checks (one row per order). Every check type
+ *  with a count is named, so the breakdown accounts for the whole number; the critical orders are among them. */
+function TodayHeadline({ d, ex, onEscalate }) {
+    let parts = [];
+    if (ex) {
+        const issues = (ex.types ?? []).filter((t) => ex.counts?.[t.key])
+            .map((t) => `${fmtInt(ex.counts[t.key])} ${ISSUE_PHRASE[t.key] ?? `flagged “${t.label}”`}`);
+        const crit = d.critical ? `${fmtInt(d.critical)} critical (${d.thresholds?.red ?? 9}+ days in stage). ` : '';
+        const more = ex.issues > ex.total ? ' (some orders have more than one)' : '';
+        parts = issues.length ? [`${crit}${joinParts(issues)}${more}`] : [crit.trim().replace(/\.$/, '')];
+    }
+    return (<Greeting count={ex?.total} noun="order" parts={parts}
+      actions={d.critical ? <Button icon="download" onClick={onEscalate} title="Download the critical orders to send to the carriers">Escalation list (CSV)</Button> : null}/>);
+}
+
+/* Age bands, fresh to oldest, then the parcels no carrier reports on (Amazon), which have no age band. Together they
+   add up to the active total. The server's label holds the name and the day range. Grey (2-3 days) applies only to
+   orders not sent yet, which live on the Unfulfilled tab, so it is left out while empty. */
+const BANDS = ['on_track', 'grey', 'yellow', 'orange', 'red', 'unconfirmed'];
+const BAND_COLOUR = { on_track: 'var(--ok)', grey: '#a59d93', yellow: '#d6a419', orange: '#c2571a', red: 'var(--crit)',
+    unconfirmed: 'var(--info)' };
+const BAND_NAME = { unconfirmed: ['Unconfirmed', 'no carrier updates'] };
+function splitLabel(label) {
+    const m = /^(.*?)\s*\(?(\d+\s*[–-]\s*\d+\s*days|\d+\+\s*days)\)?$/.exec(label ?? '');
+    return m ? [m[1], m[2]] : [label, ''];
+}
+
+/** Active parcels by days in their current stage: the total, a ring of the five bands, and a clickable legend. */
+function AgeCard({ kpis, go }) {
+    const by = Object.fromEntries(kpis.map((k) => [k.key, k]));
+    const total = by['']?.value ?? 0;
+    const onTrack = total ? Math.round(((by.on_track?.value ?? 0) / total) * 100) : 0;
+    const segments = BANDS.filter((k) => by[k] && (k !== 'grey' || by[k].value)).map((k) => {
+        const [name, range] = BAND_NAME[k] ?? splitLabel(by[k].label);
+        return { key: k, name, range, value: by[k].value, color: BAND_COLOUR[k], onClick: () => go(k) };
+    });
+    return (<RingCard label="Active shipments" total={total} onTotal={() => go('')} pill={total ? { tone: 'ok', label: `${onTrack}% on track` } : null}
+      segments={segments} center={`${onTrack}%`} centerLabel="on track"/>);
+}
+
+/** Four headline numbers beside the age card. Delivery figures cover parcels delivered in the last 30 days. */
+function HeadlineNumbers({ d, update }) {
+    const dl = d.delivery30 ?? {};
+    const v = d.valueAtRisk;
+    const risk = !v.available ? { value: '—', foot: 'Unavailable' } : v.orders === 0 ? { value: fmtMoney(0, v.currency), foot: 'No critical orders' }
+        : v.total === null ? { value: '—', foot: v.note } : { value: fmtMoney(v.total, v.currency), foot: `${v.orders} critical order${v.orders === 1 ? '' : 's'}` };
+    const has = (x) => x !== null && x !== undefined;
+    const tone = !has(dl.onTimePct) ? undefined : dl.onTimePct >= 90 ? 'ok' : dl.onTimePct >= 75 ? 'warn' : 'crit';
+    const toAnalytics = () => update({ tab: 'analytics' });
+    return (<MiniGrid>
+      <MiniStat label="On-time delivery" value={has(dl.onTimePct) ? `${dl.onTimePct}%` : '—'} tone={tone}
+        foot={dl.withPromisedDate ? `${fmtInt(dl.withPromisedDate)} of ${fmtInt(dl.delivered)} had a promised date` : 'No promised dates in 30 days'} onClick={toAnalytics}/>
+      <MiniStat label="Average delivery time" value={has(dl.avgDays) ? `${dl.avgDays} d` : '—'} foot="Dispatch to delivery, 30 days" onClick={toAnalytics}/>
+      <MiniStat label="Value at risk" value={risk.value} tone={v.orders ? 'crit' : undefined} foot={risk.foot} onClick={() => update({ tab: 'shipments', cat: 'red', page: null })}/>
+      <MiniStat label="Delivered" value={fmtInt(dl.delivered ?? 0)} foot="Last 30 days" onClick={toAnalytics}/>
+    </MiniGrid>);
+}
+
+/* Where each journey step and each problem tag leads. Steps without an exact list (no scan yet, delivered) are not links. */
+const STEP_LINK = { ordered: { tab: 'unfulfilled' }, in_transit: { tab: 'shipments', status: 'in_transit' }, out_for_delivery: { tab: 'shipments', status: 'out_for_delivery' } };
+const FLAG_LINK = { 'waiting 9+ days': { tab: 'unfulfilled' }, 'no tracking': { tab: 'checks' } };
+
+/** Ordered → sent → in transit → out for delivery → delivered, with the problems sitting in each step. */
+function JourneyStrip({ steps, update }) {
+    const go = (patch) => update({ cat: null, status: null, page: null, ...patch });
+    return (<Journey label="Where orders are now" steps={steps.map((s) => ({
+        key: s.key, label: s.label, value: s.value, done: s.key === 'delivered',
+        calm: s.key === 'delivered' ? 'Left the active list' : 'Nothing stuck',
+        onClick: STEP_LINK[s.key] ? () => go(STEP_LINK[s.key]) : undefined,
+        flags: s.flags.map((f) => {
+            const fl = f.cat ? { tab: 'shipments', cat: f.cat } : FLAG_LINK[f.label];
+            return { ...f, onClick: fl ? () => go(fl) : undefined };
+        }),
+    }))}/>);
+}
+
+/* The one-click next step for each kind of problem. Shopify fixes open the order in Shopify admin; the rest open the drawer. */
+const NEXT_STEP = {
+    missing_tracking: { label: 'Add tracking', shopify: true },
+    amazon_not_in_shopify: { label: 'Mark fulfilled', shopify: true },
+    amazon_tracking_missing: { label: 'Add tracking', shopify: true },
+    duplicate_tracking: { label: 'Fix tracking', shopify: true },
+    carrier_exception: { label: 'Review' },
+    stuck: { label: 'Check carrier' },
+    overdue: { label: 'Review' },
+    delivered_not_marked: { label: 'Review' },
+};
+
+/** Today's open checks, most urgent first, each with its next step. The full list lives on the Checks tab. */
+function Triage({ query, onOpen, update }) {
+    const [kind, setKind] = useState('');
+    const head = <SectionHead title="Today’s triage" note="Most urgent first. Each row has its next step; open an order for its full tracking."
+      action={<Button size="sm" onClick={() => update({ tab: 'checks' })}>All checks</Button>}/>;
+    if (query.error)
+        return <>{head}<Card><ErrorState error={query.error} onRetry={query.reload}/></Card></>;
+    if (!query.data)
+        return <>{head}<Card><LoadingBlock rows={4}/></Card></>;
+    const ex = query.data.exceptions;
+    const types = ex.types.filter((t) => ex.counts[t.key]);
+    const shown = ex.rows.filter((r) => !kind || (r.types || [r.type]).includes(kind));
+    return (<>
+      {head}
+      <div className="chips" role="group" aria-label="Filter by problem">
+        <button className="chip" aria-pressed={kind === ''} onClick={() => setKind('')}>All <span className="chip-n">{ex.total}</span></button>
+        {types.map((t) => <button key={t.key} className="chip" aria-pressed={kind === t.key} onClick={() => setKind(t.key)}>{t.label} <span className="chip-n">{ex.counts[t.key]}</span></button>)}
+      </div>
+      <Card flush className="triage">
+        {!shown.length ? <Empty icon="checkCircle" title="Nothing to review">No open problems of this kind.</Empty> : (
+            <Paged rows={shown} size={8} resetKey={kind}>{(page) => page.map((r) => <TriageRow key={`${r.brand}|${r.order}`} r={r} onOpen={onOpen}/>)}</Paged>)}
+      </Card>
+    </>);
+}
+
+function TriageRow({ r, onOpen }) {
+    const issues = r.issues || [r];
+    const tags = [...new Map(issues.map((i) => [i.type, i])).values()];
+    const step = NEXT_STEP[r.type] ?? { label: 'Review' };
+    const days = r.days ?? null;
+    const tone = r.severity === 'high' ? 'crit' : 'warn';
+    return (<div className="triage-row">
+      <span className={`triage-age tone-${tone}`} title={days === null ? 'No day count' : `${days} days in stage`}>{days === null ? '—' : `${days}d`}</span>
+      <div className="triage-order">
+        <button type="button" className="triage-num" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</button>
+        <span className="triage-meta">{r.carrier}{r.brand ? ` · ${r.brand === 'ridhi' ? 'Ridhi' : r.brand === 'cpc' ? 'CPC' : r.brand}` : ''}</span>
+      </div>
+      <div className="triage-why">
+        <span className="triage-detail">{issues[0].detail}</span>
+        {issues.length > 1 ? <span className="triage-more">{issues.slice(1).map((i) => i.detail).join(' ')}</span> : null}
+      </div>
+      <div className="triage-tags">{tags.slice(0, 2).map((i) => <Pill key={i.type} tone={i.severity === 'high' ? 'crit' : 'warn'}>{i.label}</Pill>)}</div>
+      <div className="triage-acts">
+        {step.shopify && r.shopifyUrl ? (<>
+            <Button size="sm" variant="ghost" onClick={() => onOpen(r.order)}>Open</Button>
+            <a className="btn sm dark" href={r.shopifyUrl} target="_blank" rel="noreferrer" title="Opens the order in Shopify admin">{step.label} <Icon name="external" size="sm"/></a>
+          </>) : <button type="button" className="btn sm dark" onClick={() => onOpen(r.order)}>{step.label}</button>}
+      </div>
+    </div>);
 }
 
 const STORE_NAME = { RBP: 'Ridhi', CPC: 'CPC' };
@@ -163,7 +303,7 @@ function AmazonSource({ a, onChanged }) {
 }
 
 /* ------------------------------------------------------------------ Shipments */
-const PAGE = 25;
+const PAGE = PAGE_SIZE;
 
 function ShipmentsTab({ brand, sp, update, onOpen }) {
     const cat = sp.get('cat') ?? '';
@@ -300,16 +440,16 @@ function ReshippedCard({ rs, onOpen }) {
     if (!rs)
         return null;
     return (<Card title="Reshipped: old parcel still open" sub={`${rs.rule} ${fmtInt(rs.total)} found.`} flush>
-      {!rs.rows.length ? <Empty icon="checkCircle" title="No reshipped parcels found">No old parcel is waiting to be closed.</Empty> : (<div className="table-wrap"><table className="t compact">
+      {!rs.rows.length ? <Empty icon="checkCircle" title="No reshipped parcels found">No old parcel is waiting to be closed.</Empty> : (<Paged rows={rs.rows}>{(page) => (<div className="table-wrap"><table className="t compact">
           <thead><tr><th>Order</th><th>Old parcel</th><th>How we know</th><th>Sent again as</th><th className="hide-sm">Next step</th></tr></thead>
-          <tbody>{rs.rows.map((r) => (<tr key={r.key}>
+          <tbody>{page.map((r) => (<tr key={r.key}>
               <td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/></td>
               <td className="small">{r.carrier}{r.tracking ? <span className="mono faint"> {r.tracking}</span> : null}<div className="faint xs">{r.oldStatus.replace(/_/g, ' ') || '—'}{r.days !== null ? ` · ${dayText(r.days)} in stage` : ''}</div></td>
               <td className="small"><Pill tone="info">{r.howLabel}</Pill><div className="faint xs">{r.detail}</div></td>
               <td className="small">{r.newOrder && r.newOrder !== r.order ? <Button size="xs" variant="ghost" onClick={() => onOpen(r.newOrder)}>{r.newOrder}</Button> : null}{r.newCarrier ? <div className="faint xs">{r.newCarrier}{r.newTracking ? ` ${r.newTracking}` : ''}{r.newStatus ? ` · ${CAT[r.newStatus]?.label ?? r.newStatus}` : ''}</div> : <div className="faint xs">not dispatched yet</div>}</td>
               <td className="small hide-sm">{r.action}</td>
             </tr>))}</tbody>
-        </table></div>)}
+        </table></div>)}</Paged>)}
     </Card>);
 }
 
@@ -324,16 +464,15 @@ function UnfulfilledTab({ brand, onOpen }) {
             return (<Card title="Unfulfilled orders" sub={`${d.rule} ${fmtInt(d.total)} orders${d.withAmazon ? `, ${fmtInt(d.withAmazon)} of them with Amazon` : ''}.`}
               actions={<select className="select sm" style={{ width: 'auto' }} value={band} onChange={(e) => setBand(e.target.value)} aria-label="Waiting time">
                 <option value="">All ({d.total})</option>{d.bands.map((b) => <option key={b.key} value={b.key}>Waiting {b.label} ({d.counts[b.key]})</option>)}</select>} flush>
-              {!shown.length ? <Empty icon="checkCircle" title="No unfulfilled orders">Every order has been sent.</Empty> : (<div className="table-wrap"><table className="t compact">
+              {!shown.length ? <Empty icon="checkCircle" title="No unfulfilled orders">Every order has been sent.</Empty> : (<Paged rows={shown} resetKey={band}>{(page) => (<div className="table-wrap"><table className="t compact">
                   <thead><tr><th>Order</th><th>Ordered</th><th>Waiting</th><th className="hide-sm">Amazon</th><th>Next step</th></tr></thead>
-                  <tbody>{shown.slice(0, 200).map((r) => (<tr key={`${r.brand}|${r.order}`}>
+                  <tbody>{page.map((r) => (<tr key={`${r.brand}|${r.order}`}>
                       <td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/>{r.flagged ? <Pill tone="warn">Flagged</Pill> : null}</td>
                       <td className="small nowrap">{r.placedAt ? fmtDateTime(r.placedAt) : '—'}</td>
                       <td><Pill tone={BAND_TONE[r.band]}>{dayText(r.days ?? 0)}</Pill></td>
                       <td className="small hide-sm">{r.amazon || <span className="faint">—</span>}</td>
                       <td className="small">{r.action}</td></tr>))}</tbody>
-                </table></div>)}
-              {shown.length > 200 ? <div className="card-body muted xs">Showing the first 200 of {shown.length}.</div> : null}
+                </table></div>)}</Paged>)}
             </Card>);
         }}
     </SourceGate>);
@@ -352,9 +491,9 @@ function ChecksTab({ brand, onOpen }) {
           <Card title="Exceptions and data problems" sub={`${fmtInt(ex.total)} open. Click an order to see its tracking and decide the next step.`}
             actions={<select className="select sm" style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Type of exception">
               <option value="">All types ({ex.total})</option>{ex.types.map((t) => <option key={t.key} value={t.key}>{t.label} ({ex.counts[t.key]})</option>)}</select>} flush>
-            {!shown.length ? <Empty icon="checkCircle" title="Nothing to review">No exceptions of this type.</Empty> : (<div className="table-wrap"><table className="t compact">
+            {!shown.length ? <Empty icon="checkCircle" title="Nothing to review">No exceptions of this type.</Empty> : (<Paged rows={shown} resetKey={kind}>{(page) => (<div className="table-wrap"><table className="t compact">
                 <thead><tr><th>Order</th><th>Type</th><th className="hide-sm">Carrier</th><th>What is wrong</th></tr></thead>
-                <tbody>{shown.slice(0, 60).map((r) => {
+                <tbody>{page.map((r) => {
                     const issues = r.issues || [r];
                     return (<tr key={`${r.brand}|${r.order}`}>
                     <td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/></td>
@@ -363,18 +502,17 @@ function ChecksTab({ brand, onOpen }) {
                     <td className="hide-sm small">{r.carrier}</td>
                     <td className="small">{issues.length === 1 ? issues[0].detail : issues.map((i) => <div key={`${i.type}|${i.key}`}>{i.detail}</div>)}</td></tr>);
                 })}</tbody>
-              </table></div>)}
-            {shown.length > 60 ? <div className="card-body muted xs">Showing the first 60 of {shown.length}.</div> : null}
+              </table></div>)}</Paged>)}
           </Card>
 <Card title="Marked DONE by the team, but Shopify shows not fulfilled" sub={d.mcf.available ? `${d.mcf.rule}${d.mcf.amazonKnown === false ? ' (Amazon status needs supabase/108_flow_board_amazon.sql.)' : ` ${d.mcf.withAmazonRecord} of ${d.mcf.rows.length} have an Amazon record.`}` : undefined} flush>
             {!d.mcf.available ? <div className="card-body"><div className="callout warn"><Icon name="alert"/><div>Unavailable: {d.mcf.reason} The list is not shown rather than shown empty.</div></div></div>
                 : !d.mcf.rows.length ? <Empty icon="checkCircle" title="No mismatches">Every order marked DONE in its note is fulfilled, or is under 5 days old.</Empty>
-                    : (<div className="table-wrap"><table className="t compact">
+                    : (<Paged rows={d.mcf.rows}>{(page) => (<div className="table-wrap"><table className="t compact">
                         <thead><tr><th>Order</th><th>Age</th><th>Fulfilment status</th><th>Amazon says</th><th>Level</th></tr></thead>
-                        <tbody>{d.mcf.rows.map((r) => (<tr key={r.order}><td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/></td><td>{dayText(r.age)}</td><td className="small">{r.status.replace(/_/g, ' ')}</td>
+                        <tbody>{page.map((r) => (<tr key={r.order}><td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/></td><td>{dayText(r.age)}</td><td className="small">{r.status.replace(/_/g, ' ')}</td>
                             <td className="small">{r.amazon ? <>{r.amazon}{r.amazonTracking ? <div className="faint xs mono">{r.amazonTracking}</div> : null}</> : <span className="faint">No Amazon record</span>}</td>
                             <td><Pill tone={r.level === 'critical' ? 'crit' : r.level === 'watch' ? 'warn' : 'info'}>{r.level}</Pill></td></tr>))}</tbody>
-                      </table></div>)}
+                      </table></div>)}</Paged>)}
           </Card>
           <ReshippedCard rs={d.reshipped} onOpen={onOpen}/>
           <Card title="Marketplace / unknown carriers to verify" sub="No carrier delivery data exists for these parcels, so a person checks them."

@@ -44,7 +44,7 @@ def _unavailable(brand: str, e: SupabaseError) -> dict:
 
 
 def _dataset(brand: str, refresh: bool = False) -> board.Dataset:
-    return board.build(brand, snap=board.snapshot(force=refresh))
+    return board.dataset(brand, refresh=refresh)
 
 
 def _int(v: str, default: int, low: int = 0, high: int = 10_000) -> int:

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import re
 import threading
 import time
@@ -56,6 +57,7 @@ NO_SCAN_GRACE_DAYS = 3          # a named carrier's first scan normally reaches 
 PRE_DISPATCH_DAYS = 60          # undispatched orders older than this are not tracked here (see 107_flow_board.sql)
 DELIVERED_KEEP_DAYS = 100       # delivered parcels kept in the snapshot (delivery performance looks back 90 days)
 CACHE_SECONDS = 20 * 60        # the data changes only when a refresh runs (every 15 min); each refresh reloads it
+BUILT_SECONDS = 5 * 60          # a built board (every figure of the page) is reused this long for the same snapshot
 STALE_HOURS = 2                 # the refresh runs every 15 minutes; 2 hours without success is stale
 
 BRAND_STORE = {"ridhi": "RBP", "cpc": "CPC"}
@@ -72,9 +74,11 @@ ACTIONS = {"on_track": "Continue monitoring.", "grey": "Continue monitoring.",
            "orange": "Prioritise for investigation.", "red": "Add to the urgent escalation list.",
            "no_scan": "Verify the tracking details or wait for the first carrier scan.",
            "delivered": "None. Delivered."}
-AGING_KEYS = ("red", "orange", "yellow", "grey", "on_track", "no_scan")
+# "Unconfirmed" (no carrier reports on it: Amazon or an unnamed carrier) has no age band, but it is part of the active
+# total, so the age charts list it and their bars add up to the active shipments
+AGING_KEYS = ("red", "orange", "yellow", "grey", "on_track", "unconfirmed", "no_scan")
 AGING_LABELS = {"red": "Critical 9+", "orange": "Orange 6-8", "yellow": "Yellow 4-5", "grey": "Grey 2-3",
-                "on_track": "On track", "no_scan": "No scan"}
+                "on_track": "On track", "unconfirmed": "Unconfirmed", "no_scan": "No scan"}
 MCF_LEVELS = ((10, "critical"), (7, "watch"), (5, "alert"))
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 TEAM_STATES = ("delivered", "lost", "failed", "in_transit")
@@ -174,6 +178,7 @@ class Snapshot:
     replacements: list[dict[str, Any]] | None = None     # orders that say "replacement for #NNNN" (references only)
     reship_notes: set[int] | None = None                 # order ids whose own note says reshipped / resent
     mcf: list[dict[str, Any]] | None = None              # Amazon MCF packages (109); None when not set up
+    numbers: dict[str, set[str]] | None = None           # shipment id -> EVERY tracking number on that fulfilment
 
 
 _lock = threading.Lock()
@@ -203,34 +208,41 @@ def _load() -> Snapshot:
         board_f, feeds_f = pool.submit(_board_rows), pool.submit(_feeds)
         signals_f, mcf_f = pool.submit(_reship_signals), pool.submit(amazon_mcf.load)
         rows, amazon = board_f.result()
-        items, replacements, notes = signals_f.result()
-        return Snapshot(rows, feeds_f.result(), datetime.now(UTC), amazon, items, replacements, notes, mcf_f.result())
+        items, replacements, notes, numbers = signals_f.result()
+        return Snapshot(rows, feeds_f.result(), datetime.now(UTC), amazon, items, replacements, notes, mcf_f.result(),
+                        numbers)
 
 
 REF_RE = re.compile(r"(?:replace?ment\s+(?:for|of)|reship(?:ped)?\s+(?:for|of)|instead\s+of)\s*(?:order\s*)?#?\s*(?:RBP\s*)?(\d{3,7})", re.I)
 RESHIP_RE = re.compile(r"\b(re-?ship(?:ped|ment)?|re-?sen[dt]|sent\s+again|shipped\s+again)\b", re.I)
 
 
-def _reship_signals() -> tuple[dict[str, set[str]], list[dict[str, Any]], set[int]]:
+def _reship_signals() -> tuple[dict[str, set[str]], list[dict[str, Any]], set[int], dict[str, set[str]]]:
     """What tells us a parcel was sent again. Each part is optional: a failure leaves it empty, never breaks the page.
     Order notes are read only for orders whose note or tags mention replacement / reshipping; only the order number they
-    refer to (and a yes/no) is kept, the text is dropped at once."""
+    refer to (and a yes/no) is kept, the text is dropped at once. Also every tracking number on each fulfilment: a
+    board row shows one number, but a fulfilment can list several, and one of them may be a parcel that another
+    order's row owns (#8446 lists TBA336415473219, whose tracking row belongs to #8426)."""
     items: dict[str, set[str]] = {}
+    numbers: dict[str, set[str]] = {}
     try:
         c = client()
         last: str | None = None
         while True:
-            p = [("select", "id,items"), ("order", "id.asc")]
+            p = [("select", "id,items,tracking"), ("order", "id.asc")]
             if last:
                 p.append(("id", f"gt.{last}"))
             page = c.select("shipments", p, limit=1000).rows
             for x in page:
                 items[x["id"]] = {str(i.get("item_id")) for i in (x.get("items") or []) if isinstance(i, dict) and i.get("item_id")}
+                nums = {str(n).strip().upper() for n in (x.get("tracking") or []) if str(n or "").strip()}
+                if nums:
+                    numbers[x["id"]] = nums
             if len(page) < 1000:
                 break
             last = page[-1]["id"]
     except SupabaseError:
-        items = {}
+        items, numbers = {}, {}
     replacements: list[dict[str, Any]] = []
     notes: set[int] = set()
     try:
@@ -250,7 +262,7 @@ def _reship_signals() -> tuple[dict[str, set[str]], list[dict[str, Any]], set[in
                 notes.add(int(r["id"]))
     except Exception:  # noqa: BLE001 - optional signal
         pass
-    return items, replacements, notes
+    return items, replacements, notes, numbers
 
 
 def _read_board(columns: str) -> list[dict[str, Any]]:
@@ -290,6 +302,11 @@ def snapshot(force: bool = False) -> Snapshot:
         return snap
 
 
+def loaded() -> bool:
+    """True once a snapshot is cached, so reading the board will not wait for Supabase."""
+    return _cache is not None
+
+
 def reload_in_background() -> None:
     if _reloading.is_set():
         return
@@ -298,6 +315,7 @@ def reload_in_background() -> None:
     def work() -> None:
         try:
             snapshot(force=True)
+            warm()
         except Exception:  # noqa: BLE001 - the saved copy stays in use; the next request tries again
             pass
         finally:
@@ -305,10 +323,54 @@ def reload_in_background() -> None:
     threading.Thread(target=work, name="shipping-board-reload", daemon=True).start()
 
 
+# The built board per brand. Building it from the snapshot (every parcel enriched, Amazon laid over it, the reship
+# and delivered rules) takes ~0.2 s on a laptop and ~2 s on the hosting's small CPU, and every request used to do
+# it. Now one build serves every request for that brand until the snapshot is reloaded, a team mark or outcome
+# changes it, or BUILT_SECONDS pass (ages count in whole days). Parallel requests wait for one build.
+_built: dict[str, tuple[float, Snapshot, Dataset]] = {}
+_built_lock = threading.Lock()
+_brand_locks: dict[str, threading.Lock] = {}
+
+
+def dataset(brand: str | None, refresh: bool = False) -> Dataset:
+    key = brand or "all"
+    snap = snapshot(force=refresh)
+
+    def fresh() -> Dataset | None:
+        hit = _built.get(key)
+        return hit[2] if hit and hit[1] is snap and time.time() - hit[0] < BUILT_SECONDS else None
+
+    ds = fresh()
+    if ds is not None:
+        return ds
+    with _built_lock:
+        lock = _brand_locks.setdefault(key, threading.Lock())
+    with lock:
+        ds = fresh()
+        if ds is None:
+            ds = build(key, snap=snap)
+            _built[key] = (time.time(), snap, ds)
+        return ds
+
+
+def forget_built() -> None:
+    """Drop every built board (a team mark, an outcome or a new snapshot changes what it shows)."""
+    _built.clear()
+
+
+def warm() -> None:
+    """Build the default (all brands) board in the background, so the next page does not wait for it."""
+    try:
+        dataset("all")
+    except Exception:  # noqa: BLE001 - a page builds it itself if this fails
+        logging.getLogger(__name__).warning("shipping board warm-up failed", exc_info=True)
+
+
 def forget() -> None:
     global _cache
     with _lock:
         _cache = None
+    forget_built()
 
 
 def apply_mark(tracking_id: str, mark: str | None) -> None:
@@ -320,6 +382,7 @@ def apply_mark(tracking_id: str, mark: str | None) -> None:
     for r in cached[1].rows:
         if r.get("tracking_id") == tracking_id:
             r["team_mark"], r["team_mark_at"] = mark, at if mark else None
+    forget_built()                       # the snapshot changed in place: rebuild on the next request
 
 
 # ------------------------------------------------------------------------------------------------ enrichment
@@ -385,7 +448,8 @@ def _enrich(s: dict[str, Any], now: datetime) -> dict[str, Any] | None:
         "lastScan": last_scan, "deliveredAt": delivered_at, "expected": day_end(s.get("eta")),
         "cat": shown, "agingCat": cat, "days": days, "stage": stage, "scanAge": scan_age, "noMove": no_move,
         "unconfirmed": unconfirmed, "hubFailure": unconfirmed and hub_failure, "exc": exc, "manual": manual,
-        "missingTracking": s["row_kind"] == "shipment" or (s["row_kind"] in ("tracking", "amazon") and not tracking),
+        # a fulfilment row with a number shares another order's parcel (two orders sent in one box), so it has tracking
+        "missingTracking": s["row_kind"] in ("shipment", "tracking", "amazon") and not tracking,
         "excluded": "cancelled" if s.get("cancelled_at") else "refunded" if fin == "REFUNDED" else None,
         "key": f"{s['row_kind']}:{s['row_id']}",
     }
@@ -440,16 +504,36 @@ def _mark_resolved(everything: list[dict[str, Any]], marks: dict[tuple[str, int]
 DELIVERED_SCAN = re.compile(r"^\s*delivered", re.I)
 
 
-def _mark_order_delivered(everything: list[dict[str, Any]]) -> None:
+def _mark_order_delivered(everything: list[dict[str, Any]], numbers: dict[str, set[str]] | None = None) -> None:
     """An order that has arrived is not a problem: once ANY parcel of it is delivered (Shopify, the carrier, Amazon's
     MCF data, or a last scan that says "Delivered"), every other open parcel of that order is resolved as Delivered
     ("order delivered"). That covers a fulfilment with no tracking number on a delivered order (# RBP6462), a parcel
     whose replacement arrived (#5680), and an extra Amazon parcel (#7254). It leaves Critical, exceptions, Checks,
-    Reshipped and Unfulfilled. A parcel whose own last scan says delivered counts as delivered too."""
+    Reshipped and Unfulfilled. A parcel whose own last scan says delivered counts as delivered too. Two orders sent in
+    one box share one tracking number (CPC #6948 and #6949): once that number is delivered on either order, it is
+    delivered on both. The same holds for any number on the parcel's Shopify fulfilment (`numbers`), not only the
+    one its row shows."""
     by: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for r in everything:
         if not r["excluded"]:
             by.setdefault((r.get("store") or "", _digits(r["order_number"])), []).append(r)
+    shared = {((r.get("store") or ""), r["tracking_number"].upper()): r for r in everything
+              if r["cat"] == "delivered" and r["tracking_number"] and not r["excluded"]}
+    numbers = numbers or {}
+    for r in everything:
+        if r["cat"] == "delivered" or r.get("resolved") or r["excluded"]:
+            continue
+        own = numbers.get(str(r.get("shipment_id") or ""), set()) | ({r["tracking_number"].upper()} if r["tracking_number"] else set())
+        x = next((shared[k] for k in sorted(((r.get("store") or ""), n) for n in own) if k in shared and shared[k] is not r), None)
+        if x is not None:
+            when = x.get("deliveredAt") or x.get("lastScan")
+            parcel = f"{x['carrier_name'] or 'The carrier'} {x['tracking_number']}"
+            on = f" on {when.date().isoformat()}" if when else ""
+            same = (x.get("store"), _digits(x["order_number"])) == (r.get("store"), _digits(r["order_number"]))
+            r["resolved"] = {"outcome": "delivered", "label": "Delivered", "by": "order", "who": None, "at": iso(when),
+                             "detail": (f"The order was delivered ({parcel}{on})." if same else
+                                        f"Sent together with order {x['order_number']}: {parcel} was delivered{on}, and "
+                                        f"this order's Shopify fulfilment lists that number.")}
     for parcels in by.values():
         for r in parcels:            # the carrier's own last word is "Delivered ..." but the status never caught up
             if r["cat"] != "delivered" and not r.get("resolved") and DELIVERED_SCAN.match(r.get("last_scan_text") or ""):
@@ -487,7 +571,7 @@ def build(brand: str | None, now: datetime | None = None, snap: Snapshot | None 
     marks = _marks(stores)
     _mark_reshipped(everything, snap)
     _mark_resolved(everything, marks)
-    _mark_order_delivered(everything)
+    _mark_order_delivered(everything, snap.numbers)
     rows = [r for r in everything if not r["excluded"] and not r.get("reshipped") and not r.get("resolved")]
     # not dispatched yet (Shopify unfulfilled, or with Amazon but not shipped): listed on their own Unfulfilled tab,
     # never in Critical or any delay figure of the shipments
@@ -686,9 +770,27 @@ def value_at_risk(ds: Dataset) -> dict[str, Any]:
             "note": "Orders are in more than one currency, so no total is shown." if mixed else ""}
 
 
+AMAZON_DELIVERED = re.compile(r"\bdelivered\b", re.I)
+AMAZON_NOT_DELIVERED = re.compile(r"\b(not|un)\s*deliver|undeliverable|out for delivery|attempt", re.I)
+
+
+def delivered_orders(ds: Dataset) -> set[tuple[str, str]]:
+    """(store, order number digits) of every order that has arrived, by any source: a delivered parcel (Shopify, the
+    carrier or Amazon's MCF data), a parcel resolved as Delivered, or Amazon's own word on the order ("Package
+    delivered near the front door"). A delivered order is never listed as a problem anywhere."""
+    out: set[tuple[str, str]] = set()
+    for r in ds.everything:
+        amazon = r.get("amazon_status") or ""
+        if (r["cat"] == "delivered" or (r.get("resolved") or {}).get("outcome") == "delivered"
+                or (AMAZON_DELIVERED.search(amazon) and not AMAZON_NOT_DELIVERED.search(amazon))):
+            out.add((r.get("store") or "", _digits(r["order_number"])))
+    return out
+
+
 def mcf_report(ds: Dataset) -> dict[str, Any]:
     seen: set[str] = set()
     rows = []
+    arrived = delivered_orders(ds)
     for r in (ds.unfulfilled or []) + ds.rows:
         o = r["order_number"]
         if o in seen or not r.get("note_done"):
@@ -696,6 +798,8 @@ def mcf_report(ds: Dataset) -> dict[str, Any]:
         seen.add(o)
         if (r.get("fulfillment_status") or "").upper() == "FULFILLED":
             continue
+        if (r.get("store") or "", _digits(o)) in arrived:
+            continue                     # delivered (often by Amazon) even though Shopify was never updated
         age = whole_days(r["created"], ds.now)
         level = next((lv for d, lv in MCF_LEVELS if age is not None and age >= d), None)
         if level:
@@ -713,8 +817,10 @@ def mcf_report(ds: Dataset) -> dict[str, Any]:
 
 def verify_report(ds: Dataset) -> dict[str, Any]:
     group = [r for r in ds.rows if r["unconfirmed"]]
-    # the team's results include parcels a "lost" mark has moved to Resolved
-    st = Counter((r["manual"] or {}).get("status", "") for r in group + [x for x in ds.resolved or [] if x["unconfirmed"] and x["manual"]])
+    # the team's results include parcels a "lost" mark has moved to Resolved, but not a parcel whose order was
+    # delivered after the mark (# RBP7010: marked "still in transit", then delivered): that one is no longer in transit
+    st = Counter((r["manual"] or {}).get("status", "") for r in group + [x for x in ds.resolved or [] if x["unconfirmed"] and x["manual"]
+                                                                       and (x.get("resolved") or {}).get("by") == "team"])
     return {"total": len(group), "missingTracking": sum(1 for r in group if r["missingTracking"]),
             "team": {"delivered": st["delivered"], "lost": st["lost"], "failed": st["failed"],
                      "inTransit": st["in_transit"], "notChecked": st[""]}, "teamReason": ""}
@@ -743,7 +849,7 @@ def exception_rows(ds: Dataset) -> list[dict[str, Any]]:
         elif r["row_kind"] == "amazon" and r["shipped"]:
             add(r, "amazon_not_in_shopify", f"Amazon shipped it {r['days'] or 0} days ago"
                 f"{' (tracking ' + r['tracking_number'] + ')' if r['tracking_number'] else ''}; Shopify still shows the order unfulfilled. Mark it fulfilled in Shopify.")
-        if r["row_kind"] == "shipment":
+        if r["row_kind"] == "shipment" and r["missingTracking"]:
             add(r, "missing_tracking", f"Dispatched {r['days'] or 0} days ago with no tracking number. Add it in Shopify.")
         if r["noMove"]:
             add(r, "stuck", f"No carrier scan for {r['scanAge']} days (last: {r.get('last_scan_text') or 'no description'}).")
@@ -878,11 +984,72 @@ def unfulfilled_report(ds: Dataset) -> dict[str, Any]:
                     "shipped it. They are kept out of Critical and the shipment delay figures; days count from the order date."}
 
 
+HOME_TOP = 4
+
+
+def home_figures(ds: Dataset, brands: list[str]) -> dict[str, Any]:
+    """Shipping figures for the Home page, from the same board the Shipping page shows (so the two always agree):
+    the selected brands together (`all`), each brand on its own (`byBrand`, never added across brands by mistake) and
+    the parcels with a carrier exception, longest in stage first."""
+    since = ds.now - timedelta(days=30)
+
+    def figures(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        active = [r for r in rows if r["cat"] != "delivered"]
+        return {"active": len(active), "inTransit": sum(1 for r in active if r["stage"] == "dispatched"),
+                "delivered30d": sum(1 for r in rows if r["cat"] == "delivered" and r["deliveredAt"] and r["deliveredAt"] >= since),
+                "problems": sum(1 for r in active if r["exc"]), "unverified": sum(1 for r in active if r["unconfirmed"])}
+
+    rows = [r for r in ds.rows if r["brand"] in brands]
+    top = sorted((r for r in rows if r["cat"] != "delivered" and r["exc"]), key=lambda r: (-(r["days"] or 0), r["key"]))[:HOME_TOP]
+    allv = {**figures(rows), "asOf": iso(ds.now),
+            "top": [{"order": r["order_number"], "brand": r["brand"], "carrier": r["carrier_name"] or "Unknown", "days": r["days"],
+                     "place": r.get("last_scan_place") or "", "trackingId": r.get("tracking_id") or r["key"]} for r in top]}
+    return {"all": allv, "byBrand": {b: figures([r for r in rows if r["brand"] == b]) for b in brands}}
+
+
+AWAITING_SCAN = ("", "pending", "info_received")
+
+
+def journey(ds: Dataset) -> list[dict[str, Any]]:
+    """Where every order is, left to right, for the Overview journey strip. Ordered counts each unsent order once;
+    the three parcel stages split the active (dispatched, not delivered) parcels by their tracking status, so they add
+    up to the active total. `flags` are the problems sitting in that stage; `cat`/`status` say which list to open."""
+    unf = unfulfilled_orders(ds)
+    sent = [r for r in ds.active if r["stage"] == "dispatched"]
+    waiting = [r for r in sent if (r["normalized_tracking_status"] or "") in AWAITING_SCAN]
+    out = [r for r in sent if r["normalized_tracking_status"] == "out_for_delivery"]
+    moving = [r for r in sent if (r["normalized_tracking_status"] or "") not in (*AWAITING_SCAN, "out_for_delivery")]
+
+    def flag(label: str, n: int, tone: str, cat: str = "") -> list[dict[str, Any]]:
+        return [{"label": label, "value": n, "tone": tone, "cat": cat}] if n else []
+
+    return [
+        {"key": "ordered", "label": "Ordered, not sent", "value": len(unf),
+         "flags": flag("waiting 9+ days", sum(1 for r in unf if (r["days"] or 0) >= 9), "warn")},
+        {"key": "dispatched", "label": "Sent, no carrier scan yet", "value": len(waiting),
+         "flags": flag("no tracking", sum(1 for r in waiting if r["missingTracking"]), "crit")
+         + flag("unconfirmed", sum(1 for r in waiting if r["unconfirmed"]), "info", "unconfirmed")},
+        {"key": "in_transit", "label": "In transit", "value": len(moving),
+         "flags": flag("no movement", sum(1 for r in moving if r["noMove"]), "crit", "nomove")
+         + flag("exceptions", sum(1 for r in moving if r["exc"]), "warn", "exception")},
+        {"key": "out_for_delivery", "label": "Out for delivery", "value": len(out),
+         "flags": flag("critical", sum(1 for r in out if r["cat"] == "red"), "crit", "red")},
+        # same rule as delivery_report(ds, 30), so it matches the Overview's "Delivered, last 30 days"
+        {"key": "delivered", "label": "Delivered, last 30 days",
+         "value": sum(1 for r in ds.rows if r["cat"] == "delivered" and r["deliveredAt"] and r["shipped"]
+                      and r["deliveredAt"] >= ds.now - timedelta(days=30)), "flags": []},
+    ]
+
+
 def summary(ds: Dataset) -> dict[str, Any]:
     active = ds.active
     critical = sum(1 for r in active if r["cat"] == "red")
     c = checks(ds)
+    dr = delivery_report(ds, 30)
     return {
+        "journey": journey(ds),
+        "delivery30": {"delivered": dr["delivered"], "onTimePct": dr["onTimePct"], "avgDays": dr["avgDays"],
+                       "withPromisedDate": dr["withPromisedDate"]},
         "kpis": kpis(ds), "activeTotal": len(active), "critical": critical,
         "delivered": sum(1 for r in ds.rows if r["cat"] == "delivered"),
         "unfulfilled": len(unfulfilled_orders(ds)),
@@ -1088,9 +1255,24 @@ def shopify_url(r: dict[str, Any]) -> str:
     return f"https://admin.shopify.com/store/{handle}/orders/{oid}"
 
 
+def _amazon_parcel(r: dict[str, Any]) -> bool:
+    """Whether the order's Amazon (MCF) word belongs to THIS parcel. The board carries the order's latest Amazon status
+    on every parcel of the order, so a FedEx parcel the team sent itself (# RBP8183) would otherwise read "Shipped by
+    Amazon" with the USPS parcel's number."""
+    if r["row_kind"] == "amazon":
+        return True
+    amazon_no = (r.get("amazon_tracking") or "").strip().upper()
+    own = (r.get("tracking_number") or "").strip().upper()
+    if amazon_no and own:
+        return amazon_no == own
+    carrier = r.get("carrier_name") or ""
+    return r.get("kind") == "mcf" or "amazon" in carrier.lower() or unconfirmed_carrier(carrier)
+
+
 def public_row(ds: Dataset, r: dict[str, Any], packages: dict[str, int]) -> dict[str, Any]:
     """What the browser receives for one parcel. No note text, no customer data beyond city and state."""
     order_done = (r.get("resolved") or {}).get("by") == "order"      # the order arrived through its other parcels
+    amazon = _amazon_parcel(r)
     return {
         "key": r["key"], "order": r["order_number"], "tracking": r["tracking_number"], "carrier": r["carrier_name"],
         "cat": ("delivered" if order_done else "resolved" if r.get("resolved")
@@ -1106,8 +1288,8 @@ def public_row(ds: Dataset, r: dict[str, Any], packages: dict[str, int]) -> dict
         "unconfirmed": r["unconfirmed"], "flagged": flagged(ds, r), "brand": r["brand"],
         "city": r.get("ship_city"), "state": r.get("ship_state"), "trackingId": r.get("tracking_id"),
         "kind": r.get("kind"), "rowKind": r["row_kind"],
-        "amazonStatus": r.get("amazon_status"), "amazonAt": r.get("amazon_at"), "amazonRef": r.get("amazon_ref"),
-        "amazonTracking": r.get("amazon_tracking"),
+        "amazonStatus": r.get("amazon_status") if amazon else None, "amazonAt": r.get("amazon_at") if amazon else None,
+        "amazonRef": r.get("amazon_ref") if amazon else None, "amazonTracking": r.get("amazon_tracking") if amazon else None,
         "reshipped": r.get("reshipped"), "resolved": r.get("resolved"),
     }
 
@@ -1269,6 +1451,7 @@ def annotate(ds: Dataset, order: str, action: str, text: str, by: str) -> dict[s
             fresh.rows, fresh.everything, fresh.marks, fresh.reshipped, fresh.resolved, fresh.unfulfilled)
     else:
         ds.marks = _marks(brand_stores(ds.brand))
+    forget_built()                       # other brands' boards still show the old mark: rebuild them
     detail = order_detail(ds, order)
     assert detail is not None
     return detail
@@ -1388,7 +1571,7 @@ def _check_row(s: dict[str, Any], dup: Counter, allowed: dict[str, str],
 
 
 def sample_sheet(ds: Dataset) -> str:
-    blank = [r for r in ds.active if r["row_kind"] == "shipment"][:3]
+    blank = [r for r in ds.active if r["row_kind"] == "shipment" and r["missingTracking"]][:3]
     has = next((r for r in ds.active if r["tracking_number"]), None)
     carrier = (import_carriers(ds) or ["USPS"])[0]
     lines = ["order_number,tracking_number,carrier"]

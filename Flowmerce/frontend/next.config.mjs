@@ -5,6 +5,8 @@ const API_ORIGIN = process.env.FLOWMERCE_API_ORIGIN || 'http://127.0.0.1:8787';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // A second (preview) server can build into its own folder so it never overwrites the running app's .next.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   reactStrictMode: true,
   poweredByHeader: false,
   // Refresh now / Sync MCF sheet now read Shopify, Supabase and Google before answering (about 20-35 s). Next's
