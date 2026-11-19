@@ -49,11 +49,12 @@ class BoardTest(unittest.TestCase):
                 carrier_name=None, status=None, shipped_at=None, last_scan_at=None),
             row(row_id="d", tracking_number="D", order_name="#5", status="delivered", delivered_at=ago(2)),
         ])
-        cats = {r["order_number"]: r["cat"] for r in d.rows}
+        cats = {r["order_number"]: r["cat"] for r in d.rows + d.unfulfilled}
         self.assertEqual(cats, {"#1": "red", "#2": "yellow", "#3": "on_track", "#4": "grey", "#5": "delivered"})
+        self.assertEqual([r["order_number"] for r in d.unfulfilled], ["#4"])   # not dispatched: its own tab
         s = board.summary(d)
-        self.assertEqual(s["activeTotal"], 4)
-        self.assertEqual((s["stage"]["preDispatch"], s["stage"]["dispatched"], s["delivered"]), (1, 3, 1))
+        self.assertEqual(s["activeTotal"], 3)
+        self.assertEqual((s["stage"]["preDispatch"], s["stage"]["dispatched"], s["delivered"], s["unfulfilled"]), (1, 3, 1, 1))
         self.assertIn("1 shipment(s) are 9+ days", s["banner"])
 
     def test_amazon_without_updates_is_unconfirmed_never_critical(self):
@@ -179,6 +180,24 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(board.list_rows(d, cat="red")["total"], 1)
         self.assertEqual(board.list_rows(d, q="c")["rows"][0]["order"], "#3")
 
+    def test_unfulfilled_orders_have_their_own_tab_not_critical(self):
+        d = self.ds([
+            row(row_id="o1", row_kind="order", order_id=11, order_name="#U11", placed_at=ago(20), tracking_number=None,
+                carrier_name=None, status=None, shipped_at=None, last_scan_at=None, fulfillment_status="UNFULFILLED"),
+            row(row_id="o2", row_kind="order", order_id=12, order_name="#U12", placed_at=ago(2), tracking_number=None,
+                carrier_name=None, status=None, shipped_at=None, last_scan_at=None, fulfillment_status="UNFULFILLED",
+                note_done=True),
+            row(row_id="a", tracking_number="A", order_name="#S1", shipped_at=ago(10)),              # a real critical parcel
+        ])
+        self.assertEqual([r["order"] for r in board.list_rows(d, cat="red")["rows"]], ["#S1"])
+        self.assertEqual(board.list_rows(d)["total"], 1)                    # the shipment list has no unfulfilled order
+        u = board.unfulfilled_report(d)
+        self.assertEqual(([x["order"] for x in u["rows"]], u["counts"]["9+"], u["counts"]["0-3"]), (["#U11", "#U12"], 1, 1))
+        self.assertIn("DONE", u["rows"][1]["action"])
+        k = {x["key"]: x["value"] for x in board.kpis(d)}
+        self.assertEqual((k[""], k["red"], k["unfulfilled"]), (1, 1, 2))
+        self.assertFalse([e for e in board.exception_rows(d) if e["order"].startswith("#U")])
+
     def test_order_marks_and_notes_are_saved_locally(self):
         d = self.ds([row(row_id="a", tracking_number="A", order_id=4242, order_name="#M1")])
         r = board.annotate(d, "#M1", "flag", "", "Ops")
@@ -194,7 +213,8 @@ class BoardTest(unittest.TestCase):
                     status=None, raw_status=None, shipped_at=None, last_scan_at=None, placed_at=ago(30),
                     fulfillment_status="UNFULFILLED")
         d = self.ds([order])
-        self.assertEqual(board.list_rows(d, cat="red")["total"], 1)
+        self.assertEqual(board.list_rows(d, cat="red")["total"], 0)           # unfulfilled: never Critical
+        self.assertEqual(board.list_rows(d, cat="unfulfilled")["total"], 1)
         r = board.annotate(d, "#U1", "outcome", "Refunded", "Ops")
         self.assertEqual((r["annotation"]["outcome"], r["annotation"]["outcomeBy"]), ("refunded", "Ops"))
         self.assertIn("Resolved as refunded", r["packages"][0]["action"])
@@ -204,8 +224,8 @@ class BoardTest(unittest.TestCase):
         self.assertEqual((res["total"], res["rows"][0]["cat"], res["rows"][0]["resolved"]["label"]), (1, "resolved", "Refunded"))
         d2 = self.ds([order])                                                      # a fresh read keeps it resolved
         self.assertEqual(board.list_rows(d2, cat="red")["total"], 0)
-        board.annotate(d, "#U1", "clear_outcome", "", "Ops")                        # undo
-        self.assertEqual(board.list_rows(d, cat="red")["total"], 1)
+        board.annotate(d, "#U1", "clear_outcome", "", "Ops")                        # undo: back on the Unfulfilled tab
+        self.assertEqual(board.list_rows(d, cat="unfulfilled")["total"], 1)
         with self.assertRaises(Exception):
             board.annotate(d, "#U1", "outcome", "sold", "Ops")
 
@@ -246,7 +266,8 @@ class BoardTest(unittest.TestCase):
             row(row_id="t", tracking_number="DHLX", order_name="#A4", order_id=4, kind="mcf", carrier_name="DHL Express",
                 status="pending", last_scan_at=None, shipped_at=ago(12)),
         ])
-        by = {r["order_number"]: r for r in d.rows}
+        by = {r["order_number"]: r for r in d.rows + d.unfulfilled}
+        self.assertNotIn("#A2", {r["order_number"] for r in d.rows})                         # not shipped: Unfulfilled tab
         self.assertEqual((by["#A1"]["stage"], by["#A1"]["cat"]), ("dispatched", "unconfirmed"))   # Amazon shipped: checked by hand
         self.assertEqual((by["#A2"]["stage"], by["#A2"]["cat"]), ("pre_dispatch", "red"))         # Amazon has not shipped in 11 days
         self.assertEqual(by["#A4"]["cat"], "unconfirmed")                                         # MCF parcel without carrier data
@@ -288,6 +309,115 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(board.list_rows(d, cat="reshipped")["rows"][0]["cat"], "reshipped")
         self.assertEqual(next(k for k in board.kpis(d) if k["key"] == "reshipped")["value"], 2)
         self.assertIsNotNone(board.order_detail(d, "#R100")["packages"][0]["reshipped"])
+
+    def test_parcel_delivered_by_another_carrier_leaves_the_delay_figures(self):
+        rows = [
+            # #5680: a USPS label that never moved (critical) while UPS delivered the same order
+            row(row_id="a", tracking_number="USPS1", order_id=5680, order_name="#5680", shipment_id="s1", carrier_name="USPS",
+                status="in_transit", last_scan_at=ago(58), last_scan_text="USPS Awaiting Item", shipped_at=ago(58), placed_at=ago(60)),
+            row(row_id="b", tracking_number="UPS1", order_id=5680, order_name="#5680", shipment_id="s2", carrier_name="UPS",
+                status="delivered", delivered_at=ago(54), shipped_at=ago(59), placed_at=ago(60)),
+            # same carrier, one delivered and one open: may be a split shipment, stays on the board
+            row(row_id="c", tracking_number="SPL1", order_id=700, order_name="#700", shipment_id="s3", carrier_name="USPS",
+                status="in_transit", last_scan_at=ago(15), shipped_at=ago(20), placed_at=ago(21)),
+            row(row_id="d", tracking_number="SPL2", order_id=700, order_name="#700", shipment_id="s4", carrier_name="USPS",
+                status="delivered", delivered_at=ago(16), shipped_at=ago(20), placed_at=ago(21)),
+            # sent AFTER the other carrier delivered (an exchange / more items): stays on the board
+            row(row_id="e", tracking_number="LATER1", order_id=800, order_name="#800", shipment_id="s5", carrier_name="FedEx",
+                status="pending", last_scan_at=None, shipped_at=ago(12), placed_at=ago(40)),
+            row(row_id="f", tracking_number="DONE1", order_id=800, order_name="#800", shipment_id="s6", carrier_name="UPS",
+                status="delivered", delivered_at=ago(30), shipped_at=ago(35), placed_at=ago(40)),
+            # still scanning after the other carrier delivered (a split still moving): stays on the board
+            row(row_id="g", tracking_number="MOVING1", order_id=900, order_name="#900", shipment_id="s7", carrier_name="DHL Express",
+                status="in_transit", last_scan_at=ago(2), shipped_at=ago(15), placed_at=ago(16)),
+            row(row_id="h", tracking_number="DONE2", order_id=900, order_name="#900", shipment_id="s8", carrier_name="UPS",
+                status="delivered", delivered_at=ago(10), shipped_at=ago(14), placed_at=ago(16)),
+        ]
+        sn = board.Snapshot(rows, [{"source": "shopify", "kind": "import", "last_ok_at": ago(0.05), "last_status": "ok"}], NOW,
+                            items={}, replacements=[], reship_notes=set())
+        d = board.build("all", now=NOW, snap=sn)
+        old = {r["tracking_number"]: r for r in d.everything}
+        self.assertEqual((old["USPS1"]["reshipped"]["how"], old["USPS1"]["reshipped"]["newCarrier"],
+                          old["USPS1"]["reshipped"]["newTracking"]), ("delivered_by_other_carrier", "UPS", "UPS1"))
+        self.assertEqual(old["USPS1"]["resolved"]["by"], "order")   # UPS delivered it: shown as delivered
+        self.assertIsNone(old["SPL1"].get("resolved"))
+        active = {r["tracking_number"] for r in d.active}
+        self.assertNotIn("USPS1", active)                            # out of Critical / exceptions
+        self.assertIn("SPL1", active)                                # same-carrier parcel stays
+        self.assertTrue({"LATER1", "MOVING1"} <= active)             # sent later / still moving: stay
+        self.assertNotIn("USPS1", {r["tracking_number"] for r in d.active if r["cat"] == "red"})
+        self.assertEqual(board.list_rows(d, cat="reshipped")["total"], 0)
+        self.assertEqual(board.list_rows(d, cat="resolved")["total"], 1)
+
+    def test_amazon_extra_parcel_is_delivered_when_the_shopify_order_arrived(self):
+        # #7254: Shopify lists two Amazon parcels, both delivered; Amazon's extra parcel said "delivery date unavailable"
+        rows = [
+            row(row_id="a", tracking_number="TBA1", order_id=7254, order_name="#7254", shipment_id="s1",
+                carrier_name="Amazon Logistics US", status="delivered", delivered_at=ago(47), shipped_at=ago(50), placed_at=ago(52)),
+            row(row_id="b", tracking_number="TBA2", order_id=7254, order_name="#7254", shipment_id="s1",
+                carrier_name="Amazon Logistics US", status="delivered", delivered_at=ago(32), shipped_at=ago(50), placed_at=ago(52)),
+            row(row_id="c", row_kind="amazon", tracking_number="TBA3", order_id=7254, order_name="#7254",
+                carrier_name="Amazon Logistics US", status="exception", raw_status="DELAYED", last_scan_at=ago(42),
+                last_scan_text="Delivery date is currently unavailable", shipped_at=ago(50), placed_at=ago(52),
+                amazon_extra=["Amazon Logistics US TBA1", "Amazon Logistics US TBA2"]),
+            # an extra Amazon parcel while a Shopify parcel is still on its way: stays open
+            row(row_id="d", tracking_number="TBA4", order_id=7300, order_name="#7300", shipment_id="s2",
+                carrier_name="Amazon Logistics US", status="in_transit", last_scan_at=ago(1), shipped_at=ago(3), placed_at=ago(4)),
+            row(row_id="e", row_kind="amazon", tracking_number="TBA5", order_id=7300, order_name="#7300",
+                carrier_name="Amazon Logistics US", status="exception", raw_status="DELAYED", last_scan_at=ago(1),
+                shipped_at=ago(3), placed_at=ago(4), amazon_extra=["Amazon Logistics US TBA4"]),
+        ]
+        sn = board.Snapshot(rows, [{"source": "shopify", "kind": "import", "last_ok_at": ago(0.05), "last_status": "ok"}], NOW,
+                            items={}, replacements=[], reship_notes=set())
+        d = board.build("all", now=NOW, snap=sn)
+        active = {r["tracking_number"] for r in d.active}
+        self.assertNotIn("TBA3", active)
+        self.assertIn("TBA5", active)
+        self.assertFalse([e for e in board.exception_rows(d) if e["order"] == "#7254"])
+        p = {x["tracking"]: x for x in board.order_detail(d, "#7254")["packages"]}
+        self.assertEqual((p["TBA3"]["cat"], p["TBA3"]["label"]), ("delivered", "Delivered"))
+        self.assertIn("TBA1", p["TBA3"]["resolved"]["detail"])
+
+    def test_reshipped_parcel_is_delivered_when_its_replacement_arrived(self):
+        rows = [
+            row(row_id="a", tracking_number="OLDU", order_id=6127, order_name="#R6127", shipment_id="s1", carrier_name="USPS",
+                status="in_transit", last_scan_at=ago(51), shipped_at=ago(50), placed_at=ago(52)),
+            row(row_id="b", tracking_number="NEWU", order_id=6127, order_name="#R6127", shipment_id="s2", carrier_name="USPS",
+                status="delivered", delivered_at=ago(43), shipped_at=ago(45), placed_at=ago(52)),
+        ]
+        sn = board.Snapshot(rows, [{"source": "shopify", "kind": "import", "last_ok_at": ago(0.05), "last_status": "ok"}], NOW,
+                            items={}, replacements=[], reship_notes=set())
+        d = board.build("all", now=NOW, snap=sn)
+        old = next(r for r in d.everything if r["tracking_number"] == "OLDU")
+        self.assertEqual(old["resolved"]["by"], "order")
+        self.assertEqual(board.reshipped_report(d)["rows"], [])      # delivered, not waiting in Reshipped
+
+    def test_same_carrier_parcel_sent_again_later_and_delivered(self):
+        rows = [
+            # # RBP6127: USPS label never moved; a second USPS parcel sent 5 days later was delivered
+            row(row_id="a", tracking_number="OLDU", order_id=6127, order_name="#R6127", shipment_id="s1", carrier_name="USPS",
+                status="in_transit", last_scan_at=ago(51), shipped_at=ago(50), placed_at=ago(52)),
+            row(row_id="b", tracking_number="NEWU", order_id=6127, order_name="#R6127", shipment_id="s2", carrier_name="USPS",
+                status="delivered", delivered_at=ago(43), shipped_at=ago(45), placed_at=ago(52)),
+        ]
+        sn = board.Snapshot(rows, [{"source": "shopify", "kind": "import", "last_ok_at": ago(0.05), "last_status": "ok"}], NOW,
+                            items={}, replacements=[], reship_notes=set())
+        d = board.build("all", now=NOW, snap=sn)
+        old = next(r for r in d.everything if r["tracking_number"] == "OLDU")
+        self.assertEqual(old["reshipped"]["how"], "delivered_by_later_parcel")
+        self.assertFalse(board.exception_rows(d))
+
+    def test_one_checks_row_per_order_with_every_issue_as_a_tag(self):
+        rows = [row(row_id="a", tracking_number="EX1", order_name="#6927", status="exception", raw_status="DELAYED",
+                    last_scan_at=ago(56), last_scan_text="Package delayed in transit", shipped_at=ago(57), placed_at=ago(58))]
+        sn = board.Snapshot(rows, [{"source": "shopify", "kind": "import", "last_ok_at": ago(0.05), "last_status": "ok"}], NOW,
+                            items={}, replacements=[], reship_notes=set())
+        d = board.build("all", now=NOW, snap=sn)
+        self.assertGreaterEqual(len(board.exception_rows(d)), 2)    # carrier exception + no movement
+        ex = board.checks(d)["exceptions"]
+        self.assertEqual([r["order"] for r in ex["rows"]], ["#6927"])
+        self.assertEqual(set(ex["rows"][0]["types"]), {"carrier_exception", "stuck"})
+        self.assertEqual((ex["total"], ex["counts"]["stuck"], ex["counts"]["carrier_exception"]), (1, 1, 1))
 
     def test_parcel_sent_after_the_replacement_is_not_replaced_by_it(self):
         rows = [row(row_id="a", tracking_number="LATE1", order_id=100, order_name="#R100", status="in_transit",
@@ -335,15 +465,18 @@ class BoardTest(unittest.TestCase):
         # Amazon has it but has not shipped yet: the clock keeps running from the order date
         d = self.mds([order], [self._mcf(order_status="Received", shipment_status=None, shipped_at=None, package_number=None,
                                          tracking_number=None, tracking_status=None, delivered_at=None, last_event_at=None, events=[])])
-        r = d.rows[0]
+        self.assertEqual(d.rows, [])
+        r = d.unfulfilled[0]
         self.assertEqual((r["row_kind"], r["stage"], r["cat"]), ("amazon", "pre_dispatch", "red"))
+        u = board.unfulfilled_report(d)["rows"][0]
+        self.assertEqual((u["withAmazon"], u["band"]), (True, "9+"))
         self.assertIn("Received", r["last_scan_text"])
 
     def test_cancelled_amazon_order_leaves_the_order_not_dispatched(self):
         order = row(row_id="o", row_kind="order", order_name="# RBP1", tracking_number=None, carrier_name=None, status=None,
                     shipped_at=None, last_scan_at=None, placed_at=ago(3))
         d = self.mds([order], [self._mcf(order_status="Cancelled")])
-        self.assertEqual(d.rows[0]["row_kind"], "order")
+        self.assertEqual(d.unfulfilled[0]["row_kind"], "order")
 
     def test_second_amazon_order_is_a_reship(self):
         order = row(row_id="o", row_kind="order", order_name="# RBP1", tracking_number=None, carrier_name=None, status=None,
@@ -352,9 +485,16 @@ class BoardTest(unittest.TestCase):
                           tracking_status="IN_TRANSIT", delivered_at=None, last_event_at=ago(20))
         second = self._mcf(sfo_id="SHOP-RBP1-2", received_at=ago(6), shipped_at=ago(5), tracking_number="TBA2")
         d = self.mds([order], [first, second])
+        old = next(r for r in d.everything if r["tracking_number"] == "TBA1")
+        self.assertEqual(old["reshipped"]["how"], "second_amazon_order")
+        self.assertEqual(old["resolved"]["by"], "order")             # the second order was delivered: order delivered
+        self.assertEqual([r["tracking_number"] for r in d.rows], ["TBA2"])
+        # while the second Amazon order is still on its way, the first waits in Reshipped
+        second_moving = self._mcf(sfo_id="SHOP-RBP1-2", received_at=ago(6), shipped_at=ago(5), tracking_number="TBA2",
+                                  tracking_status="IN_TRANSIT", delivered_at=None, last_event_at=ago(1))
+        d = self.mds([order], [first, second_moving])
         rr = board.reshipped_report(d)["rows"]
         self.assertEqual([(x["tracking"], x["how"]) for x in rr], [("TBA1", "second_amazon_order")])
-        self.assertEqual([r["tracking_number"] for r in d.rows], ["TBA2"])
 
     def test_same_day_amazon_orders_are_a_split_not_a_reship(self):
         order = row(row_id="o", row_kind="order", order_name="# RBP1", tracking_number=None, carrier_name=None, status=None,
@@ -382,7 +522,8 @@ class BoardTest(unittest.TestCase):
         order = row(row_id="o", row_kind="order", order_name="# RBP1", tracking_number=None, carrier_name=None, status=None,
                     shipped_at=None, last_scan_at=None, placed_at=ago(3))
         d = self.mds([order], [self._mcf(order_status="Unfulfillable", tracking_number=None)])
-        self.assertIn("unfulfillable", d.rows[0]["amazon_status"])
+        self.assertIn("unfulfillable", d.unfulfilled[0]["amazon_status"])
+        self.assertIn("unfulfillable", board.unfulfilled_report(d)["rows"][0]["amazon"])
 
     def test_out_for_delivery_from_amazon(self):
         d = self.mds([row(row_id="a", order_name="# RBP1", carrier_name="Amazon Logistics US", tracking_number="TBA111",

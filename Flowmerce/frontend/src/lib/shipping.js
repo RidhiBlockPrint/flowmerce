@@ -14,6 +14,7 @@ export const CAT = {
     delivered: { label: 'Delivered', tone: 'ok' },
     reshipped: { label: 'Reshipped (old parcel)', tone: 'info' },
     resolved: { label: 'Resolved', tone: 'neutral' },
+    unfulfilled: { label: 'Unfulfilled', tone: 'warn' },
 };
 
 /** Outcomes the team can record for an order Shopify does not know about. */

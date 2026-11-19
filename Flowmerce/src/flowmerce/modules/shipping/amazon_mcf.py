@@ -120,9 +120,9 @@ def overlay(rows: list[dict[str, Any]], packages: list[dict[str, Any]] | None) -
             replaced.add(key)                      # rebuilt from Amazon's own data below
             continue
         r2 = dict(r)
-        p = by_tracking.get(str(r.get("tracking_number") or "").strip().upper())
-        if p and r["row_kind"] == "tracking":
-            _apply(r2, p)
+        pkg = by_tracking.get(str(r.get("tracking_number") or "").strip().upper())
+        if pkg and r["row_kind"] == "tracking":
+            _apply(r2, pkg)
         out.append(r2)
 
     template = {(r.get("store") or "", _digits(r.get("order_name"))): r for r in rows if r["row_kind"] in ("order", "amazon")}
@@ -153,11 +153,17 @@ def overlay(rows: list[dict[str, Any]], packages: list[dict[str, Any]] | None) -
         if key in replaced or key not in shopify:
             continue
         base = shopify[key][0]
+        live = [p for p in mcf if (p.get("order_status") or "").lower() not in CLOSED_ORDER]
         for p in mcf:
             t = str(p.get("tracking_number") or "").strip().upper()
             if not t or t in on_board or (p.get("order_status") or "").lower() in CLOSED_ORDER:
                 continue
             row = _amazon_row(base, p)
+            later = _reshipped_by(p, live)       # a second MCF order re-sent it (e.g. #7254: 29 Sep, again 16 Oct)
+            if later and row["status"] != "delivered":
+                row["_mcf_superseded"] = {"order": base.get("order_name"), "tracking": later.get("tracking_number"),
+                                          "carrier": _carrier(later.get("carrier_code")), "at": later.get("received_at"),
+                                          "ref": later.get("sfo_id")}
             row["row_id"] = f"{base.get('order_id')}:mcf-extra:{p.get('sfo_id')}:{p.get('package_number') or 0}"
             row["amazon_extra"] = sorted({f"{x.get('carrier_name') or 'Unknown'} {x.get('tracking_number') or ''}".strip()
                                           for x in shopify[key]})

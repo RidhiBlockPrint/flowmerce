@@ -6,6 +6,8 @@ connection_failed) so the page can explain what to do. /summary never fails: it 
 so a Shipping outage cannot break Home."""
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Body, Request, Response
 
 from ..seo.audit import audit
@@ -122,6 +124,16 @@ def checks(request: Request, brand: str = "all"):
     except SupabaseError as e:
         return {**_unavailable(brand, e), "mcf": None, "verify": None}
     return board.envelope(ds, **board.checks(ds))
+
+
+@shipping.get("/unfulfilled")
+def unfulfilled(request: Request, brand: str = "all") -> dict[str, Any]:
+    require_perm(request, "view")
+    try:
+        ds = _dataset(brand)
+    except SupabaseError as e:
+        return {**_unavailable(brand, e), "total": 0, "rows": []}
+    return board.envelope(ds, **board.unfulfilled_report(ds))
 
 
 @shipping.get("/export/{kind}")

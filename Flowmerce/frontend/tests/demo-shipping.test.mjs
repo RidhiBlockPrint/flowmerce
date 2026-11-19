@@ -14,13 +14,20 @@ test('summary, list and checks agree with each other', async () => {
     assert.equal(s.source.state, 'ok');
     assert.ok(s.activeTotal > 80 && s.delivered > 50);
     assert.equal(kpi(s, ''), s.activeTotal);
-    assert.equal(s.stage.preDispatch + s.stage.dispatched, s.activeTotal);
+    assert.equal(s.stage.dispatched, s.activeTotal);                 // not-dispatched orders are on the Unfulfilled tab
+    assert.equal(s.stage.preDispatch, s.unfulfilled);
     const all = await get('/shipping/shipments?size=200');
     assert.equal(all.total, s.activeTotal);
     for (const key of ['red', 'orange', 'yellow', 'grey', 'on_track', 'unconfirmed', 'nomove', 'exception']) {
         const l = await get(`/shipping/shipments?cat=${key}&size=200`);
         assert.equal(l.total, kpi(s, key), key);
     }
+    // unfulfilled orders: their own tab, never in Critical or the shipment list
+    const u = await get('/shipping/unfulfilled');
+    assert.equal(u.total, kpi(s, 'unfulfilled'));
+    assert.equal(u.total, s.unfulfilled);
+    const listed = await get('/shipping/shipments?size=200');
+    assert.ok(listed.rows.every((r) => r.stage !== 'pre_dispatch'));
     const c = await get('/shipping/checks');
     assert.equal(c.verify.total, s.checks.toVerify);
     assert.equal(c.verify.missingTracking, s.checks.missingTracking);
@@ -29,7 +36,11 @@ test('summary, list and checks agree with each other', async () => {
     assert.equal(c.exceptions.counts.missing_tracking, c.verify.missingTracking);
     assert.equal(c.exceptions.total, c.exceptions.rows.length);
     assert.equal(s.exceptions, c.exceptions.total);
-    assert.equal(Object.values(c.exceptions.counts).reduce((a, b) => a + b, 0), c.exceptions.total);
+    // one row per order: each order appears once, with every issue type it has as a tag
+    const orders = c.exceptions.rows.map((r) => `${r.brand}|${r.order}`);
+    assert.equal(new Set(orders).size, orders.length);
+    assert.equal(c.exceptions.rows.reduce((a, r) => a + r.issues.length, 0), c.exceptions.issues);
+    for (const [k, n] of Object.entries(c.exceptions.counts)) assert.equal(c.exceptions.rows.filter((r) => r.types.includes(k)).length, n, k);
     assert.equal(c.mcf.rows.length, Object.values(c.mcf.counts).reduce((a, b) => a + b, 0));
     assert.deepEqual(s.checks.mcf, c.mcf.counts);
     assert.ok(c.exceptions.counts.duplicate_tracking > 0 && c.exceptions.counts.delivered_not_marked > 0);

@@ -15,6 +15,7 @@ import { ImportPreview, OrderDrawer, ShipmentsTable, ShopifyOrderLink, SourceGat
 const TABS = [
     { key: 'overview', label: 'Overview' },
     { key: 'shipments', label: 'Shipments' },
+    { key: 'unfulfilled', label: 'Unfulfilled' },
     { key: 'checks', label: 'Checks and exceptions' },
     { key: 'analytics', label: 'Analytics' },
 ];
@@ -61,6 +62,7 @@ export default function Shipping() {
         {tab === 'shipments' ? <ShipmentsTab brand={brand} sp={sp} update={update} onOpen={setOpen}/>
             : tab === 'analytics' ? <AnalyticsTab brand={brand} update={update}/>
                 : tab === 'checks' ? <ChecksTab brand={brand} onOpen={setOpen}/>
+                : tab === 'unfulfilled' ? <UnfulfilledTab brand={brand} onOpen={setOpen}/>
                     : <OverviewTab brand={brand} update={update} onOpen={setOpen} onChanged={() => setRev((n) => n + 1)}/>}
       </div>
       {open ? <OrderDrawer order={open} brand={brand} onClose={() => setOpen(null)}/> : null}
@@ -78,7 +80,7 @@ function OverviewTab({ brand, update, onOpen, onChanged }) {
             <Button size="sm" icon="download" onClick={() => download(`/shipping/export/escalation${qs({ brand })}`).catch(toast.error)}>Escalation list (CSV)</Button></div> : null}
           <div className="kpis">
             {d.kpis.map((k) => (<Tile key={k.key || 'all'} label={k.label} value={k.value} tone={k.key === '' ? undefined : TONE_VAR[k.tone]}
-                onClick={() => update({ tab: 'shipments', cat: k.key || null, page: null })}/>))}
+                onClick={() => update(k.key === 'unfulfilled' ? { tab: 'unfulfilled', page: null } : { tab: 'shipments', cat: k.key || null, page: null })}/>))}
           </div>
           <div className="grid main-side">
             <div className="col" style={{ gap: 16, minWidth: 0 }}>
@@ -311,6 +313,32 @@ function ReshippedCard({ rs, onOpen }) {
     </Card>);
 }
 
+/* ------------------------------------------------------------------ Unfulfilled */
+const BAND_TONE = { '9+': 'crit', '6-8': 'warn', '4-5': 'warn', '0-3': 'neutral' };
+function UnfulfilledTab({ brand, onOpen }) {
+    const q = useApi(`/shipping/unfulfilled${qs({ brand })}`);
+    const [band, setBand] = useState('');
+    return (<SourceGate query={q}>
+      {(d) => {
+            const shown = d.rows.filter((r) => !band || r.band === band);
+            return (<Card title="Unfulfilled orders" sub={`${d.rule} ${fmtInt(d.total)} orders${d.withAmazon ? `, ${fmtInt(d.withAmazon)} of them with Amazon` : ''}.`}
+              actions={<select className="select sm" style={{ width: 'auto' }} value={band} onChange={(e) => setBand(e.target.value)} aria-label="Waiting time">
+                <option value="">All ({d.total})</option>{d.bands.map((b) => <option key={b.key} value={b.key}>Waiting {b.label} ({d.counts[b.key]})</option>)}</select>} flush>
+              {!shown.length ? <Empty icon="checkCircle" title="No unfulfilled orders">Every order has been sent.</Empty> : (<div className="table-wrap"><table className="t compact">
+                  <thead><tr><th>Order</th><th>Ordered</th><th>Waiting</th><th className="hide-sm">Amazon</th><th>Next step</th></tr></thead>
+                  <tbody>{shown.slice(0, 200).map((r) => (<tr key={`${r.brand}|${r.order}`}>
+                      <td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/>{r.flagged ? <Pill tone="warn">Flagged</Pill> : null}</td>
+                      <td className="small nowrap">{r.placedAt ? fmtDateTime(r.placedAt) : '—'}</td>
+                      <td><Pill tone={BAND_TONE[r.band]}>{dayText(r.days ?? 0)}</Pill></td>
+                      <td className="small hide-sm">{r.amazon || <span className="faint">—</span>}</td>
+                      <td className="small">{r.action}</td></tr>))}</tbody>
+                </table></div>)}
+              {shown.length > 200 ? <div className="card-body muted xs">Showing the first 200 of {shown.length}.</div> : null}
+            </Card>);
+        }}
+    </SourceGate>);
+}
+
 /* ------------------------------------------------------------------ Checks */
 function ChecksTab({ brand, onOpen }) {
     const q = useApi(`/shipping/checks${qs({ brand })}`);
@@ -319,17 +347,22 @@ function ChecksTab({ brand, onOpen }) {
     return (<SourceGate query={q}>
       {(d) => {
             const ex = d.exceptions;
-            const shown = ex.rows.filter((r) => !kind || r.type === kind);
+            const shown = ex.rows.filter((r) => !kind || (r.types || [r.type]).includes(kind));
             return (<>
           <Card title="Exceptions and data problems" sub={`${fmtInt(ex.total)} open. Click an order to see its tracking and decide the next step.`}
             actions={<select className="select sm" style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Type of exception">
               <option value="">All types ({ex.total})</option>{ex.types.map((t) => <option key={t.key} value={t.key}>{t.label} ({ex.counts[t.key]})</option>)}</select>} flush>
             {!shown.length ? <Empty icon="checkCircle" title="Nothing to review">No exceptions of this type.</Empty> : (<div className="table-wrap"><table className="t compact">
                 <thead><tr><th>Order</th><th>Type</th><th className="hide-sm">Carrier</th><th>What is wrong</th></tr></thead>
-                <tbody>{shown.slice(0, 60).map((r) => (<tr key={`${r.type}|${r.key}`}>
+                <tbody>{shown.slice(0, 60).map((r) => {
+                    const issues = r.issues || [r];
+                    return (<tr key={`${r.brand}|${r.order}`}>
                     <td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/></td>
-                    <td><Pill tone={r.severity === 'high' ? 'crit' : 'warn'}>{r.label}</Pill></td>
-                    <td className="hide-sm small">{r.carrier}</td><td className="small">{r.detail}</td></tr>))}</tbody>
+                    <td><div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>{[...new Map(issues.map((i) => [i.type, i])).values()].map((i) => (
+                        <Pill key={i.type} tone={i.severity === 'high' ? 'crit' : 'warn'}>{i.label}</Pill>))}</div></td>
+                    <td className="hide-sm small">{r.carrier}</td>
+                    <td className="small">{issues.length === 1 ? issues[0].detail : issues.map((i) => <div key={`${i.type}|${i.key}`}>{i.detail}</div>)}</td></tr>);
+                })}</tbody>
               </table></div>)}
             {shown.length > 60 ? <div className="card-body muted xs">Showing the first 60 of {shown.length}.</div> : null}
           </Card>

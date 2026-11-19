@@ -254,8 +254,11 @@ function buildDataset(db, brand, now = Date.now()) {
       missingTracking: missingTracking(s.tracking_number), created, fulfilled, lastScan, expected: ms(s.expected_delivery_at), deliveredAt: ms(s.delivered_at) };
   });
   const excluded = new Set(checks.filter((c) => c.cancelled || c.financial_status === 'REFUNDED').map((c) => c.order_number));
-  const rows = everything.filter((x) => !excluded.has(x.order_number));
-  return { rows, everything, checks, now, brand, annotations: db.shipping.annotations, active: rows.filter((x) => x.cat !== 'delivered') };
+  const kept = everything.filter((x) => !excluded.has(x.order_number));
+  // not dispatched yet: their own Unfulfilled tab, never Critical (same as board.build)
+  const unfulfilled = kept.filter((x) => x.stage === 'pre_dispatch');
+  const rows = kept.filter((x) => x.stage !== 'pre_dispatch');
+  return { rows, unfulfilled, everything, checks, now, brand, annotations: db.shipping.annotations, active: rows.filter((x) => x.cat !== 'delivered') };
 }
 
 const brandOf = (query) => (query.brand && query.brand !== 'all' ? query.brand : undefined);
@@ -295,6 +298,22 @@ function mcfReport(d) {
   return { available: true, rows, counts, rule: 'The order note says DONE but Shopify still shows the order as not fulfilled, 5+ days after the order (demo data).' };
 }
 
+const UNFULFILLED_BANDS = [['9+', '9+ days', 9], ['6-8', '6-8 days', 6], ['4-5', '4-5 days', 4], ['0-3', '0-3 days', 0]];
+function unfulfilledReport(d) {
+  const best = new Map();
+  d.unfulfilled.forEach((x) => { const k = `${x.brand || ''}|${x.order_number}`; if (!best.has(k) || (x.days ?? 0) > (best.get(k).days ?? 0)) best.set(k, x); });
+  const rows = [...best.values()].sort((a, b) => (b.days ?? 0) - (a.days ?? 0) || a.order_number.localeCompare(b.order_number)).map((x) => {
+    const days = x.days ?? 0;
+    return { order: x.order_number, key: x.key, brand: x.brand, shopifyUrl: '', placedAt: x.order_created_at, days: x.days,
+      band: UNFULFILLED_BANDS.find(([, , low]) => days >= low)[0], agingCat: x.agingCat, withAmazon: false, amazon: null,
+      noteDone: false, fulfillment: 'UNFULFILLED', total: x.order_total ?? null, currency: 'USD', flagged: !!d.annotations[x.order_number]?.flagged,
+      action: 'Not sent yet. Send it (or fulfil it in Shopify with its tracking number).' };
+  });
+  return { total: rows.length, rows, counts: Object.fromEntries(UNFULFILLED_BANDS.map(([k]) => [k, rows.filter((r) => r.band === k).length])),
+    bands: UNFULFILLED_BANDS.map(([key, label]) => ({ key, label })), withAmazon: 0,
+    rule: 'Orders with no parcel sent yet. They are kept out of Critical and the shipment delay figures; days count from the order date (demo data).' };
+}
+
 function verifyReport(d) {
   const group = d.rows.filter((x) => x.unconfirmed);
   const st = (k) => group.filter((x) => (x.manual?.status ?? '') === k).length;
@@ -328,6 +347,22 @@ function exceptionRows(d) {
   const sev = { high: 0, medium: 1 };
   out.sort((a, b) => sev[a.severity] - sev[b.severity] || (b.days ?? 0) - (a.days ?? 0) || a.order.localeCompare(b.order));
   return out;
+}
+
+// One row per order (same as board.exception_orders): its issues as tags, most severe first.
+function exceptionOrders(issues) {
+  const by = new Map();
+  issues.forEach((x) => { const k = `${x.brand || ''}|${x.order}`; if (!by.has(k)) by.set(k, []); by.get(k).push(x); });
+  const uniq = (a) => [...new Set(a)];
+  return [...by.values()].map((xs) => {
+    const seen = new Set();
+    const tags = xs.filter((x) => { const k = `${x.type}|${x.detail}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    const days = tags.map((x) => x.days).filter((v) => v !== null && v !== undefined);
+    return { ...tags[0], types: uniq(tags.map((x) => x.type)), carrier: uniq(tags.map((x) => x.carrier)).join(' / '),
+      tracking: uniq(tags.map((x) => x.tracking).filter(Boolean)).join(', '), days: days.length ? Math.max(...days) : null,
+      severity: tags.some((x) => x.severity === 'high') ? 'high' : tags[0].severity,
+      issues: tags.map(({ type, label, severity, detail, carrier, tracking, key }) => ({ type, label, severity, detail, carrier, tracking, key })) };
+  });
 }
 
 function carriersReport(d) {
@@ -411,7 +446,7 @@ function analytics(d, query) {
     weeks: weekRows.map(([week, value]) => ({ week, value })),
     carriers: car.map((c) => ({ carrier: c.carrier, critical: c.critical, other: c.active - c.critical })),
     stage: [
-      { label: 'Not dispatched', value: d.rows.filter((x) => x.stage === 'pre_dispatch' && x.cat !== 'delivered').length },
+      { label: 'Not dispatched (Unfulfilled tab)', value: unfulfilledReport(d).total },
       { label: 'Dispatched (active)', value: d.rows.filter((x) => x.stage === 'dispatched' && x.cat !== 'delivered').length },
       { label: 'Delivered', value: d.rows.filter((x) => x.cat === 'delivered').length },
     ],
@@ -558,7 +593,7 @@ function previewImport(d, text) {
   const cell = (row, i) => (i < row.length ? row[i].trim() : '');
   const sheet = body.map((rw, n) => ({ line: n + 2, order: cell(rw, io), tracking: cell(rw, it), carrier: cell(rw, ic) }));
   const byOrder = new Map();
-  d.rows.forEach((x) => { if (!byOrder.has(x.order_number)) byOrder.set(x.order_number, []); byOrder.get(x.order_number).push(x); });
+  [...d.rows, ...d.unfulfilled].forEach((x) => { if (!byOrder.has(x.order_number)) byOrder.set(x.order_number, []); byOrder.get(x.order_number).push(x); });
   const dup = {};
   sheet.forEach((s) => { if (s.order) dup[`${s.order}|${s.tracking}`] = (dup[`${s.order}|${s.tracking}`] || 0) + 1; });
   const allowed = Object.fromEntries(IMPORT_CARRIERS.map((c) => [c.toLowerCase(), c]));
@@ -613,21 +648,25 @@ export const routes = [
     d.active.forEach((x) => { counts[x.cat] = (counts[x.cat] || 0) + 1; });
     const values = { '': d.active.length, exception: d.rows.filter((x) => x.exc).length, nomove: d.rows.filter((x) => x.noMove).length };
     const KPI = [['', 'Total active shipments', 'neutral'], ['on_track', 'On track (0-3 days)', 'good'], ['grey', 'Grey 2-3 days', 'muted'], ['yellow', 'Yellow 4-5 days', 'warn'], ['orange', 'Orange 6-8 days', 'orange'],
-      ['red', 'Red 9+ days', 'bad'], ['unconfirmed', 'Carrier unconfirmed (Amazon/Unknown)', 'info'], ['exception', 'Carrier exceptions', 'bad'], ['nomove', `No movement (${NO_MOVE_DAYS}+ days)`, 'orange']];
+      ['red', 'Red 9+ days', 'bad'], ['unconfirmed', 'Carrier unconfirmed (Amazon/Unknown)', 'info'], ['exception', 'Carrier exceptions', 'bad'], ['nomove', `No movement (${NO_MOVE_DAYS}+ days)`, 'orange'],
+      ['unfulfilled', 'Unfulfilled orders (not sent yet)', 'warn']];
+    values.unfulfilled = unfulfilledReport(d).total;
     const critical = counts.red || 0;
     const mcf = mcfReport(d);
     const verify = verifyReport(d);
     return envelope(d, {
       kpis: KPI.map(([key, label, tone]) => ({ key, label: key === 'unconfirmed' ? 'Carrier unconfirmed (marketplace / unknown)' : label, value: key in values ? values[key] : counts[key] || 0, tone })),
       activeTotal: d.active.length, critical, delivered: d.rows.filter((x) => x.cat === 'delivered').length,
-      stage: { preDispatch: d.rows.filter((x) => x.stage === 'pre_dispatch' && x.cat !== 'delivered').length, dispatched: d.rows.filter((x) => x.stage === 'dispatched' && x.cat !== 'delivered').length, delivered: d.rows.filter((x) => x.cat === 'delivered').length },
+      unfulfilled: unfulfilledReport(d).total,
+      stage: { preDispatch: unfulfilledReport(d).total, dispatched: d.rows.filter((x) => x.stage === 'dispatched' && x.cat !== 'delivered').length, delivered: d.rows.filter((x) => x.cat === 'delivered').length },
       banner: critical ? `CRITICAL: ${critical} shipment(s) are ${THRESH.red}+ days in stage. Escalate today.` : '',
       valueAtRisk: valueAtRisk(d), checks: { mcf: mcf.counts, toVerify: verify.total, missingTracking: verify.missingTracking },
       thresholds: { ...THRESH, noMove: NO_MOVE_DAYS }, totals: { shipments: d.everything.length, afterExclusions: d.rows.length },
-      exceptions: exceptionRows(d).length,
+      exceptions: exceptionOrders(exceptionRows(d)).length,
     });
   }],
   ['GET', '/shipping/shipments', ({ query, db }) => listRows(ds(db, query), query)],
+  ['GET', '/shipping/unfulfilled', ({ query, db }) => { const d = ds(db, query); return envelope(d, unfulfilledReport(d)); }],
   ['GET', '/shipping/shipments/:order', ({ params, query, db }) => { const d = ds(db, query); return envelope(d, orderDetail(d, params.order)); }],
   ['POST', '/shipping/shipments/:order/note', (ctx) => envelope(ds(ctx.db, ctx.query), annotate(ctx))],
   ['GET', '/shipping/analytics', ({ query, db }) => { const d = ds(db, query); return envelope(d, analytics(d, query)); }],
@@ -635,14 +674,15 @@ export const routes = [
     const d = ds(db, query);
     const mcf = mcfReport(d);
     const verify = verifyReport(d);
-    const rows = exceptionRows(d);
-    const counts = Object.fromEntries(Object.keys(EXC_TYPES).map((k) => [k, rows.filter((x) => x.type === k).length]));
-    return envelope(d, { mcf, verify, counts: { mcf: mcf.counts, toVerify: verify.total, missingTracking: verify.missingTracking }, exceptions: { total: rows.length, counts, types: Object.entries(EXC_TYPES).map(([key, v]) => ({ key, ...v })), rows } });
+    const issues = exceptionRows(d);
+    const rows = exceptionOrders(issues);
+    const counts = Object.fromEntries(Object.keys(EXC_TYPES).map((k) => [k, rows.filter((x) => x.types.includes(k)).length]));
+    return envelope(d, { mcf, verify, counts: { mcf: mcf.counts, toVerify: verify.total, missingTracking: verify.missingTracking }, exceptions: { total: rows.length, issues: issues.length, counts, types: Object.entries(EXC_TYPES).map(([key, v]) => ({ key, ...v })), rows } });
   }],
   ['POST', '/shipping/import/preview', ({ query, body, db }) => previewImport(ds(db, query), body.text)],
   ['GET', '/shipping/import/sample', ({ query, db }) => {
     const d = ds(db, query);
-    const blank = d.rows.filter((x) => x.cat !== 'delivered' && x.missingTracking && !x.unconfirmed).slice(0, 3);
+    const blank = [...d.rows, ...d.unfulfilled].filter((x) => x.cat !== 'delivered' && x.missingTracking && !x.unconfirmed).slice(0, 3);
     const has = d.rows.find((x) => !x.missingTracking && x.cat !== 'delivered');
     const lines = ['order_number,tracking_number,carrier', ...blank.map((x, i) => `${x.order_number},SG${7000000100 + i * 37},Standard Ground`)];
     if (has) lines.push(`${has.order_number},EA7000000555,Express Air`);

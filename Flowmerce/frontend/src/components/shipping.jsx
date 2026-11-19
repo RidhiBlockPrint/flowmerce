@@ -12,7 +12,8 @@ import { Icon } from './Icon';
 
 export function CatPill({ cat, resolved }) {
     const c = CAT[cat] ?? { label: cat, tone: 'neutral' };
-    return <Pill tone={c.tone}>{resolved ? `Resolved: ${resolved.label}` : c.label}</Pill>;
+    // resolved by the order itself (its other parcels delivered it): shown as plain Delivered
+    return <Pill tone={c.tone}>{resolved && resolved.by !== 'order' ? `Resolved: ${resolved.label}` : c.label}</Pill>;
 }
 
 function SetupNeeded({ source }) {
@@ -203,7 +204,7 @@ export function OrderDrawer({ order, brand, onClose }) {
                   ['Dispatched', p.dispatchedAt ? fmtDateTime(p.dispatchedAt) : 'Not yet'],
                                     ['Last scan', p.lastScanAt ? `${fmtDateTime(p.lastScanAt)} — ${p.scanDescription || 'no description'}${p.location ? `, ${p.location}` : ''}` : 'No scan data'],
                   ['Carrier status', p.status.replace(/_/g, ' ') || '—'],
-                  ...(p.resolved ? [['Resolved', `${p.resolved.label} (${p.resolved.by === 'team' ? `team${p.resolved.who ? `: ${p.resolved.who}` : ''}` : `carrier: ${p.resolved.detail || 'last update'}`})${p.resolved.at ? ` · ${timeAgo(p.resolved.at)}` : ''}`]] : []),
+                  ...(p.resolved?.by === 'order' ? [['Delivered', p.resolved.detail]] : p.resolved ? [['Resolved', `${p.resolved.label} (${p.resolved.by === 'team' ? `team${p.resolved.who ? `: ${p.resolved.who}` : ''}` : `carrier: ${p.resolved.detail || 'last update'}`})${p.resolved.at ? ` · ${timeAgo(p.resolved.at)}` : ''}`]] : []),
                   ...(p.reshipped ? [['Reshipped', `${p.reshipped.detail}${p.reshipped.newOrder && p.reshipped.newOrder !== order ? ` New order ${p.reshipped.newOrder}.` : ''}${p.reshipped.newTracking ? ` New tracking ${p.reshipped.newTracking}.` : ''} Close this old parcel in Shopify / Amazon.`]] : []),
                   ...(p.amazonStatus ? [['Amazon (MCF)', `${p.amazonStatus}${p.amazonAt ? ` · ${timeAgo(p.amazonAt)}` : ''}${p.amazonTracking && p.amazonTracking !== p.tracking ? ` · tracking ${p.amazonTracking}` : ''}`]] : []),
                   ['Team mark', p.manual ? `${TEAM_LABEL[p.manual.status] ?? p.manual.status}${p.manual.at ? ` · ${timeAgo(p.manual.at)}` : ''}` : 'None'],

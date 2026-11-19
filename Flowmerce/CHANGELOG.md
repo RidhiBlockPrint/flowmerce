@@ -2,6 +2,46 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-19 (Shipping: Unfulfilled tab; unfulfilled orders out of Critical)
+
+Verified: 99 shipping tests (new: unfulfilled orders are never Critical, on their own list with waiting bands),
+54 frontend tests (demo: the Unfulfilled tab total = its KPI, the shipment list has no not-dispatched order),
+production build. Live board: 721 unfulfilled orders move to the new tab (357 waiting 9+ days, 17 with Amazon);
+Critical goes from 367 to 10, all of them dispatched parcels.
+
+- **Added** Shipping > **Unfulfilled** tab (`GET /api/shipping/unfulfilled`): every order with no parcel sent yet
+  (Shopify unfulfilled, or with Amazon but not shipped), one row per order, longest waiting first, with the order
+  date, days waiting (0-3 / 4-5 / 6-8 / 9+ filter), Amazon's status and the next step. An Overview tile
+  "Unfulfilled orders (not sent yet)" opens it.
+- **Changed** not-dispatched orders leave the shipment list, Critical, the delay KPIs and Checks; the summary's
+  `stage.preDispatch` and the analytics "Not dispatched" bar count the Unfulfilled tab. The "Marked DONE but not
+  fulfilled" check still sees them.
+
+## 2026-11-19 (Shipping: an order another carrier delivered leaves Critical / exceptions)
+
+Verified: 94 shipping tests (new: a USPS label that never moved while UPS delivered leaves the delay figures; a
+same-carrier parcel, one sent after the delivery, and one still scanning stay), live board: 14 parcels move to
+Reshipped (13 Critical 9+ days, 1 Yellow; 1 carrier exception), including #5680.
+
+- **Changed** an order that has arrived counts as Delivered, not Critical or Reshipped: an open parcel is resolved as
+  "Delivered" (by the order) when the parcel that replaced it was delivered, or when it is an extra Amazon parcel and
+  every parcel on the Shopify order was delivered (#7254: TBA335054863307 said "delivery date unavailable" while
+  both items arrived in TBA335061903868 and TBA335580914603). Live: 18 parcels in 17 orders (17 were Critical); the
+  Reshipped list keeps only the 3 whose replacement is still on its way.
+- **Changed** a parcel sent again by the same carrier counts too ("Delivered by a later parcel"): the delivered
+  parcel was sent 3+ days after the stuck one (parcels sent together are a split and stay). # RBP6127 leaves Critical.
+- **Fixed** an Amazon parcel missing from the Shopify order was never checked for a second MCF order, so #7254's
+  first parcel (MCF 29 Sep, sent again 16 Oct and delivered) stayed Critical.
+- **Changed** Checks > Exceptions shows one row per order, with every issue as its own tag (#6927 had a "Carrier
+  exception" row and a "No movement" row). The type filter keeps an order that has that tag; `exceptions.total` and
+  the type counts count orders, `exceptions.issues` the issues.
+- Live board after the change: 153 orders in Checks (191 issues, no order twice); 21 parcels in Reshipped.
+- **Changed** a fifth Reshipped signal, "Delivered by another carrier": an undelivered parcel leaves Critical,
+  exceptions and every delay figure when a parcel of a different carrier delivered the same order, and the open
+  parcel was sent at least 2 days before that delivery with no scan since. It is listed under Checks > Reshipped
+  ("close the old fulfilment in Shopify"). Same-carrier parcels (possible splits), parcels sent after the delivery
+  (exchanges, more items), parcels still scanning, and parcels with no known carrier stay on the board.
+
 ## 2026-11-18 (Fix: delivered DHL parcel on an older order still shown as critical)
 
 Verified: 581 backend tests (new: a hub-only "failure" is Carrier unconfirmed, a failure with carrier events stays
