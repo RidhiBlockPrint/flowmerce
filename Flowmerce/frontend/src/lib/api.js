@@ -63,11 +63,41 @@ function toSignIn() {
     const here = window.location.pathname + window.location.search;
     window.location.assign(here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`);
 }
+/**
+ * Answers already shown in this tab, by path, so going back to a tab, filter or page shows its last answer at once
+ * while useApi asks the server again in the background (stale-while-revalidate). Any change (POST/PATCH/DELETE)
+ * empties it, and `generation` stops a read that started before a change from saving its older answer afterwards.
+ */
+const CACHE_MAX = 60;
+const cache = new Map();
+let generation = 0;
+function cacheGet(path) {
+    return cache.has(path) ? cache.get(path) : undefined;
+}
+function cacheSet(path, data) {
+    cache.delete(path);
+    cache.set(path, data);
+    while (cache.size > CACHE_MAX)
+        cache.delete(cache.keys().next().value);
+}
+function forgetAll() {
+    generation += 1;
+    cache.clear();
+}
+async function change(method, path, body, init) {
+    forgetAll();
+    try {
+        return await request(method, path, body, init);
+    }
+    finally {
+        forgetAll();
+    }
+}
 export const api = {
     get: (path, signal) => request('GET', path, undefined, { signal }),
-    post: (path, body, headers) => request('POST', path, body ?? {}, { headers }),
-    patch: (path, body) => request('PATCH', path, body),
-    del: (path) => request('DELETE', path),
+    post: (path, body, headers) => change('POST', path, body ?? {}, { headers }),
+    patch: (path, body) => change('PATCH', path, body),
+    del: (path) => change('DELETE', path),
 };
 export function qs(params) {
     const p = new URLSearchParams();
@@ -77,23 +107,40 @@ export function qs(params) {
     const s = p.toString();
     return s ? `?${s}` : '';
 }
-/** Fetch on mount and whenever `path` changes. A null path skips the request. */
+/**
+ * Fetch on mount and whenever `path` changes. A null path skips the request.
+ * A path already answered in this tab shows that answer straight away (no skeleton) and is refreshed in the
+ * background; `loading` stays true until the fresh answer arrives. `reload()` always asks the server.
+ */
 export function useApi(path) {
-    const [data, setData] = useState(null);
+    const [data, setData] = useState(() => (path ? cacheGet(path) ?? null : null));
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(!!path);
     const [tick, setTick] = useState(0);
-    const first = useRef(true);
+    const first = useRef(!(path && cacheGet(path) !== undefined));
+    const pathRef = useRef(path);
+    pathRef.current = path;
     useEffect(() => {
         if (!path) {
             setLoading(false);
             return;
         }
+        const hit = cacheGet(path);
+        if (hit !== undefined) {
+            setData(hit);
+            first.current = false;
+        }
         const ctl = new AbortController();
+        const gen = generation;
         setLoading(true);
         setError(null);
         api.get(path, ctl.signal)
-            .then((d) => { setData(d); first.current = false; })
+            .then((d) => {
+            if (gen === generation)
+                cacheSet(path, d);
+            setData(d);
+            first.current = false;
+        })
             .catch((e) => { if (e.name !== 'AbortError')
             setError(e instanceof ApiError ? e : new ApiError(0, String(e))); })
             .finally(() => { if (!ctl.signal.aborted)
@@ -101,7 +148,14 @@ export function useApi(path) {
         return () => ctl.abort();
     }, [path, tick]);
     const reload = useCallback(() => setTick((t) => t + 1), []);
-    return { data, error, loading, reload, setData, initialLoading: loading && first.current };
+    // A page that edits its data in place (setData) keeps the saved answer in step, so coming back shows the edit.
+    const setBoth = useCallback((v) => setData((prev) => {
+        const next = typeof v === 'function' ? v(prev) : v;
+        if (pathRef.current)
+            cacheSet(pathRef.current, next);
+        return next;
+    }), []);
+    return { data, error, loading, reload, setData: setBoth, initialLoading: loading && first.current };
 }
 export async function download(path) {
     if (IS_DEMO) {

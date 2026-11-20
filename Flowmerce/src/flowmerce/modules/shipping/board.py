@@ -36,8 +36,9 @@ import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from functools import wraps
 from typing import Any
 
 from ..seo.db import all_rows, get, now as db_now, run
@@ -327,35 +328,82 @@ def reload_in_background() -> None:
 # and delivered rules) takes ~0.2 s on a laptop and ~2 s on the hosting's small CPU, and every request used to do
 # it. Now one build serves every request for that brand until the snapshot is reloaded, a team mark or outcome
 # changes it, or BUILT_SECONDS pass (ages count in whole days). Parallel requests wait for one build.
+# Once a brand has a board, a page never waits for the next one: when it is older than BUILT_SECONDS or the snapshot
+# was reloaded, the old board answers while a new one is built in the background (as the snapshot itself does).
+# Only a brand's first board, Refresh now (forget) and a team mark or outcome (forget_built) make a page wait.
 _built: dict[str, tuple[float, Snapshot, Dataset]] = {}
 _built_lock = threading.Lock()
 _brand_locks: dict[str, threading.Lock] = {}
+_rebuilding: set[str] = set()
+_built_gen = 0          # +1 on every forget_built(): a build that started before it must not be saved after it
+
+
+def _brand_lock(key: str) -> threading.Lock:
+    with _built_lock:
+        return _brand_locks.setdefault(key, threading.Lock())
+
+
+def _build_and_keep(key: str, snap: Snapshot) -> Dataset:
+    gen = _built_gen
+    ds = build(key, snap=snap)
+    if gen == _built_gen:
+        _built[key] = (time.time(), snap, ds)
+    return ds
+
+
+def _rebuild_in_background(key: str, snap: Snapshot) -> None:
+    with _built_lock:
+        if key in _rebuilding:
+            return
+        _rebuilding.add(key)
+
+    def work() -> None:
+        try:
+            with _brand_lock(key):
+                _build_and_keep(key, snap)
+        except Exception:  # noqa: BLE001 - the old board stays in use; the next request tries again
+            logging.getLogger(__name__).warning("shipping board rebuild failed", exc_info=True)
+        finally:
+            with _built_lock:
+                _rebuilding.discard(key)
+    threading.Thread(target=work, name=f"shipping-board-build-{key}", daemon=True).start()
 
 
 def dataset(brand: str | None, refresh: bool = False) -> Dataset:
     key = brand or "all"
     snap = snapshot(force=refresh)
-
-    def fresh() -> Dataset | None:
+    hit = _built.get(key)
+    if hit and (not refresh or hit[1] is snap):
+        if hit[1] is not snap or time.time() - hit[0] >= BUILT_SECONDS:
+            _rebuild_in_background(key, snap)
+        return hit[2]
+    with _brand_lock(key):
         hit = _built.get(key)
-        return hit[2] if hit and hit[1] is snap and time.time() - hit[0] < BUILT_SECONDS else None
-
-    ds = fresh()
-    if ds is not None:
-        return ds
-    with _built_lock:
-        lock = _brand_locks.setdefault(key, threading.Lock())
-    with lock:
-        ds = fresh()
-        if ds is None:
-            ds = build(key, snap=snap)
-            _built[key] = (time.time(), snap, ds)
-        return ds
+        if hit and hit[1] is snap:
+            return hit[2]
+        return _build_and_keep(key, snap)
 
 
 def forget_built() -> None:
     """Drop every built board (a team mark, an outcome or a new snapshot changes what it shows)."""
+    global _built_gen
+    _built_gen += 1
     _built.clear()
+
+
+def _memoized(fn: Any) -> Any:
+    """Work a report out once per built board (keyed by its arguments) instead of on every request: the Overview,
+    Checks and Analytics figures took 0.3-0.7 s each on the hosting's CPU, and one heavy request held up every other
+    request behind it. The board is rebuilt when its data changes, and annotate() clears this when it edits the board
+    in place. Callers must not change the dict they get back (every request shares it)."""
+    @wraps(fn)
+    def wrapper(ds: Dataset, *args: Any) -> Any:
+        key = (fn.__name__, *args)
+        hit = ds.memo.get(key)
+        if hit is None:
+            hit = ds.memo[key] = fn(ds, *args)
+        return hit
+    return wrapper
 
 
 def warm() -> None:
@@ -397,6 +445,7 @@ class Dataset:
     reshipped: list[dict[str, Any]] = None  # type: ignore[assignment]  # old parcels the team sent again
     resolved: list[dict[str, Any]] = None   # type: ignore[assignment]  # delivered / lost / returned / refunded
     unfulfilled: list[dict[str, Any]] = None  # type: ignore[assignment]  # orders not dispatched yet (own tab)
+    memo: dict[tuple[Any, ...], Any] = field(default_factory=dict, repr=False)  # figures already worked out (_memoized)
 
     @property
     def active(self) -> list[dict[str, Any]]:
@@ -891,6 +940,7 @@ def exception_orders(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+@_memoized
 def checks(ds: Dataset) -> dict[str, Any]:
     mcf, ver, issues = mcf_report(ds), verify_report(ds), exception_rows(ds)
     rows = exception_orders(issues)
@@ -955,6 +1005,7 @@ def unfulfilled_orders(ds: Dataset) -> list[dict[str, Any]]:
 UNFULFILLED_BANDS = (("9+", "9+ days", 9), ("6-8", "6-8 days", 6), ("4-5", "4-5 days", 4), ("0-3", "0-3 days", 0))
 
 
+@_memoized
 def unfulfilled_report(ds: Dataset) -> dict[str, Any]:
     rows = []
     for r in unfulfilled_orders(ds):
@@ -1041,6 +1092,7 @@ def journey(ds: Dataset) -> list[dict[str, Any]]:
     ]
 
 
+@_memoized
 def summary(ds: Dataset) -> dict[str, Any]:
     active = ds.active
     critical = sum(1 for r in active if r["cat"] == "red")
@@ -1137,6 +1189,7 @@ def delivery_report(ds: Dataset, period: int) -> dict[str, Any]:
     }
 
 
+@_memoized
 def analytics(ds: Dataset, period: int) -> dict[str, Any]:
     active = ds.active
     crit = sum(1 for r in active if r["cat"] == "red")
@@ -1451,6 +1504,7 @@ def annotate(ds: Dataset, order: str, action: str, text: str, by: str) -> dict[s
             fresh.rows, fresh.everything, fresh.marks, fresh.reshipped, fresh.resolved, fresh.unfulfilled)
     else:
         ds.marks = _marks(brand_stores(ds.brand))
+    ds.memo.clear()                      # this board changed in place: its figures must be worked out again
     forget_built()                       # other brands' boards still show the old mark: rebuild them
     detail = order_detail(ds, order)
     assert detail is not None

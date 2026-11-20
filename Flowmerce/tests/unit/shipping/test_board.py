@@ -742,6 +742,13 @@ class BuiltBoardCacheTest(unittest.TestCase):
         board.snapshot, board.build = self._snapshot, self._build
         board.forget_built()
 
+    @staticmethod
+    def wait_for_background_builds():
+        import threading
+        for t in threading.enumerate():
+            if t.name.startswith("shipping-board-build-"):
+                t.join(5)
+
     def test_one_build_serves_every_request_until_something_changes(self):
         first = board.dataset("all")
         self.assertIs(board.dataset("all"), first)
@@ -750,10 +757,14 @@ class BuiltBoardCacheTest(unittest.TestCase):
         board.dataset("ridhi")                                          # each brand has its own board
         self.assertEqual(self.builds, 2)
         self.snaps.append(snap([row(row_id="b", tracking_number="B", order_name="#2", shipped_at=ago(1))]))
-        self.assertIsNot(board.dataset("all"), first)                   # a reloaded snapshot: rebuilt
-        self.assertEqual(self.builds, 3)
-        board.forget_built()                                            # a team mark or outcome
-        board.dataset("all")
+        self.assertIs(board.dataset("all"), first)                      # a reloaded snapshot: the old board answers ...
+        self.wait_for_background_builds()
+        self.assertEqual(self.builds, 3)                                # ... while a new one is built in the background
+        second = board.dataset("all")
+        self.assertIsNot(second, first)
+        self.assertIs(second.snap, self.snaps[-1])
+        board.forget_built()                                            # a team mark or outcome: the page waits for it
+        self.assertIsNot(board.dataset("all"), second)
         self.assertEqual(self.builds, 4)
 
     def test_an_old_build_is_not_reused_forever(self):
@@ -761,7 +772,35 @@ class BuiltBoardCacheTest(unittest.TestCase):
         key = "all"
         at, sn, ds = board._built[key]
         board._built[key] = (at - board.BUILT_SECONDS - 1, sn, ds)
+        self.assertIs(board.dataset("all"), first)                      # answers at once, rebuilds in the background
+        self.wait_for_background_builds()
         self.assertIsNot(board.dataset("all"), first)
+        self.assertEqual(self.builds, 2)
+
+    def test_a_build_started_before_a_team_mark_is_not_kept(self):
+        def late_build(key, snap):
+            board.forget_built()                                        # a team mark lands while this build runs
+            return self._build(key, snap=snap)
+        board.build = late_build
+        self.assertIsNotNone(board.dataset("all"))                      # the request still gets an answer ...
+        self.assertNotIn("all", board._built)                           # ... but the next one builds with the mark
+
+    def test_reports_are_worked_out_once_per_board(self):
+        ds = board.dataset("all")
+        calls = []
+        real = board.journey
+        board.journey = lambda d: calls.append(1) or real(d)
+        try:
+            a = board.summary(ds)
+            self.assertIs(board.summary(ds), a)
+            self.assertEqual(len(calls), 1)
+            self.assertIs(board.checks(ds), board.checks(ds))
+            self.assertIsNot(board.analytics(ds, 30), board.analytics(ds, 90))   # each period has its own figures
+            ds.memo.clear()                                             # what annotate() does after editing the board
+            self.assertIsNot(board.summary(ds), a)
+            self.assertEqual(len(calls), 2)
+        finally:
+            board.journey = real
 
     def test_parallel_requests_wait_for_one_build(self):
         import threading

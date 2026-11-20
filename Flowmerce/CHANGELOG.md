@@ -2,6 +2,24 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-20 (Faster tab and filter changes)
+
+Measured on the hosted copy before the change: a filter click 0.35-0.45 s, a tab 0.4-1.1 s, the first view after 5
+idle minutes up to 2.7 s. Verified: 113 shipping tests (2 rewritten for the new board rule, 2 new) and all backend unit
+tests pass except the existing `test_unfinished_pages_are_not_mounted`; 54 frontend tests; Next.js build. Checked in the
+browser on a local copy (tabs, filter chips, sort, reload, browser Back, Articles filter): Overview 166-213 ms → 27-74 ms,
+Analytics 112-125 ms → 38-63 ms locally. Not yet measured on the hosted copy.
+
+- **Fixed** a tab, filter, sort or page click no longer asks the server for the page again before loading its data
+  (`lib/nav.js` uses the browser's history API, which Next.js watches, instead of `router.replace`). One round trip less
+  per click (~135 ms hosted), and the tab or chip highlights at once.
+- **Changed** a list, tab or filter already opened in this browser tab shows its last answer straight away while a fresh
+  one loads (`lib/api.js` `useApi`, up to 60 answers); any save, edit or delete empties this memory.
+- **Changed** Shipping works out the Overview, Checks, Unfulfilled and Analytics figures once per built board instead of on
+  every request (`board.py` `_memoized`; 0.3-0.7 s each on the hosting's CPU, and one such request held up the others).
+- **Changed** a Shipping board older than 5 minutes, or from before a data refresh, keeps answering while its replacement
+  is built in the background; pages only wait for a brand's first board, Refresh now, or a team mark or outcome.
+
 ## 2026-11-19 (Shorter lists on Content calendar and Publishing)
 
 - **Changed** long lists no longer stretch the page; they use the same Previous / Next pager as the other lists.
