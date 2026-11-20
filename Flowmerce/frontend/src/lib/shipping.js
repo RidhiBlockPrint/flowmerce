@@ -105,3 +105,28 @@ export const SOURCE_TITLE = {
     permission_denied: 'Permission denied',
     schema_mismatch: 'Schema mismatch',
 };
+
+/* Age bands, fresh to oldest, then the parcels no carrier reports on (Amazon), which have no age band. Together they
+   add up to the active total. The server's label holds the name and the day range. Grey (2-3 days) applies only to
+   orders not sent yet, which live on the Unfulfilled tab, so it is left out while empty. */
+const BANDS = ['on_track', 'grey', 'yellow', 'orange', 'red', 'unconfirmed'];
+const BAND_COLOUR = { on_track: 'var(--ok)', grey: '#a59d93', yellow: '#d6a419', orange: '#c2571a', red: 'var(--crit)',
+    unconfirmed: 'var(--info)' };
+const BAND_NAME = { unconfirmed: ['Unconfirmed', 'no carrier updates'] };
+function splitLabel(label) {
+    const m = /^(.*?)\s*\(?(\d+\s*[–-]\s*\d+\s*days|\d+\+\s*days)\)?$/.exec(label ?? '');
+    return m ? [m[1], m[2]] : [label, ''];
+}
+
+/** From the summary's `kpis`: the active total, the on-track share (%) and one ring segment per age band.
+ *  `go(cat)` opens that band's shipments. */
+export function ageSegments(kpis, go) {
+    const by = Object.fromEntries((kpis ?? []).map((k) => [k.key, k]));
+    const total = by['']?.value ?? 0;
+    const onTrack = total ? Math.round(((by.on_track?.value ?? 0) / total) * 100) : 0;
+    const segments = BANDS.filter((k) => by[k] && (k !== 'grey' || by[k].value)).map((k) => {
+        const [name, range] = BAND_NAME[k] ?? splitLabel(by[k].label);
+        return { key: k, name, range, value: by[k].value, color: BAND_COLOUR[k], onClick: go ? () => go(k) : undefined };
+    });
+    return { total, onTrack, segments };
+}

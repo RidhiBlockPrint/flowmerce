@@ -3,11 +3,13 @@ import { useEffect, useRef } from 'react';
 
 /* Module colours from the Flowmerce platform overview: SEO, shipping, Meta, creative, landing pages, WPO. */
 const COLOURS = ['#2DBE86', '#F0A020', '#4B8BFF', '#A07BF5', '#FF6B4F', '#27C4D9'];
+const FRAME_MS = 66;
 
 /**
  * The slow "thread" behind every page: six coloured points drift on wide orbits, joined by soft curves that bend
- * through the middle of the screen. Purely decorative (aria-hidden, no pointer events). It draws one still frame
- * when the viewer asks for reduced motion, and stops while the tab is hidden.
+ * through the middle of the screen. Purely decorative (aria-hidden, no pointer events). The points move slowly, so
+ * it draws about 15 frames a second (FRAME_MS) instead of 60: it looks the same and costs a quarter of the work. It
+ * draws one still frame when the viewer asks for reduced motion, and stops while the tab is hidden.
  */
 export function AmbientBackground() {
     const ref = useRef(null);
@@ -27,11 +29,11 @@ export function AmbientBackground() {
             c.height = H * dpr;
             x.setTransform(dpr, 0, 0, dpr, 0, 0);
         };
-        const draw = () => {
+        const draw = (steps = 1) => {
             x.clearRect(0, 0, W, H);
             const xy = pts.map((p) => {
                 if (!reduce)
-                    p.a += p.s * 0.3;
+                    p.a += p.s * 0.3 * steps;
                 return [W * (0.5 + Math.cos(p.a) * p.r * 1.6), H * (0.5 + Math.sin(p.a * 1.3) * p.r * 1.4)];
             });
             x.lineWidth = 1.2;
@@ -51,8 +53,16 @@ export function AmbientBackground() {
                 x.fill();
             }
         };
-        const loop = () => { draw(); raf = requestAnimationFrame(loop); };
-        const start = () => { cancelAnimationFrame(raf); if (reduce) draw(); else loop(); };
+        let last = 0;
+        // Same speed as before (the angle step is per 60 fps frame), drawn every FRAME_MS.
+        const loop = (t) => {
+            if (!last || t - last >= FRAME_MS) {
+                draw(last ? Math.min((t - last) / (1000 / 60), 8) : 1);
+                last = t;
+            }
+            raf = requestAnimationFrame(loop);
+        };
+        const start = () => { cancelAnimationFrame(raf); last = 0; if (reduce) draw(); else raf = requestAnimationFrame(loop); };
         const onVis = () => { if (document.hidden) cancelAnimationFrame(raf); else start(); };
         const onResize = () => { size(); if (reduce) draw(); };
         size();

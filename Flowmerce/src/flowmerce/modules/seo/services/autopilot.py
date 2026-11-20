@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 Row = dict[str, Any]
 AUTO_NAME = "Flowmerce (auto)"
 DEADLINE_HOURS = 6
-ACTIVE_STEPS = ("research", "draft")
+ACTIVE_STEPS = ("research", "draft", "revise")
 
 
 # ---------------------------------------------------------------- automatic approvals (recorded as such)
@@ -114,8 +114,9 @@ def _insert(brand_id: str, user: Row | None, step: str, message: str, **cols: An
     return get_run(rid)
 
 
-def start(user: Row, brand_id: str, focus: str = "") -> Row:
-    """Write a blog: research, pick, draft, approve and save as a hidden Shopify draft, with no stops."""
+def start(user: Row, brand_id: str, focus: str = "", source: str = "button") -> Row:
+    """Write a blog: research, pick, draft, approve and save as a hidden Shopify draft, with no stops. `source` "auto" is
+    the automatic blog pipeline (services/auto_blog.py), which adds images and a quality check before approval."""
     from . import ai_jobs, workflow
     if not is_brand(brand_id):
         raise HttpError(400, "Unknown brand.")
@@ -126,7 +127,7 @@ def start(user: Row, brand_id: str, focus: str = "") -> Row:
     _check_money(("topic_research", "content_generation"))
     focus = s(focus, 500).strip() or _focus(brand_id)
     job, _ = ai_jobs.create_job(user, brand_id, "topic_research", {"count": 3, **({"focus": focus} if focus else {})})
-    r = _insert(brand_id, user, "research", "Claude is choosing topics", focus=focus, research_job_id=job["id"])
+    r = _insert(brand_id, user, "research", "Claude is choosing topics", focus=focus, research_job_id=job["id"], source=source)
     audit(user, "autopilot.start", "autopilot_run", r["id"], brand_id, focus[:200])
     return r
 
@@ -180,7 +181,7 @@ def _pick_topic(brand_id: str, topic_ids: list[int]) -> Row | None:
 
 def _advance(r: Row) -> None:
     from . import ai_jobs, workflow
-    job_id = r["research_job_id"] if r["step"] == "research" else r["draft_job_id"]
+    job_id = {"research": r["research_job_id"], "revise": r.get("revise_job_id")}.get(r["step"], r["draft_job_id"])
     job = get("SELECT * FROM ai_jobs WHERE id = ?", job_id) if job_id else None
     if not job:
         _set(r["id"], status="failed", message="Its Claude job is missing.")
@@ -189,22 +190,42 @@ def _advance(r: Row) -> None:
         if job["status"] == "pending" and (job["message"] or "").startswith("Waiting for tomorrow"):
             _set(r["id"], message="Waiting for tomorrow's Claude limit")
         return
+    if job["status"] != "succeeded" and r["step"] == "revise":
+        _finish_auto(r, int(r["article_id"]), f"Claude's revision {job['status']}; the draft is kept as it was.")
+        return
     if job["status"] != "succeeded":
         _set(r["id"], status="failed", message=f"Claude {job['status']}: {s(job['error'] or '', 300)}")
+        if r.get("source") == "auto":
+            from . import auto_blog
+            auto_blog.run_failed(r, f"Claude {job['status']}: {s(job['error'] or '', 300)}")
         return
     result = json.loads(job["result_json"] or "{}")
     if r["step"] == "research":
         t = _pick_topic(r["brand_id"], [int(x) for x in result.get("topicIds", [])])
         if not t:
             _set(r["id"], status="failed", message="Claude's topics all overlap existing articles. Try again with a different focus.")
+            if r.get("source") == "auto":
+                from . import auto_blog
+                auto_blog.run_failed(r, "Claude's topics all overlap existing articles; the next slot tries again.")
             return
-        approve_topic(t, "picked by Write a blog")
+        approve_topic(t, "picked by Write a blog" if r.get("source") != "auto" else "picked by the automatic blog pipeline")
         draft, _ = ai_jobs.create_job(None, r["brand_id"], "content_generation", {"topic_id": t["id"]})
         _set(r["id"], step="draft", topic_id=t["id"], draft_job_id=draft["id"], message="Claude is writing the draft")
+        return
+    if r["step"] == "revise":
+        _finish_auto(r, int(r["article_id"]), "Claude fixed the points the quality check found.")
         return
     aid = result.get("articleId")
     if not aid:
         _set(r["id"], status="failed", message="The draft job finished without an article.")
+        return
+    if r.get("source") == "auto":
+        from . import auto_blog
+        revise = auto_blog.after_draft(r, int(aid))
+        if revise:
+            _set(r["id"], step="revise", article_id=aid, revise_job_id=revise, message="Claude is fixing what the quality check found")
+            return
+        _finish_auto({**r, "article_id": aid}, int(aid), "The draft passed the quality check.")
         return
     a = get("SELECT image_url FROM articles WHERE id = ?", aid)
     if a and not a["image_url"]:
@@ -212,6 +233,14 @@ def _advance(r: Row) -> None:
     approved = approve_article(aid, "written by Write a blog" if r["source"] == "button" else "written by a calendar task")
     outcome = save_hidden_draft(aid, r["created_by"]) if approved else "Draft saved; it was not approved automatically because its status changed."
     _set(r["id"], status="done", step="done", article_id=aid, message=outcome)
+    audit(None, "autopilot.done", "autopilot_run", r["id"], r["brand_id"], outcome)
+
+
+def _finish_auto(r: Row, aid: int, note: str) -> None:
+    """The end of an automatic run: approve, hidden Shopify draft, publish request on the calendar (auto_blog.finish)."""
+    from . import auto_blog
+    outcome = auto_blog.finish(r, aid)
+    _set(r["id"], status="done", step="done", article_id=aid, message=f"{note} {outcome}")
     audit(None, "autopilot.done", "autopilot_run", r["id"], r["brand_id"], outcome)
 
 

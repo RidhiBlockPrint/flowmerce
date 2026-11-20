@@ -81,7 +81,7 @@ Names and order are from the product handoff (`docs/product/Flowmerce_Project_Ha
 | 3 | Meta & Google Ads Performance | `ads` | **Planned** |
 | 4 | Creative Strategist | `creative` | **Planned** |
 | 5 | Landing Page Automation | `page` | **Planned** |
-| 6 | Conversion Rate Optimization (CRO) | `cro` | **Planned** |
+| 6 | Conversion Rate Optimization (CRO) | `cro` | **In progress** (owner, 2026-11-19): phase 1 schema run in Supabase; phase 2 backend (`modules/cro/`, `/api/cro/*`, 113 order copy) written and unit-tested, not tested live; phase 3 frontend (`/cro` page, 6 tabs + 2 under Advanced, rings and funnel) built and checked in demo mode, not yet checked on live data; Claude's action plan on Recommendations (2026-11-20) unit-tested, not run against the live Claude API; phase 5 docs/ADR pending |
 | Future | Merchandising Automation | n/a | **Future scope** (not a current priority; links to other projects to be confirmed) |
 
 **Priorities (owner, 2026-10-29):** (1) the main dashboard and shared application shell (built as A6), (2) connecting the existing modules to that shell, (3) the remaining projects in the order above. SEO & Blog remains the first project; the dashboard is the first deliverable. The next planned task is a review of how the SEO module connects to the shell.
@@ -98,6 +98,7 @@ Blueprint: `docs/01-architecture.md` section 7.2.
 | Internal link suggestions | Referenced in `services/analytics.py`, `workflow.py`, `integrations/claude.py` | Unverified |
 | Semrush data | Only an Excel import path (`services/excel.py`); no Semrush API connection found | Planned (API) |
 | Google Trends, Judge.me reviews and questions, decay detection on existing articles | No matches found in the module | Planned |
+| Fully automatic blogs (topic, keywords, draft, images, AEO/GEO/LLMO check, scheduling) | `services/auto_blog.py`, `services/answer_checks.py`, `/blog` overview (owner decisions 2026-11-20: 2 a week per brand, hidden drafts only) | Implemented and unit-tested, not run live |
 | Moving to the planned shared PostgreSQL schema | Uses SQLite | Depends on B1 |
 
 ## F. Engineering improvements

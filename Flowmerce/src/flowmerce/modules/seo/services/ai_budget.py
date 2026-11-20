@@ -37,7 +37,8 @@ PRICES: dict[str, tuple[float, float, float]] = {
 }
 DEFAULT_PRICE = PRICES["claude-opus-5-5"]
 # What one call of each kind is expected to cost, used to refuse a call that would overshoot today's limit.
-ESTIMATE_USD = {"content_generation": 0.80, "content_revision": 0.80, "topic_research": 0.40, "assist": 0.15}
+# cro_advice: Conversion (CRO) asks Claude for an action plan from a store's figures (modules/cro/ai_advice.py).
+ESTIMATE_USD = {"content_generation": 0.80, "content_revision": 0.80, "topic_research": 0.40, "assist": 0.15, "cro_advice": 0.30}
 
 
 def _local_now() -> datetime:

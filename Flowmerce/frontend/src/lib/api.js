@@ -97,6 +97,7 @@ export const api = {
     get: (path, signal) => request('GET', path, undefined, { signal }),
     post: (path, body, headers) => change('POST', path, body ?? {}, { headers }),
     patch: (path, body) => change('PATCH', path, body),
+    put: (path, body) => change('PUT', path, body),
     del: (path) => change('DELETE', path),
 };
 export function qs(params) {
@@ -111,21 +112,26 @@ export function qs(params) {
  * Fetch on mount and whenever `path` changes. A null path skips the request.
  * A path already answered in this tab shows that answer straight away (no skeleton) and is refreshed in the
  * background; `loading` stays true until the fresh answer arrives. `reload()` always asks the server.
+ * `{ remember: false }` neither shows nor keeps a remembered answer: for data that must never be shown out of date
+ * (the article editor).
  */
-export function useApi(path) {
-    const [data, setData] = useState(() => (path ? cacheGet(path) ?? null : null));
+export function useApi(path, { remember = true } = {}) {
+    const recall = (p) => (remember && p ? cacheGet(p) : undefined);
+    const [data, setData] = useState(() => recall(path) ?? null);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(!!path);
     const [tick, setTick] = useState(0);
-    const first = useRef(!(path && cacheGet(path) !== undefined));
+    const first = useRef(recall(path) === undefined);
     const pathRef = useRef(path);
     pathRef.current = path;
+    const rememberRef = useRef(remember);
+    rememberRef.current = remember;
     useEffect(() => {
         if (!path) {
             setLoading(false);
             return;
         }
-        const hit = cacheGet(path);
+        const hit = rememberRef.current ? cacheGet(path) : undefined;
         if (hit !== undefined) {
             setData(hit);
             first.current = false;
@@ -136,7 +142,7 @@ export function useApi(path) {
         setError(null);
         api.get(path, ctl.signal)
             .then((d) => {
-            if (gen === generation)
+            if (gen === generation && rememberRef.current)
                 cacheSet(path, d);
             setData(d);
             first.current = false;
@@ -151,7 +157,7 @@ export function useApi(path) {
     // A page that edits its data in place (setData) keeps the saved answer in step, so coming back shows the edit.
     const setBoth = useCallback((v) => setData((prev) => {
         const next = typeof v === 'function' ? v(prev) : v;
-        if (pathRef.current)
+        if (pathRef.current && rememberRef.current)
             cacheSet(pathRef.current, next);
         return next;
     }), []);

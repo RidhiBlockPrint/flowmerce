@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Flowmerce Shipping redesign directions</title>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:wght@400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+@page{size:1600px 1000px;margin:0}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#221d19;background:#f6f3ef}
+.page{width:1600px;height:1000px;page-break-after:always;padding:48px 56px;display:flex;flex-direction:column;overflow:hidden}
+.serif{font-family:'Libre Caslon Text',Georgia,serif;font-weight:400}
+.cover{justify-content:center}
+.cover h1{font-size:64px;line-height:1.1;letter-spacing:-.01em;max-width:1100px}
+.cover p{font-size:20px;color:#7a7068;margin-top:22px;max-width:900px;line-height:1.5}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:48px}
+.cards div{background:#fff;border:1px solid #e7e1d9;border-radius:16px;padding:22px}
+.cards b{font-size:13px;color:#a0522d;letter-spacing:.06em;text-transform:uppercase}
+.cards h3{font-size:24px;margin:8px 0 8px}
+.cards p{font-size:15px;margin:0;color:#4a423b}
+.dir{display:grid;grid-template-columns:1fr 400px;gap:36px;height:100%}
+.shot{background:#fff;border:1px solid #e7e1d9;border-radius:14px;overflow:hidden;box-shadow:0 10px 30px rgba(34,29,25,.08);align-self:start}
+.shot img{width:100%;display:block}
+.side h2{font-size:38px;margin:6px 0 10px}
+.side .k{font-size:13px;color:#a0522d;letter-spacing:.06em;text-transform:uppercase;font-weight:700}
+.side p{font-size:15.5px;line-height:1.55;color:#4a423b}
+.side h4{font-size:14px;margin:22px 0 8px;color:#221d19}
+.side ul{padding-left:18px;font-size:14.5px;line-height:1.6;color:#4a423b}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.chips span{font-size:12.5px;font-weight:600;background:#fff;border:1px solid #e7e1d9;border-radius:20px;padding:4px 10px}
+.foot{margin-top:auto;font-size:12.5px;color:#a89e95}
+table{border-collapse:collapse;width:100%;margin-top:26px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e1d9}
+th,td{padding:14px 18px;text-align:left;border-bottom:1px solid #efebe5;font-size:15px;vertical-align:top}
+th{background:#fbfaf8;font-size:13px;color:#7a7068}
+</style></head><body>
+
+<section class="page cover">
+  <div class="k" style="font-weight:700;color:#a0522d;letter-spacing:.08em;text-transform:uppercase;font-size:14px">Flowmerce · Shipping · design review</div>
+  <h1 class="serif" style="margin-top:14px">Three directions for a calmer, clearer Shipping screen</h1>
+  <p>Each mockup is the Shipping Overview with your real counts (566 active, 7 critical, 721 unfulfilled). Pick one direction, or mix parts, and I will build it. Nothing in the app has changed yet.</p>
+  <div class="cards">
+    <div><b>Direction A</b><h3 class="serif">Ledger</h3><p>Clean, bright analytics. Trend lines, an action inbox and carrier scorecards. Feels like a modern finance dashboard.</p></div>
+    <div><b>Direction B</b><h3 class="serif">Control room</h3><p>Dark operations console. The parcel journey runs across the top, with a live scan feed and a carrier × age heatmap.</p></div>
+    <div><b>Direction C</b><h3 class="serif">Flowmerce warm</h3><p>Keeps today's brand. A plain-language greeting, a triage queue with one-click next steps, and a parcel drawer with the full tracking timeline.</p></div>
+  </div>
+  <div class="foot" style="margin-top:48px">Some figures (on-time %, delivery time, value at risk, carrier rates, scan feed, team note) are samples to show the layout. The real build would use live data.</div>
+</section>
+
+<section class="page"><div class="dir">
+  <div class="shot"><img src="a-ledger.png"></div>
+  <div class="side"><div class="k">Direction A</div><h2 class="serif">Ledger</h2>
+    <p>A bright, precise layout in the style of the best SaaS analytics tools: thin borders, one accent colour, numbers first.</p>
+    <h4>What's new</h4><ul>
+      <li>KPI strip with sparklines and change vs. last period</li>
+      <li>"Shipment health over time" stacked chart of the age bands</li>
+      <li>Action inbox: each problem with its fix button (Reship, Claim, Fix all)</li>
+      <li>Carrier on-time scorecard</li>
+      <li>Sidebar saved views with live counts</li></ul>
+    <h4>Best for</h4><p>Owners and managers who want trends and accountability at a glance.</p>
+    <h4>Inspired by the style of</h4><div class="chips"><span>Stripe-style dashboards</span><span>Linear</span><span>Modern SaaS analytics</span></div>
+  </div></div></section>
+
+<section class="page"><div class="dir">
+  <div class="shot" style="background:#0b0d12"><img src="b-control-room.png"></div>
+  <div class="side"><div class="k">Direction B</div><h2 class="serif">Control room</h2>
+    <p>A dark operations console for the team that watches parcels all day. The journey is the main idea: every count sits on the stage where it is.</p>
+    <h4>What's new</h4><ul>
+      <li>Parcel journey: Ordered → Dispatched → In transit → Out → Delivered, with the problems tagged on each stage</li>
+      <li>Critical queue as cards with severity strips and days stuck</li>
+      <li>Live scan feed of the latest carrier events</li>
+      <li>Carrier × age heatmap: spot which carrier is slipping</li>
+      <li>Ctrl K search for any order or tracking number</li></ul>
+    <h4>Best for</h4><p>Ops staff working the screen for hours. Easy on the eyes and fast to scan.</p>
+    <h4>Inspired by the style of</h4><div class="chips"><span>Developer consoles</span><span>Logistics control towers</span><span>Shipment-tracking apps</span></div>
+  </div></div></section>
+
+<section class="page"><div class="dir">
+  <div class="shot"><img src="c-flowmerce-warm.png"></div>
+  <div class="side"><div class="k">Direction C · recommended</div><h2 class="serif">Flowmerce warm</h2>
+    <p>Keeps the cream, serif and brand colours you already have, so the rest of Flowmerce still matches. It turns the screen into a to-do list for today.</p>
+    <h4>What's new</h4><ul>
+      <li>Plain-language headline: "30 parcels need you today"</li>
+      <li>Donut of age bands plus four headline numbers</li>
+      <li>Journey strip with the problem on each stage</li>
+      <li>Today's triage: filter chips plus a suggested action per row (Reship, Add tracking, Mark fulfilled)</li>
+      <li>Parcel drawer: details, journey bar, tracking timeline, next-step advice, team notes</li></ul>
+    <h4>Best for</h4><p>A small team that wants to clear problems quickly without learning a new look.</p>
+    <h4>Inspired by the style of</h4><div class="chips"><span>Shopify admin</span><span>Post-purchase tracking tools</span><span>Editorial dashboards</span></div>
+  </div></div></section>
+
+<section class="page" style="justify-content:center">
+  <h1 class="serif" style="font-size:46px">How to choose</h1>
+  <table>
+    <tr><th></th><th>A · Ledger</th><th>B · Control room</th><th>C · Flowmerce warm</th></tr>
+    <tr><td><b>Look</b></td><td>Bright, indigo accent</td><td>Dark, neon status colours</td><td>Cream, serif, current brand</td></tr>
+    <tr><td><b>Main idea</b></td><td>Trends and scorecards</td><td>Parcel journey and live feed</td><td>Today's to-do list</td></tr>
+    <tr><td><b>Matches rest of app</b></td><td>Needs app-wide restyle</td><td>Needs dark theme app-wide</td><td>Yes, out of the box</td></tr>
+    <tr><td><b>New data needed</b></td><td>Daily history, on-time %</td><td>Scan feed, carrier heatmap</td><td>Suggested actions, notes</td></tr>
+    <tr><td><b>Build effort</b></td><td>Medium</td><td>Medium–high</td><td>Medium</td></tr>
+  </table>
+  <p style="font-size:18px;color:#4a423b;margin-top:28px;line-height:1.6">Reply with A, B or C, or a mix (for example, "C, plus the carrier heatmap from B"). I'll build only what you approve.</p>
+</section>
+</body></html>

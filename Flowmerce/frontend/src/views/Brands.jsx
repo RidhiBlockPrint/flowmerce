@@ -64,6 +64,7 @@ function BrandBlock({ brand: b, items, loading, failed }) {
 function BrandSettings({ id }) {
     const { brandOf, can, refreshMe } = useApp();
     const s = brandOf(id).settings;
+    const knowledge = brandOf(id).knowledge;
     const [f, setF] = useState(s);
     const [busy, setBusy] = useState(false);
     const toast = useToast();
@@ -90,6 +91,11 @@ function BrandSettings({ id }) {
         <Field label="Audience"><textarea className="textarea" rows={2} value={f.audience} readOnly={ro} onChange={(e) => setF({ ...f, audience: e.target.value })}/></Field>
         <Field label="Never write"><textarea className="textarea" rows={2} value={f.avoid} readOnly={ro} onChange={(e) => setF({ ...f, avoid: e.target.value })}/></Field>
         <Field label="Research focus" full><input className="input" value={f.researchFocus} readOnly={ro} onChange={(e) => setF({ ...f, researchFocus: e.target.value })}/></Field>
+        <Field label="Standing instructions for Claude" full hint="Sent with every Claude request for this brand (topics, drafts, revisions, automatic blogs), after its brand documents. They win where they conflict, but Claude still never invents facts.">
+          <textarea className="textarea" rows={4} value={f.claudeInstructions ?? ''} readOnly={ro} placeholder="e.g. Always link the tablecloth size finder. Never mention delivery times."
+            onChange={(e) => setF({ ...f, claudeInstructions: e.target.value })}/>
+        </Field>
+        {knowledge?.length ? <div className="field full small muted">Brand documents Claude reads: {knowledge.map((k) => k.name).join(', ')}</div> : null}
         <Field label="Default author"><input className="input" value={f.defaultAuthor} readOnly={ro} onChange={(e) => setF({ ...f, defaultAuthor: e.target.value })}/></Field>
         <div className="row gap-12">
           <Field label="Topics per research run"><input className="input" type="number" min={1} max={15} value={f.topicsPerRun} readOnly={ro} onChange={(e) => setF({ ...f, topicsPerRun: Number(e.target.value) })}/></Field>

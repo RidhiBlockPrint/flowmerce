@@ -6,12 +6,12 @@ import { useSearchParams } from '../lib/nav';
 import { useApi, qs, download } from '../lib/api';
 import { useBrandParam } from '../lib/app';
 import { fmtDateTime, fmtInt, timeAgo } from '../lib/format';
-import { AGE_FILTERS, CAT, CHIPS, SORTS, dayText, fmtMoney } from '../lib/shipping';
+import { AGE_FILTERS, CAT, CHIPS, SORTS, ageSegments, dayText, fmtMoney } from '../lib/shipping';
 import { Button, Card, Empty, ErrorState, LoadingBlock, PAGE_SIZE, PageHead, Paged, Pill, Tabs } from '../components/ui';
 import { useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import { BarList, LineChart } from '../components/charts';
-import { Greeting, Journey, MiniGrid, MiniStat, RingCard, SectionHead, joinParts } from '../components/dash';
+import { Journey, MiniGrid, MiniStat, RingCard, SectionHead } from '../components/dash';
 import { ImportPreview, OrderDrawer, ShipmentsTable, ShopifyOrderLink, SourceGate, Tile } from '../components/shipping';
 
 const TABS = [
@@ -19,7 +19,8 @@ const TABS = [
     { key: 'shipments', label: 'Shipments' },
     { key: 'unfulfilled', label: 'Unfulfilled' },
     { key: 'checks', label: 'Checks and exceptions' },
-    { key: 'analytics', label: 'Analytics' },
+    // Read now and then, not every day: behind the tab bar's "Advanced" toggle and the sidebar's Advanced group.
+    { key: 'analytics', label: 'Analytics', advanced: true },
 ];
 
 export default function Shipping() {
@@ -57,7 +58,7 @@ export default function Shipping() {
         setSp(next, { replace: true });
     };
     return (<>
-      <PageHead title="Shipping" sub="Where every parcel is and what needs a decision."
+      <PageHead title="Shipping"
         actions={<Button icon="refresh" loading={refreshing} onClick={refresh} title="Read the latest changes from Shopify into Flowmerce now">Refresh now</Button>}/>
       <Tabs value={tab} onChange={(t) => update({ tab: t === 'overview' ? null : t, page: null })} tabs={TABS}/>
       <div className="mt-16" key={rev}>
@@ -75,14 +76,17 @@ export default function Shipping() {
 function OverviewTab({ brand, update, onOpen, onChanged }) {
     const q = useApi(`/shipping/summary${qs({ brand })}`);
     const ck = useApi(`/shipping/checks${qs({ brand })}`);
+    const an = useApi(`/shipping/analytics${qs({ brand, period: '30' })}`);
     const toast = useToast();
     return (<SourceGate query={q}>
       {(d) => (<>
-          <TodayHeadline d={d} ex={ck.data?.exceptions}
-            onEscalate={() => download(`/shipping/export/escalation${qs({ brand })}`).catch(toast.error)}/>
+          {d.critical ? (<div className="row-wrap mb-12">
+              <Button icon="download" onClick={() => download(`/shipping/export/escalation${qs({ brand })}`).catch(toast.error)}
+                title="Download the critical orders to send to the carriers">Escalation list (CSV)</Button>
+            </div>) : null}
           <div className="ov-hero">
             <AgeCard kpis={d.kpis} go={(cat) => update({ tab: 'shipments', cat: cat || null, page: null })}/>
-            <HeadlineNumbers d={d} update={update}/>
+            <HeadlineNumbers d={d} an={an.data} update={update}/>
           </div>
           <JourneyStrip steps={d.journey ?? []} update={update}/>
           <Triage query={ck} onOpen={onOpen} update={update}/>
@@ -102,61 +106,30 @@ function OverviewTab({ brand, update, onOpen, onChanged }) {
     </SourceGate>);
 }
 
-/* How each open-check type reads in the headline ("15 with a carrier exception"). A type the server adds later still
-   shows, with its own label. */
-const ISSUE_PHRASE = {
-    carrier_exception: 'with a carrier exception',
-    stuck: 'with no carrier movement',
-    missing_tracking: 'sent without a tracking number',
-    overdue: 'past the promised date',
-    delivered_not_marked: 'delivered but not marked',
-    duplicate_tracking: 'with a duplicate tracking number',
-    amazon_not_in_shopify: 'shipped by Amazon but open in Shopify',
-    amazon_tracking_missing: 'with an Amazon parcel not on the Shopify order',
-};
-
-/** One sentence that says how much needs a person today, from the open checks (one row per order). Every check type
- *  with a count is named, so the breakdown accounts for the whole number; the critical orders are among them. */
-function TodayHeadline({ d, ex, onEscalate }) {
-    let parts = [];
-    if (ex) {
-        const issues = (ex.types ?? []).filter((t) => ex.counts?.[t.key])
-            .map((t) => `${fmtInt(ex.counts[t.key])} ${ISSUE_PHRASE[t.key] ?? `flagged “${t.label}”`}`);
-        const crit = d.critical ? `${fmtInt(d.critical)} critical (${d.thresholds?.red ?? 9}+ days in stage). ` : '';
-        const more = ex.issues > ex.total ? ' (some orders have more than one)' : '';
-        parts = issues.length ? [`${crit}${joinParts(issues)}${more}`] : [crit.trim().replace(/\.$/, '')];
-    }
-    return (<Greeting count={ex?.total} noun="order" parts={parts}
-      actions={d.critical ? <Button icon="download" onClick={onEscalate} title="Download the critical orders to send to the carriers">Escalation list (CSV)</Button> : null}/>);
-}
-
-/* Age bands, fresh to oldest, then the parcels no carrier reports on (Amazon), which have no age band. Together they
-   add up to the active total. The server's label holds the name and the day range. Grey (2-3 days) applies only to
-   orders not sent yet, which live on the Unfulfilled tab, so it is left out while empty. */
-const BANDS = ['on_track', 'grey', 'yellow', 'orange', 'red', 'unconfirmed'];
-const BAND_COLOUR = { on_track: 'var(--ok)', grey: '#a59d93', yellow: '#d6a419', orange: '#c2571a', red: 'var(--crit)',
-    unconfirmed: 'var(--info)' };
-const BAND_NAME = { unconfirmed: ['Unconfirmed', 'no carrier updates'] };
-function splitLabel(label) {
-    const m = /^(.*?)\s*\(?(\d+\s*[–-]\s*\d+\s*days|\d+\+\s*days)\)?$/.exec(label ?? '');
-    return m ? [m[1], m[2]] : [label, ''];
-}
-
-/** Active parcels by days in their current stage: the total, a ring of the five bands, and a clickable legend. */
+/** Active parcels by days in their current stage: the total in a ring of the bands, and a legend with each band's share. */
 function AgeCard({ kpis, go }) {
-    const by = Object.fromEntries(kpis.map((k) => [k.key, k]));
-    const total = by['']?.value ?? 0;
-    const onTrack = total ? Math.round(((by.on_track?.value ?? 0) / total) * 100) : 0;
-    const segments = BANDS.filter((k) => by[k] && (k !== 'grey' || by[k].value)).map((k) => {
-        const [name, range] = BAND_NAME[k] ?? splitLabel(by[k].label);
-        return { key: k, name, range, value: by[k].value, color: BAND_COLOUR[k], onClick: () => go(k) };
-    });
+    const { total, onTrack, segments } = ageSegments(kpis, go);
     return (<RingCard label="Active shipments" total={total} onTotal={() => go('')} pill={total ? { tone: 'ok', label: `${onTrack}% on track` } : null}
-      segments={segments} center={`${onTrack}%`} centerLabel="on track"/>);
+      segments={segments} centerLabel="active"/>);
 }
 
-/** Four headline numbers beside the age card. Delivery figures cover parcels delivered in the last 30 days. */
-function HeadlineNumbers({ d, update }) {
+const ON_TIME_GOAL = 90;
+const shortWeek = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+/** Mini bar chart: rows [{ key, label, value }], tallest = full height. */
+function VizBars({ rows, color, format = fmtInt }) {
+    const max = Math.max(1, ...rows.map((r) => r.value || 0));
+    return (<>
+      <span className="viz-bars" role="img" aria-label={rows.map((r) => `${r.label}: ${format(r.value)}`).join(', ')}>
+        {rows.map((r) => <span key={r.key} title={`${r.label}: ${format(r.value)}`}><i style={{ height: `${Math.max(((r.value || 0) / max) * 100, 4)}%`, background: color }}/></span>)}
+      </span>
+      <span className="viz-labels">{rows.map((r) => <span key={r.key}>{r.short ?? r.label}</span>)}</span>
+    </>);
+}
+
+/** Four headline numbers beside the age card, each with a small picture from the 30-day analytics (`an`, may still
+ *  be loading). Delivery figures cover parcels delivered in the last 30 days. */
+function HeadlineNumbers({ d, an, update }) {
     const dl = d.delivery30 ?? {};
     const v = d.valueAtRisk;
     const risk = !v.available ? { value: '—', foot: 'Unavailable' } : v.orders === 0 ? { value: fmtMoney(0, v.currency), foot: 'No critical orders' }
@@ -164,12 +137,32 @@ function HeadlineNumbers({ d, update }) {
     const has = (x) => x !== null && x !== undefined;
     const tone = !has(dl.onTimePct) ? undefined : dl.onTimePct >= 90 ? 'ok' : dl.onTimePct >= 75 ? 'warn' : 'crit';
     const toAnalytics = () => update({ tab: 'analytics' });
+    const dist = an?.delivery?.distribution ?? [];
+    const weeks = (an?.delivery?.trend ?? []).slice(-6);
+    const critCarriers = (an?.carriers ?? []).filter((c) => c.critical).sort((a, b) => b.critical - a.critical);
     return (<MiniGrid>
       <MiniStat label="On-time delivery" value={has(dl.onTimePct) ? `${dl.onTimePct}%` : '—'} tone={tone}
-        foot={dl.withPromisedDate ? `${fmtInt(dl.withPromisedDate)} of ${fmtInt(dl.delivered)} had a promised date` : 'No promised dates in 30 days'} onClick={toAnalytics}/>
-      <MiniStat label="Average delivery time" value={has(dl.avgDays) ? `${dl.avgDays} d` : '—'} foot="Dispatch to delivery, 30 days" onClick={toAnalytics}/>
-      <MiniStat label="Value at risk" value={risk.value} tone={v.orders ? 'crit' : undefined} foot={risk.foot} onClick={() => update({ tab: 'shipments', cat: 'red', page: null })}/>
-      <MiniStat label="Delivered" value={fmtInt(dl.delivered ?? 0)} foot="Last 30 days" onClick={toAnalytics}/>
+        foot={dl.withPromisedDate ? `${fmtInt(dl.withPromisedDate)} of ${fmtInt(dl.delivered)} had a promised date` : 'No promised dates in 30 days'} onClick={toAnalytics}>
+        {has(dl.onTimePct) ? (<>
+            <span className="viz-meter" role="img" aria-label={`${dl.onTimePct}% on time; goal ${ON_TIME_GOAL}%`}>
+              <span className="fill" style={{ width: `${dl.onTimePct}%`, background: `var(--${tone ?? 'ok'})` }}/>
+              <span className="mark" style={{ left: `calc(${ON_TIME_GOAL}% - 1px)` }} title={`Goal ${ON_TIME_GOAL}%`}/>
+            </span>
+            <span className="viz-scale"><span>0%</span><span>Goal {ON_TIME_GOAL}%</span></span>
+          </>) : null}
+      </MiniStat>
+      <MiniStat label="Average delivery time" value={has(dl.avgDays) ? `${dl.avgDays} d` : '—'} foot="Dispatch to delivery, 30 days" onClick={toAnalytics}>
+        {dist.length ? <VizBars rows={dist.map((r) => ({ ...r, short: r.label.replace(/\s*days?$/, '').replace('-', '–') }))} color="var(--info)"/> : null}
+      </MiniStat>
+      <MiniStat label="Value at risk" value={risk.value} tone={v.orders ? 'crit' : undefined} foot={risk.foot} onClick={() => update({ tab: 'shipments', cat: 'red', page: null })}>
+        {an ? (<span className="viz-chips">
+            {critCarriers.length ? critCarriers.slice(0, 4).map((c) => <span key={c.carrier} className="viz-chip crit">{c.carrier} {fmtInt(c.critical)}</span>)
+                : <span className="viz-chip">No critical parcels</span>}
+          </span>) : null}
+      </MiniStat>
+      <MiniStat label="Delivered" value={fmtInt(dl.delivered ?? 0)} foot="Last 30 days, by week" onClick={toAnalytics}>
+        {weeks.length ? <VizBars rows={weeks.map((w) => ({ key: w.week, label: `Week of ${shortWeek(w.week)}`, short: shortWeek(w.week), value: w.delivered }))} color="var(--ok)"/> : null}
+      </MiniStat>
     </MiniGrid>);
 }
 
@@ -362,7 +355,7 @@ function AnalyticsTab({ brand, update }) {
             const k = d.kpis;
             const go = (patch) => update({ tab: 'shipments', page: null, ...patch });
             return (<>
-          <div className="kpis">
+          <div className="kpis kpis-7">
             <Tile label="Active shipments" value={k.active}/>
             <Tile label="Critical" value={`${fmtInt(k.critical)} (${k.criticalPct}%)`} tone="crit"/>
             <Tile label="On track share" value={`${k.onTrackPct}%`} tone="ok"/>

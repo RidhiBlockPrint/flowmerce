@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flowmerce redesign samples</title>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f7f5f2;--surface:#fff;--s3:#f3f0ec;--ink:#1e1a17;--ink2:#4a433d;--muted:#776e67;--faint:#a39a92;--line:#e7e1d9;
+--crimson:#850000;--saffron:#efb34c;--teal:#1d7a6b;--teal-soft:#e3f3ef;--sky:#2f5d8a;--sky-soft:#e8f0f8;--rose:#c2410c;--rose-soft:#fdeee6;--ok:#2d6a3e;--ok-soft:#e7f2ea;
+--serif:'Libre Caslon Text',Georgia,serif;--sans:'Plus Jakarta Sans',system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px}
+.sample-tag{display:inline-flex;gap:8px;align-items:center;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--crimson);margin:46px 0 6px}
+.sample-tag b{background:var(--crimson);color:#fff;border-radius:999px;width:22px;height:22px;display:grid;place-items:center;font-size:11px}
+h1{font-family:var(--serif);font-weight:400;font-size:34px;margin:0 0 6px}h2{font-family:var(--serif);font-weight:400;font-size:26px;margin:0 0 4px}
+.lead{color:var(--muted);max-width:760px;line-height:1.55;margin:0 0 18px}
+.changes{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}.changes span{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:12px;color:var(--ink2)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:0 1px 2px rgba(30,26,23,.04),0 8px 24px rgba(30,26,23,.04)}
+.grid{display:grid;gap:14px}.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(3,minmax(0,1fr))}.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:860px){.g2,.g3,.g4{grid-template-columns:minmax(0,1fr)}}
+.label{font-size:12px;color:var(--muted);font-weight:600}.num{font-variant-numeric:tabular-nums}
+.rise{animation:rise .5s cubic-bezier(.2,.7,.2,1) both}@keyframes rise{from{opacity:0;transform:translateY(12px)}}
+.d1{animation-delay:.06s}.d2{animation-delay:.12s}.d3{animation-delay:.18s}.d4{animation-delay:.24s}.d5{animation-delay:.3s}
+/* Sample 1 */
+.hero{background:var(--ink);color:#fff;border-radius:20px;padding:24px 26px;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:24px;overflow:hidden;position:relative}
+.hero .label{color:#cfc6bd}.hero-big{font-family:var(--serif);font-size:52px;line-height:1.05;margin:6px 0}.hero-delta{display:inline-flex;gap:6px;align-items:center;background:rgba(239,179,76,.16);color:var(--saffron);border-radius:999px;padding:3px 10px;font-weight:700;font-size:12px}
+.hero-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}.hero-kpi{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px 12px}
+.hero-kpi b{display:block;font-size:20px;margin-top:2px}.up{color:#7fd6a6}.down{color:#ff9b8a}
+@media(max-width:860px){.hero{grid-template-columns:minmax(0,1fr)}}
+.draw{stroke-dasharray:1400;stroke-dashoffset:1400;animation:draw 1.6s cubic-bezier(.35,.6,.2,1) .2s forwards}@keyframes draw{to{stroke-dashoffset:0}}
+.fade{opacity:0;animation:fade 1s ease .6s forwards}@keyframes fade{to{opacity:1}}
+.flow{display:flex;flex-direction:column;gap:6px}
+.flow-row{display:grid;grid-template-columns:150px minmax(0,1fr) 92px;gap:12px;align-items:center}
+.flow-bar{height:34px;border-radius:9px;background:linear-gradient(90deg,var(--crimson),#b54a1f 60%,var(--saffron));transform-origin:left;animation:grow 1s cubic-bezier(.2,.7,.2,1) both;display:flex;align-items:center;padding-left:10px;color:#fff;font-weight:700;font-size:12px}
+@keyframes grow{from{transform:scaleX(0)}}
+.flow-drop{grid-column:2;font-size:12px;color:var(--rose);display:flex;align-items:center;gap:6px;padding-left:6px}
+.flow-drop:before{content:'';width:10px;height:10px;border-left:2px solid var(--rose);border-bottom:2px solid var(--rose);transform:translateY(-3px)}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 9px;font-size:11.5px;font-weight:700}
+.p-ok{background:var(--ok-soft);color:var(--ok)}.p-warn{background:#fdf1dc;color:#9a5b06}.p-rose{background:var(--rose-soft);color:var(--rose)}.p-sky{background:var(--sky-soft);color:var(--sky)}
+.act{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:12px;align-items:start;padding:12px 0;border-top:1px dashed var(--line)}
+.act:first-of-type{border-top:0}.act-n{width:30px;height:30px;border-radius:50%;background:var(--teal);color:#fff;display:grid;place-items:center;font-weight:700}
+/* Sample 2 */
+.gauge-wrap{display:flex;gap:18px;align-items:center}.gauge text{font-family:var(--sans)}
+.sweep{stroke-dasharray:157;stroke-dashoffset:157;animation:sweep 1.3s cubic-bezier(.2,.7,.2,1) .3s forwards}@keyframes sweep{to{stroke-dashoffset:var(--to)}}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-bottom:6px}.legend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.stack{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--s3)}.stack span{transform-origin:left;animation:grow .9s cubic-bezier(.2,.7,.2,1) both}
+.seg-row{display:grid;grid-template-columns:90px minmax(0,1fr) 64px;gap:10px;align-items:center;margin:9px 0;font-size:13px}
+/* Sample 3 */
+.strip{display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:4px;margin:6px 0 14px}
+.strip div{height:44px;border-radius:8px;background:var(--s3);position:relative;font-size:10.5px;color:var(--faint);padding:4px}
+.strip .today{background:var(--ink);color:#fff}.strip .has:after{content:'';position:absolute;left:5px;right:5px;bottom:5px;height:5px;border-radius:3px;background:var(--c,var(--teal))}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.cal-h{font-size:11px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;padding:0 4px}
+.day{min-height:104px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:7px;display:flex;flex-direction:column;gap:4px;transition:transform .15s,box-shadow .15s}
+.day:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(30,26,23,.08)}.day.past{background:transparent;opacity:.55}.day.today{border:2px solid var(--ink)}
+.dnum{font-weight:700;font-size:12px;color:var(--ink2);display:flex;justify-content:space-between}
+.chip{display:flex;align-items:center;gap:5px;border-radius:7px;padding:4px 7px;font-size:11px;font-weight:600;line-height:1.25;animation:pop .35s cubic-bezier(.2,.7,.2,1.3) both}
+@keyframes pop{from{opacity:0;transform:scale(.85)}}
+.c-event{background:#fdf3e0;color:#8a5a08}.c-research{background:var(--sky-soft);color:var(--sky)}.c-draft{background:#f1ecfb;color:#5b3fa6}.c-live{background:var(--ok-soft);color:var(--ok)}.c-due{background:var(--rose-soft);color:var(--rose)}
+.chip .dot{width:7px;height:7px;border-radius:50%;flex:none}.ridhi{background:var(--crimson)}.cpc{background:#a2836f}
+.keyrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.note{font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.5}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;stroke-dashoffset:0!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Redesign samples</h1>
+  <p class="lead">Three samples, built from the pages in your screenshots: the CRO overview, the CRO chart tabs, and the content calendar. Same Flowmerce paper, serif and crimson brand. What's new is more contrast, a clear "hero" number on each page, charts that fill and animate, and colour that means something (green good, rose lost, blue research). The figures are copied from your screenshots and are only illustrations.</p>
+
+  <!-- ================= SAMPLE 1 ================= -->
+  <div class="sample-tag"><b>1</b>CRO Overview: a hero strip and a real funnel</div>
+  <h2>One dark hero card, then where shoppers drop off</h2>
+  <p class="lead">Today the four KPI tiles are all the same size and the funnel bars are almost empty (5.6%, 3.0%, 2.0% look like nothing). This sample puts the money first, draws the trend as a filled area, and turns the funnel into stepped bars that say how many people were lost at each step.</p>
+  <div class="changes"><span>Dark hero card with the month's revenue</span><span>Filled trend line, draws in</span><span>Funnel shows "lost here" per step</span><span>Top 3 actions as numbered rows</span></div>
+  <div class="hero rise">
+    <div>
+      <div class="label">Revenue · 1–20 Nov · Ridhi</div>
+      <div class="hero-big num" data-count="129930" data-prefix="$">$0</div>
+      <span class="hero-delta">▲ 11.0% vs previous 20 days</span>
+      <div class="hero-kpis">
+        <div class="hero-kpi"><span class="label">Orders</span><b class="num" data-count="1138">0</b><span class="up">▲ 23.3%</span></div>
+        <div class="hero-kpi"><span class="label">Avg order</span><b class="num" data-count="114.17" data-prefix="$" data-dec="2">0</b><span class="down">▼ 10.0%</span></div>
+        <div class="hero-kpi"><span class="label">Conversion</span><b class="num" data-count="2.03" data-suffix="%" data-dec="2">0</b><span class="up">▲ 40.0%</span></div>
+      </div>
+    </div>
+    <svg viewBox="0 0 500 220" style="width:100%;height:auto" aria-label="Net sales by day">
+      <defs><linearGradient id="ga" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#efb34c" stop-opacity=".55"/><stop offset="1" stop-color="#efb34c" stop-opacity="0"/></linearGradient></defs>
+      <g stroke="rgba(255,255,255,.08)"><line x1="0" x2="500" y1="50" y2="50"/><line x1="0" x2="500" y1="110" y2="110"/><line x1="0" x2="500" y1="170" y2="170"/></g>
+      <path class="fade" d="M0,150 C40,140 60,120 90,128 S150,90 180,100 S240,140 270,118 S330,60 360,74 S420,110 450,84 S490,70 500,66 L500,220 L0,220Z" fill="url(#ga)"/>
+      <path class="draw" d="M0,150 C40,140 60,120 90,128 S150,90 180,100 S240,140 270,118 S330,60 360,74 S420,110 450,84 S490,70 500,66" fill="none" stroke="#efb34c" stroke-width="3" stroke-linecap="round"/>
+      <path d="M0,170 C60,160 120,150 180,140 S300,150 360,120 S460,124 500,110" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="2" stroke-dasharray="5 5"/>
+      <circle class="fade" cx="360" cy="74" r="6" fill="#efb34c" stroke="#1e1a17" stroke-width="3"/>
+      <g class="fade"><rect x="300" y="28" width="122" height="34" rx="8" fill="#fff"/><text x="312" y="43" font-size="10" fill="#776e67">Fri 14 Nov</text><text x="312" y="56" font-size="12" font-weight="700" fill="#1e1a17">$9,412 net</text></g>
+    </svg>
+  </div>
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card rise d2">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px"><b>Where shoppers leave</b><span class="pill p-sky">51,001 sessions</span></div>
+      <div class="flow">
+        <div class="flow-row"><span>Visited</span><div class="flow-bar" style="width:100%">100%</div><span class="num" style="text-align:right"><b>51,001</b></span></div>
+        <div class="flow-row"><span></span><div class="flow-drop">48,162 left without adding to cart</div><span></span></div>
+        <div class="flow-row"><span>Added to cart</span><div class="flow-bar" style="width:46%;animation-delay:.15s">5.6%</div><span class="num" style="text-align:right"><b>2,839</b></span></div>
+        <div class="flow-row"><span></span><div class="flow-drop">1,324 left the cart</div><span></span></div>
+        <div class="flow-row"><span>Reached checkout</span><div class="flow-bar" style="width:31%;animation-delay:.3s">3.0%</div><span class="num" style="text-align:right"><b>1,515</b></span></div>
+        <div class="flow-row"><span></span><div class="flow-drop">480 left at payment</div><span></span></div>
+        <div class="flow-row"><span>Purchased</span><div class="flow-bar" style="width:22%;animation-delay:.45s">2.0%</div><span class="num" style="text-align:right"><b>1,035</b></span></div>
+      </div>
+      <p class="note">Bar widths use a log scale, so a 2% step stays visible. The rose lines are what to fix.</p>
+    </div>
+    <div class="card rise d3">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><b>What to do next</b><span class="label">Claude · 8 min ago</span></div>
+      <div class="act"><span class="act-n">1</span><div><b>Turn on abandoned-checkout emails before Black Friday</b><div class="label" style="margin-top:3px">730 shoppers reached checkout and left</div></div><span class="pill p-ok">High</span></div>
+      <div class="act"><span class="act-n">2</span><div><b>Check stock for quilts that stopped selling</b><div class="label" style="margin-top:3px">Aquamarine Blue Quilt: 8 sold → 0</div></div><span class="pill p-ok">High</span></div>
+      <div class="act"><span class="act-n" style="background:var(--sky)">3</span><div><b>Fix mobile product pages for social visitors</b><div class="label" style="margin-top:3px">Social converts at 1.35%, desktop 2.67%</div></div><span class="pill p-sky">Medium</span></div>
+    </div>
+  </div>
+
+  <!-- ================= SAMPLE 2 ================= -->
+  <div class="sample-tag"><b>2</b>CRO Conversion and Cart & checkout: gauges and filled charts</div>
+  <h2>Gauges against the benchmark, area charts with a comparison band</h2>
+  <p class="lead">Today the abandonment rings are small and brown, and the day charts are thin lines with one big spike. This sample uses half-circle gauges with the typical-store mark, area charts with soft fills, and device and channel splits as stacked bars instead of tables.</p>
+  <div class="changes"><span>Half-circle gauges with a benchmark mark</span><span>Area charts with a "typical" band</span><span>Device and channel as stacked bars</span><span>Spikes marked and explained</span></div>
+  <div class="grid g3">
+    <div class="card rise d1"><div class="label">Cart abandonment</div>
+      <div class="gauge-wrap"><svg class="gauge" viewBox="0 0 120 70" width="150"><path d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#f3f0ec" stroke-width="12" stroke-linecap="round"/>
+        <path class="sweep" style="--to:58" d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#1d7a6b" stroke-width="12" stroke-linecap="round"/>
+        <line x1="95" y1="22" x2="102" y2="15" stroke="#1e1a17" stroke-width="2.5"/><text x="60" y="58" text-anchor="middle" font-size="18" font-weight="700" fill="#1e1a17">63%</text></svg>
+      <div><span class="pill p-ok">7 pts better than typical</span><p class="note" style="margin:6px 0 0">Mark = typical store (70%)</p></div></div></div>
+    <div class="card rise d2"><div class="label">Checkout abandonment</div>
+      <div class="gauge-wrap"><svg class="gauge" viewBox="0 0 120 70" width="150"><path d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#f3f0ec" stroke-width="12" stroke-linecap="round"/>
+        <path class="sweep" style="--to:110" d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#1d7a6b" stroke-width="12" stroke-linecap="round"/>
+        <line x1="94" y1="21" x2="101" y2="14" stroke="#1e1a17" stroke-width="2.5"/><text x="60" y="58" text-anchor="middle" font-size="18" font-weight="700" fill="#1e1a17">30%</text></svg>
+      <div><span class="pill p-ok">39 pts better than typical</span><p class="note" style="margin:6px 0 0">Mark = typical store (69%)</p></div></div></div>
+    <div class="card rise d3"><div class="label">Conversion rate</div>
+      <div class="gauge-wrap"><svg class="gauge" viewBox="0 0 120 70" width="150"><path d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#f3f0ec" stroke-width="12" stroke-linecap="round"/>
+        <path class="sweep" style="--to:92" d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#c2410c" stroke-width="12" stroke-linecap="round"/>
+        <line x1="77" y1="14" x2="80" y2="6" stroke="#1e1a17" stroke-width="2.5"/><text x="60" y="58" text-anchor="middle" font-size="18" font-weight="700" fill="#1e1a17">0.90%</text></svg>
+      <div><span class="pill p-rose">Below typical (2.5%)</span><p class="note" style="margin:6px 0 0">October · −49.7%</p></div></div></div>
+  </div>
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card rise d2"><b>Conversion rate by day</b>
+      <div class="legend" style="margin-top:8px"><span><i style="background:#850000"></i>October</span><span><i style="background:#e7e1d9;height:8px"></i>Typical 1.5–2.5%</span></div>
+      <svg viewBox="0 0 520 200" style="width:100%;height:auto">
+        <defs><linearGradient id="gc" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#850000" stop-opacity=".28"/><stop offset="1" stop-color="#850000" stop-opacity="0"/></linearGradient></defs>
+        <rect x="0" y="60" width="520" height="50" fill="#f3f0ec"/>
+        <path class="fade" d="M0,120 L17,180 L34,130 L52,90 L69,92 L86,100 L104,98 L121,135 L138,160 L155,152 L172,95 L190,80 L207,100 L224,82 L242,120 L259,140 L276,105 L293,88 L311,90 L328,110 L345,115 L362,115 L380,82 L397,108 L414,96 L431,118 L449,108 L466,95 L483,86 L500,95 L520,70 L520,200 L0,200Z" fill="url(#gc)"/>
+        <path class="draw" d="M0,120 L17,180 L34,130 L52,90 L69,92 L86,100 L104,98 L121,135 L138,160 L155,152 L172,95 L190,80 L207,100 L224,82 L242,120 L259,140 L276,105 L293,88 L311,90 L328,110 L345,115 L362,115 L380,82 L397,108 L414,96 L431,118 L449,108 L466,95 L483,86 L500,95 L520,70" fill="none" stroke="#850000" stroke-width="2.5" stroke-linejoin="round"/>
+      </svg></div>
+    <div class="card rise d3"><b>Sessions by device and channel</b>
+      <div class="seg-row"><span>Mobile</span><div class="stack"><span style="width:62%;background:#850000"></span><span style="width:30%;background:#efb34c;animation-delay:.1s"></span><span style="width:8%;background:#a2836f;animation-delay:.2s"></span></div><span class="num">2.09%</span></div>
+      <div class="seg-row"><span>Desktop</span><div class="stack"><span style="width:38%;background:#850000"></span><span style="width:52%;background:#efb34c;animation-delay:.1s"></span><span style="width:10%;background:#a2836f;animation-delay:.2s"></span></div><span class="num">2.67%</span></div>
+      <div class="legend" style="margin-top:12px"><span><i style="background:#850000"></i>Social</span><span><i style="background:#efb34c"></i>Search</span><span><i style="background:#a2836f"></i>Direct</span></div>
+      <div class="act" style="border-top:1px dashed var(--line);margin-top:8px"><span class="act-n" style="background:var(--saffron);color:var(--ink)">!</span><div><b>3 Oct: 45,000 sessions, 0.3% conversion</b><div class="label" style="margin-top:3px">Spikes like this get an explanation chip on the chart (bot traffic, a viral post, a sale)</div></div><span></span></div>
+    </div>
+  </div>
+
+  <!-- ================= SAMPLE 3 ================= -->
+  <div class="sample-tag"><b>3</b>Content calendar: colour lanes and a two-week strip</div>
+  <h2>Every item type has its own colour, and the next 14 days sit on top</h2>
+  <p class="lead">Today every chip is the same beige with a tiny icon, events repeat in several cells, and "New Year's Eve" shows up as research, draft and publish-by in different weeks without a link between them. This sample gives each type a colour lane, puts a two-week strip on top, and shows one blog's chain (research, then draft, then live) as one connected line.</p>
+  <div class="changes"><span>Colour per type: event, research, draft, live, publish-by</span><span>Two-week strip with today in ink</span><span>Brand dot on every chip</span><span>Chips pop in, days lift on hover</span></div>
+  <div class="card rise">
+    <div style="display:flex;justify-content:space-between;align-items:center"><b>Next 14 days</b><span class="label">4 blogs · 2 events</span></div>
+    <div class="strip">
+      <div>20</div><div class="today">21<br>today</div><div>22</div><div>23</div><div class="has" style="--c:var(--sky)">24</div><div>25</div><div class="has" style="--c:#efb34c">26</div>
+      <div class="has" style="--c:#5b3fa6">27</div><div>28</div><div>29</div><div>30</div><div class="has" style="--c:var(--ok)">1</div><div class="has" style="--c:var(--rose)">2</div><div>3</div>
+    </div>
+    <div class="cal">
+      <div class="cal-h">Mon</div><div class="cal-h">Tue</div><div class="cal-h">Wed</div><div class="cal-h">Thu</div><div class="cal-h">Fri</div><div class="cal-h">Sat</div><div class="cal-h">Sun</div>
+      <div class="day past"><div class="dnum">17</div></div>
+      <div class="day past"><div class="dnum">18</div></div>
+      <div class="day past"><div class="dnum">19</div></div>
+      <div class="day"><div class="dnum">20</div><div class="chip c-research" style="animation-delay:.05s"><span class="dot ridhi"></span>Research · New Year's Eve</div></div>
+      <div class="day today"><div class="dnum">21 <span class="pill p-sky" style="padding:0 6px">Today</span></div><div class="chip c-event" style="animation-delay:.1s">★ Winter begins</div><div class="chip c-research" style="animation-delay:.15s"><span class="dot ridhi"></span>Research · New Year's Day</div></div>
+      <div class="day"><div class="dnum">22</div></div>
+      <div class="day"><div class="dnum">23</div><div class="chip c-draft" style="animation-delay:.2s"><span class="dot ridhi"></span>Draft · New Year's Eve</div></div>
+      <div class="day"><div class="dnum">24</div><div class="chip c-draft" style="animation-delay:.25s"><span class="dot ridhi"></span>Draft · New Year's Day</div><div class="chip c-live" style="animation-delay:.3s"><span class="dot cpc"></span>Goes live · Table runners</div></div>
+      <div class="day"><div class="dnum">25</div></div>
+      <div class="day"><div class="dnum">26</div><div class="chip c-event" style="animation-delay:.35s">★ Thanksgiving</div></div>
+      <div class="day"><div class="dnum">27</div><div class="chip c-event" style="animation-delay:.4s">★ Black Friday</div><div class="chip c-live" style="animation-delay:.45s"><span class="dot ridhi"></span>Goes live · Quilt care</div></div>
+      <div class="day"><div class="dnum">28</div></div>
+      <div class="day"><div class="dnum">29</div></div>
+      <div class="day"><div class="dnum">30</div></div>
+    </div>
+    <div class="keyrow"><span class="chip c-event">★ Event</span><span class="chip c-research">Research</span><span class="chip c-draft">Draft</span><span class="chip c-live">Goes live</span><span class="chip c-due">Publish by</span></div>
+    <p class="note">Hovering one chip highlights its whole chain, research to draft to live, so you can see that one blog is on track.</p>
+  </div>
+</div>
+<script>
+(function(){
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.querySelectorAll('[data-count]').forEach(function(el){
+    var to = parseFloat(el.dataset.count), dec = +(el.dataset.dec || 0), pre = el.dataset.prefix || '', suf = el.dataset.suffix || '';
+    var fmt = function(v){ return pre + v.toLocaleString('en-US', {minimumFractionDigits: dec, maximumFractionDigits: dec}) + suf; };
+    if (reduce) { el.textContent = fmt(to); return; }
+    var t0 = performance.now(), d = 1200;
+    (function step(t){ var k = Math.min(1, (t - t0) / d), e = 1 - Math.pow(1 - k, 3); el.textContent = fmt(to * e); if (k < 1) requestAnimationFrame(step); })(t0);
+  });
+})();
+</script>
+</body>
+</html>

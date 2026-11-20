@@ -14,6 +14,7 @@ import { Icon } from '../components/Icon';
 import { ScoreRing } from '../components/charts';
 import { AuthorizeDialog, MODE_LABEL, RejectDialog } from '../components/publish';
 import { AskClaude, ClaudeInstructions, ClaudeNotes } from '../components/claude';
+import { ImageSource } from '../components/ImageSource';
 const EDITABLE = ['title', 'handle', 'primary_keyword', 'meta_title', 'meta_description', 'summary_html', 'body_html', 'tags', 'author', 'image_url', 'image_alt'];
 const pick = (a) => Object.fromEntries(EDITABLE.map((k) => [k, a[k] ?? '']));
 export default function ArticleEditor() {
@@ -24,7 +25,7 @@ export default function ArticleEditor() {
         n.delete('tab');
     else
         n.set('tab', t); setSp(n, { replace: true }); };
-    const { data, error, loading, reload, setData } = useApi(`/articles/${id}`);
+    const { data, error, loading, reload, setData } = useApi(`/articles/${id}`, { remember: false });
     const { can, brandOf } = useApp();
     const toast = useToast();
     const [draft, setDraft] = useState(null);
@@ -339,11 +340,12 @@ function EditTab({ draft, set, article, detail, editable, dirty, onRevised, rteK
         <Card title="Listing summary" sub="Shown on the blog index page">
           <textarea className="textarea" rows={3} value={draft.summary_html.replace(/<\/?p>/g, '')} onChange={(e) => set('summary_html', e.target.value ? `<p>${e.target.value}</p>` : '')} readOnly={!editable} aria-label="Summary"/>
         </Card>
-        <ClaudeInstructions article={article} dirty={dirty} onRevised={onRevised}/>
         <ClaudeNotes notes={detail.aiNotes}/>
       </div>
 
       <div className="col" style={{ gap: 16, minWidth: 0 }}>
+        {/* Claude's box comes first in the side panel, so it is reachable without scrolling past the article (owner request 2026-11-20). */}
+        <ClaudeInstructions article={article} dirty={dirty} onRevised={onRevised}/>
         <Card title="SEO check" actions={<ScoreRing value={score}/>}>
           <div className="checklist">
             {checks.map((c) => (<div key={c.id} className={`check-row ${c.state}`}>
@@ -392,31 +394,12 @@ function EditTab({ draft, set, article, detail, editable, dirty, onRevised, rteK
         <Card title="Featured image">
           <div className="col gap-12">
             {draft.image_url ? <img src={draft.image_url} alt={draft.image_alt} style={{ borderRadius: 10, aspectRatio: '16/9', objectFit: 'cover', width: '100%', background: 'var(--surface-3)' }}/> : null}
-            <Field label="Image URL" hint="https:// link, e.g. a product image from the store"><input className="input" value={draft.image_url} onChange={(e) => set('image_url', e.target.value)} readOnly={!editable}/></Field>
-            <Field label="Alt text"><input className="input" value={draft.image_alt} onChange={(e) => set('image_alt', e.target.value)} readOnly={!editable}/></Field>
-            {editable && products.data?.length ? (<details>
-                <summary className="small strong" style={{ cursor: 'pointer' }}>Choose from {products.data.length} products</summary>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, maxHeight: 260, overflowY: 'auto', marginTop: 8 }}>
-                  {products.data.filter((p) => p.image_url).slice(0, 60).map((p) => (<button key={p.handle} className="btn" style={{ height: 'auto', padding: 3, display: 'block' }} title={p.title} onClick={() => { set('image_url', p.image_url); if (!draft.image_alt)
-                set('image_alt', p.title); }}>
-                      <img src={p.image_url + (p.image_url.includes('?') ? '&' : '?') + 'width=160'} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: 6, display: 'block' }} loading="lazy"/>
-                    </button>))}
-                </div>
-              </details>) : null}
+            {editable ? <ImageSource brand={article.brand_id} url={draft.image_url} alt={draft.image_alt}
+              onPick={(url, alt) => { set('image_url', url); if (!draft.image_alt && alt) set('image_alt', alt); }}/>
+              : <Field label="Image URL"><input className="input" value={draft.image_url} readOnly/></Field>}
+            <Field label="Alt text" hint="What the picture shows, for search engines and screen readers"><input className="input" value={draft.image_alt} onChange={(e) => set('image_alt', e.target.value)} readOnly={!editable}/></Field>
+            {editable && draft.image_url ? <Button size="sm" variant="ghost" icon="x" onClick={() => set('image_url', '')}>Remove image</Button> : null}
           </div>
-        </Card>
-        <Card title="Ownership">
-          <Kv items={[
-            ['Assignee', editable ? (<select className="select sm" value={article.assignee_id ?? ''} onChange={(e) => onAssign(e.target.value)}>
-                <option value="">Unassigned</option>
-                {detail.assignees.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>) : article.assignee_name ?? 'Unassigned'],
-            ['Topic', detail.topic ? <Link href={`/topics?focus=${detail.topic.id}`}>{detail.topic.title}</Link> : <span className="faint">None</span>],
-            ['First imported', originLabel(article.origin)],
-            ['Kept in step via', syncLabel(article.shopify_sync)],
-            ['Created', fmtDate(article.created_at)],
-            ['Last saved', `${timeAgo(article.updated_at)} · v${article.version}`],
-        ]}/>
         </Card>
       </div>
       {linkOpen ? <LinkDialog products={products.data ?? []} storefront={storefront} onClose={() => setLinkOpen(false)} onInsert={insertLink}/> : null}

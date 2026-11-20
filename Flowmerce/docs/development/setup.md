@@ -17,6 +17,18 @@ On macOS/Linux use `source .venv/bin/activate` and `cp .env.example .env`.
 
 Runtime dependencies of the core package: none (standard library only). The `seo` extra (fastapi, uvicorn, httpx, openpyxl, anthropic, google-auth, requests; carried over from blog-ops) is needed for the SEO module. Dev tools: `pytest` (tests), `ruff` (lint and format), `mypy` (strict type checking). Add any new dependency to `pyproject.toml` and record the reason here.
 
+- `tzdata` (in the `seo` extra, added 2026-11-19 with the owner's approval): the IANA timezone database for Python's `zoneinfo`. Windows ships none, so without it `ZoneInfo("America/Los_Angeles")` fails. The CRO module needs it to split orders into each store's local days (US Pacific, with daylight saving). Data only, no code; maintained by the Python core team.
+
+### CRO module (optional settings)
+
+| Variable | Default | What it does |
+|---|---|---|
+| `CRO_SYNC_MINUTES` | `15` | How often the background job copies new Shopify orders into schema `cro` and checks the alarms; `0` turns it off |
+| `CRO_CACHE_SECONDS` | `600` | How long a ShopifyQL answer (sessions, conversion rate, funnel) is reused |
+| `CRO_SNAPSHOT_SECONDS` | `120` | How long the in-memory order snapshot is reused between syncs |
+
+CRO uses Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` and each brand's existing Shopify keys (`RIDHI_SHOPIFY_*`, `CPC_SHOPIFY_*`). Supabase must expose the `cro` schema (Data API → Exposed schemas), and `db/central/112_cro.sql` and `113_cro_orders.sql` must have been run. Conversion figures need each store's app to have the `read_reports` scope and Level 2 protected customer data access.
+
 ## Configuration
 
 | Variable | Default | Allowed values |

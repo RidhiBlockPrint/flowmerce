@@ -98,32 +98,15 @@ async function waitForJob(id, onTick) {
     }
 }
 
-/** Standing instructions for the brand, and "Revise this draft" for this article. */
+/**
+ * "Ask Claude to revise" for this article: one text box and one button, nothing else (owner request 2026-11-20).
+ * The brand's saved standing instructions still go with every request; they are no longer edited here.
+ */
 export function ClaudeInstructions({ article, dirty, onRevised }) {
-    const { brandOf, refreshMe, can } = useApp();
+    const { can } = useApp();
     const toast = useToast();
-    const brand = brandOf(article.brand_id);
-    const [standing, setStanding] = useState(brand?.settings?.claudeInstructions ?? '');
-    const [savingStanding, setSavingStanding] = useState(false);
     const [ask, setAsk] = useState('');
     const [job, setJob] = useState(null);
-    const [budget, setBudget] = useState(null);
-    useEffect(() => { api.get('/ai/budget').then(setBudget).catch(() => setBudget(null)); }, [job?.status]);
-    useEffect(() => { setStanding(brand?.settings?.claudeInstructions ?? ''); }, [brand?.settings?.claudeInstructions]);
-    const saveStanding = async () => {
-        setSavingStanding(true);
-        try {
-            await api.patch(`/brands/${article.brand_id}`, { claudeInstructions: standing });
-            await refreshMe?.();
-            toast.ok(`Saved. Claude follows these for every ${brand?.name ?? ''} topic, draft and revision from now on.`);
-        }
-        catch (e) {
-            toast.error(e);
-        }
-        finally {
-            setSavingStanding(false);
-        }
-    };
     const revise = async () => {
         try {
             const r = await api.post('/ai/jobs', { brand: article.brand_id, task_type: 'content_revision',
@@ -144,27 +127,19 @@ export function ClaudeInstructions({ article, dirty, onRevised }) {
         }
     };
     const running = job && !['succeeded', 'failed', 'cancelled'].includes(job.status);
-    const canRevise = can('workflow:run') && article.status !== 'scheduled';
-    return (<Card title="Claude instructions" sub="Tell Claude what to change. Every request counts against the daily limit." actions={<Icon name="sparkle"/>}>
+    if (!can('workflow:run') || article.status === 'scheduled')
+        return null;
+    return (<Card className="claude-ask">
       <div className="col gap-12">
-        <BudgetLine budget={budget}/>
-        {canRevise ? (<Field label="Revise this draft" full hint={dirty ? 'Save your edits first: Claude works on the saved version.' : 'Claude rewrites the draft and saves it as a new version. You can restore the old one under History.'}>
-            <textarea className="textarea" rows={3} value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="e.g. Add a size table for round tables, make the opening warmer, link the care guide" disabled={running}/>
-          </Field>) : null}
-        {canRevise ? (<div className="row-wrap" style={{ gap: 8 }}>
-            <Button variant="primary" icon="sparkle" loading={running} disabled={!ask.trim() || dirty || running} onClick={revise}>Ask Claude to revise</Button>
-            {job ? <span className="small muted">{running ? (job.message || 'Working…') : job.status === 'succeeded' ? 'Done' : job.error || job.status}</span> : null}
-          </div>) : null}
-        <Field label={`Standing instructions for ${brand?.name ?? 'this brand'}`} full hint="Sent with every Claude request for this brand, after its brand documents. They win where they conflict, but Claude still never invents facts.">
-          <textarea className="textarea" rows={4} value={standing} onChange={(e) => setStanding(e.target.value)} readOnly={!can('integrations:manage')} placeholder="e.g. Always link the tablecloth size finder. Never mention delivery times."/>
-        </Field>
-        {can('integrations:manage') ? (<div><Button size="sm" loading={savingStanding} disabled={standing === (brand?.settings?.claudeInstructions ?? '')} onClick={saveStanding}>Save standing instructions</Button></div>) : null}
-        {brand?.knowledge?.length ? <div className="small muted">Brand documents Claude reads: {brand.knowledge.map((k) => k.name).join(', ')}</div> : null}
+        <textarea className="textarea" rows={4} value={ask} onChange={(e) => setAsk(e.target.value)} disabled={running} aria-label="Ask Claude to change this draft"
+          placeholder="Ask Claude to change this draft…"/>
+        <Button variant="primary" icon="sparkle" loading={running} disabled={!ask.trim() || dirty || running} onClick={revise}
+          title={dirty ? 'Save your edits first: Claude works on the saved version' : 'Claude saves the result as a new version'}>{running ? (job.message || 'Working…') : 'Ask Claude to revise'}</Button>
       </div>
     </Card>);
 }
 
-const RUN_STEPS = [['research', 'Choosing a topic'], ['draft', 'Writing the draft'], ['done', 'Approved and saved']];
+const RUN_STEPS = [['research', 'Choosing a topic'], ['draft', 'Writing the draft'], ['revise', 'Fixing what the quality check found'], ['done', 'Approved and saved']];
 
 /** "Write a blog": one click to a finished hidden Shopify draft (research, pick, draft, approve, save). Shows live progress. */
 export function WriteBlog({ brand, size = 'sm', variant = 'primary', onDone }) {
@@ -215,7 +190,7 @@ export function WriteBlog({ brand, size = 'sm', variant = 'primary', onDone }) {
       <Button size={size} variant={variant} icon="sparkle" loading={busy} disabled={!brand || busy} onClick={start} title={brand ? 'Uses about $1.20 of the daily Claude limit' : 'Pick one brand first'}>
         {busy ? 'Writing…' : 'Write a blog'}
       </Button>
-      {run?.status === 'running' ? <span className="small muted">Step {step + 1} of 3 · {run.message || RUN_STEPS[step]?.[1]}</span> : null}
+      {run?.status === 'running' ? <span className="small muted">{run.message || RUN_STEPS[step]?.[1]}</span> : null}
       {run?.status === 'done' && run.article_id ? <a className="small" href={`/articles/${run.article_id}`}>Open “{run.article_title}”</a> : null}
     </span>);
 }

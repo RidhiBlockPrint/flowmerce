@@ -11,7 +11,9 @@ import { Icon } from '../components/Icon';
 import { BRAND_COLOR } from '../components/metrics';
 import { LineChart } from '../components/charts';
 import { ListCard, ListRow, brandLabel } from '../components/home';
-import { Greeting, Journey, MiniGrid, MiniStat, RingCard, SectionHead, TodoRow } from '../components/dash';
+import { Greeting, Journey, MiniGrid, MiniStat, RingBody, RingCard, SectionHead, TodoRow } from '../components/dash';
+import { ageSegments } from '../lib/shipping';
+import { SalesDashboard } from '../components/cro';
 
 const SEVERITY = {
     critical: { tone: 'crit', label: 'Critical' },
@@ -40,8 +42,9 @@ const CONTENT_STAGES = [
 ];
 
 /**
- * Home: the management view across modules. A plain-language headline, the content pipeline, four headline numbers,
- * the article journey and one to-do list (decisions, alerts, failed runs, delivery problems). Ridhi and CPC are never
+ * Home: the management view across modules. A plain-language headline, sales (daily orders and net sales per store,
+ * from GET /api/cro/home) next to the shipping snapshot, one to-do list, then the content pipeline, its headline
+ * numbers and the article journey. The to-do list (decisions, alerts, failed runs, delivery problems). Ridhi and CPC are never
  * added together where it matters (search clicks, the brand report). Every figure comes from GET /api/home and
  * GET /api/articles/counts (real records).
  */
@@ -50,6 +53,8 @@ export default function Home() {
     const nav = useNavigate();
     const { data, loading, error, reload } = useHomeData(brand);
     const counts = useApi(`/articles/counts${qs({ brand: brand === 'all' ? undefined : brand })}`);
+    // Same address as the Shipping page's overview, so either page shows the other's answer at once.
+    const shipSummary = useApi(`/shipping/summary${qs({ brand: brand === 'all' ? undefined : brand })}`);
     const brands = me.brands;
     const showBrand = brand === 'all';
     const common = { brands, showBrand };
@@ -57,7 +62,8 @@ export default function Home() {
     if (loading || error) {
         return (<>
           <PageHead title="Home" sub={<>{brandLabel(brand, brands)} · last {data?.window?.days ?? 28} days</>}/>
-          <ErrorState error={error} onRetry={reload}/>
+          <SalesDashboard brand={brand !== 'all' ? brand : undefined} brands={me.brands}/>
+          <div className="mt-16"><ErrorState error={error} onRetry={reload}/></div>
           {loading ? <LoadingBlock rows={6}/> : null}
         </>);
     }
@@ -100,30 +106,10 @@ export default function Home() {
       <Greeting count={needs} parts={parts} calm="Nothing needs you today."
         actions={<><Link className="btn" href="/publishing"><Icon name="publish" size="sm"/>Publishing</Link><Link className="btn" href="/shipping"><Icon name="truck" size="sm"/>Shipping</Link></>}/>
 
-      <div className="ov-hero">
-        <RingCard label="Articles live on the storefront" total={live} onTotal={() => nav('/articles?live=1')}
-          pill={total ? { tone: 'neutral', label: `${fmtInt(total)} articles in total` } : null}
-          center={total ? `${Math.round((live / total) * 100)}%` : '—'} centerLabel="live"
-          segments={CONTENT_STAGES.map((s) => ({ key: s.key, name: s.label, value: n(s.statuses), color: s.color, onClick: () => toArticles(s.statuses) }))}/>
-        <MiniGrid>
-          <MiniStat label="Waiting for a decision" value={fmtInt(data.approvalsTotal)} tone={data.approvalsTotal ? 'warn' : undefined}
-            foot={data.approvalsTotal ? 'Reviews, publish requests, topics' : 'Nothing waiting'} onClick={() => nav('/publishing')}/>
-          <MiniStat label="Blog search clicks" value={oneBrand ? fmtCompact(clicks(brand)?.value) : `${fmtCompact(clicks('ridhi')?.value)} / ${fmtCompact(clicks('cpc')?.value)}`}
-            foot={oneBrand ? `Search Console, last ${data.window?.days ?? 28} days` : 'Ridhi / CPC, kept separate'} onClick={() => nav('/analytics')}/>
-          <MiniStat label="Delivery problems" value={ship ? fmtInt(ship.problems) : '—'} tone={ship?.problems ? 'crit' : undefined}
-            foot={ship ? `${fmtInt(ship.unverified)} with no carrier updates` : shipNote} onClick={() => nav('/shipping')}/>
-          <MiniStat label="Parcels on the way" value={ship ? fmtInt(ship.active) : '—'}
-            foot={ship ? `${fmtInt(ship.delivered30d)} delivered in 30 days` : shipNote} onClick={() => nav('/shipping')}/>
-        </MiniGrid>
+      <div className="grid main-side home-top">
+        <SalesDashboard brand={oneBrand ? brand : undefined} brands={brands}/>
+        <ShippingSnapshot ship={ship} summary={shipSummary.data} note={shipNote} loading={data.shipping?.loading} showBrand={showBrand} brands={brands} nav={nav}/>
       </div>
-
-      <Journey label="Article journey" steps={CONTENT_STAGES.map((s) => ({
-          key: s.key, label: s.label, value: counts.data ? n(s.statuses) : '…', done: s.key === 'published', onClick: () => toArticles(s.statuses),
-          calm: s.key === 'published' ? 'Live on the blog' : 'Nothing stuck',
-          flags: s.key === 'drafts' && sentBack ? [{ label: 'sent back', value: sentBack, tone: 'warn', onClick: () => toArticles(['changes_requested']) }]
-              : s.key === 'review' && data.approvalsTotal ? [{ label: 'waiting for you', value: data.approvalsTotal, tone: 'info', onClick: () => nav('/publishing') }]
-                  : s.key === 'published' && failedPublish ? [{ label: 'failed to publish', value: failedPublish, tone: 'crit', onClick: () => toArticles(['failed']) }] : [],
-      }))}/>
 
       <SectionHead title="Today&rsquo;s to-do" note="Decisions, alerts, failed runs and delivery problems, most serious first."
         action={<Link className="btn sm" href="/publishing">All decisions</Link>}/>
@@ -136,21 +122,34 @@ export default function Home() {
                 action={t.to ? <Link className="btn sm dark" href={t.to}>{t.action}</Link> : null}/>))}</Paged>)}
       </Card>
 
-      <More id="home" label="Show trends, shipping and the brand report">
-        <div className="grid main-side">
-          <Card title="Blog search clicks" sub="Daily clicks from Google search to blog pages, by brand" actions={<Link className="btn ghost sm" href="/analytics">Open SEO & traffic</Link>}>
+      <SectionHead title="SEO &amp; Blog" note="Content pipeline and blog search clicks."
+        action={<Link className="btn sm" href="/articles">Open Articles</Link>}/>
+      <div className="ov-hero">
+        <RingCard label="Articles live on the storefront" total={live} onTotal={() => nav('/articles?live=1')}
+          pill={total ? { tone: 'neutral', label: `${Math.round((live / total) * 100)}% of ${fmtInt(total)} articles live` } : null}
+          centerLabel="live"
+          segments={CONTENT_STAGES.map((s) => ({ key: s.key, name: s.label, value: n(s.statuses), color: s.color, onClick: () => toArticles(s.statuses) }))}/>
+        <MiniGrid>
+          <MiniStat label="Waiting for a decision" value={fmtInt(data.approvalsTotal)} tone={data.approvalsTotal ? 'warn' : undefined}
+            foot={data.approvalsTotal ? 'Reviews, publish requests, topics' : 'Nothing waiting'} onClick={() => nav('/publishing')}/>
+          <MiniStat label="Blog search clicks" value={oneBrand ? fmtCompact(clicks(brand)?.value) : `${fmtCompact(clicks('ridhi')?.value)} / ${fmtCompact(clicks('cpc')?.value)}`}
+            foot={oneBrand ? `Search Console, last ${data.window?.days ?? 28} days` : 'Ridhi / CPC, kept separate'} onClick={() => nav('/analytics')}/>
+        </MiniGrid>
+      </div>
+
+      <Journey label="Article journey" steps={CONTENT_STAGES.map((s) => ({
+          key: s.key, label: s.label, value: counts.data ? n(s.statuses) : '…', done: s.key === 'published', onClick: () => toArticles(s.statuses),
+          calm: s.key === 'published' ? 'Live on the blog' : 'Nothing stuck',
+          flags: s.key === 'drafts' && sentBack ? [{ label: 'sent back', value: sentBack, tone: 'warn', onClick: () => toArticles(['changes_requested']) }]
+              : s.key === 'review' && data.approvalsTotal ? [{ label: 'waiting for you', value: data.approvalsTotal, tone: 'info', onClick: () => nav('/publishing') }]
+                  : s.key === 'published' && failedPublish ? [{ label: 'failed to publish', value: failedPublish, tone: 'crit', onClick: () => toArticles(['failed']) }] : [],
+      }))}/>
+
+      <More id="home" label="Show blog trends and the brand report">
+        <Card title="Blog search clicks" sub="Daily clicks from Google search to blog pages, by brand" actions={<Link className="btn ghost sm" href="/analytics">Open SEO & traffic</Link>}>
             {data.trend?.length ? <LineChart ariaLabel="Daily blog search clicks by brand" height={230} series={data.trend.map((t) => ({ key: t.brand, label: brands.find((b) => b.id === t.brand)?.name ?? t.brand, color: BRAND_COLOR[t.brand], points: t.points }))}/>
               : <Empty icon="analytics" title="No trend yet">Daily figures appear once Search Console data is available.</Empty>}
           </Card>
-          <Card title="Shipping snapshot" sub={ship?.asOf ? `As of ${fmtDate(ship.asOf)}` : undefined} actions={<Link className="btn ghost sm" href="/shipping">Open Shipping</Link>}>
-            {ship ? (<div className="stat-row">
-                <div className="stat"><div className="v">{fmtInt(ship.active)}</div><div className="l">Parcels on the way</div></div>
-                <div className="stat"><div className="v">{fmtInt(ship.delivered30d)}</div><div className="l">Delivered (30 days)</div></div>
-                <div className={`stat ${ship.problems ? 'warn' : ''}`}><div className="v">{fmtInt(ship.problems)}</div><div className="l">Delivery problems</div></div>
-                <div className="stat"><div className="v">{fmtInt(ship.unverified)}</div><div className="l">No carrier updates</div></div>
-              </div>) : <Empty icon="truck" title={shipNote}>{data.shipping?.loading ? 'Shipping figures are being read and will show here shortly.' : 'Supabase is not set up or could not be reached. Open Shipping for details.'}</Empty>}
-          </Card>
-        </div>
         <h2 className="section-title">Report by brand</h2>
         <div className="card flush">
           <div className="table-wrap">
@@ -183,4 +182,33 @@ export default function Home() {
         </div>
       </More>
     </>);
+}
+
+/**
+ * Home's Shipping card, as tall as the Sales block beside it: the active parcels by age (ring and legend, from
+ * GET /api/shipping/summary), three headline numbers, and the oldest delivery problems (from GET /api/home).
+ */
+function ShippingSnapshot({ ship, summary, note, loading, showBrand, brands, nav }) {
+    const ages = summary ? ageSegments(summary.kpis, (cat) => nav(`/shipping?tab=shipments&cat=${cat}`)) : null;
+    const onTime = summary?.delivery30?.onTimePct;
+    const top = ship?.top ?? [];
+    return (<Card className="ship-snap" title="Shipping snapshot" sub={ship?.asOf ? `As of ${fmtDate(ship.asOf)}` : undefined}
+      actions={<Link className="btn ghost sm" href="/shipping">Open Shipping</Link>}>
+      {ship ? (<>
+          {ages?.total ? <RingBody compact segments={ages.segments} total={ages.total} centerLabel="active"/> : null}
+          <div className="stat-row">
+            <div className="stat"><div className="v">{fmtInt(ship.delivered30d)}</div><div className="l">Delivered (30 days)</div></div>
+            <div className="stat"><div className="v">{onTime === null || onTime === undefined ? '—' : `${onTime}%`}</div><div className="l">On time (30 days)</div></div>
+            <div className={`stat ${ship.problems ? 'alert' : ''}`}><div className="v">{fmtInt(ship.problems)}</div><div className="l">Delivery problems</div></div>
+          </div>
+          <div className="ship-snap-list">
+            <div className="ship-snap-head"><span>Oldest delivery problems</span>{ship.problems ? <Link className="link" href="/shipping?tab=checks">All {fmtInt(ship.problems)}</Link> : null}</div>
+            {top.length ? top.slice(0, 5).map((s) => (<Link key={s.trackingId} className="ship-row" href={`/shipping?tab=shipments&q=${encodeURIComponent(s.order ?? '')}`}>
+                <span className="o">{s.order}</span>
+                <span className="d">{s.days ?? '?'} d</span>
+                <span className="m">{s.carrier}{s.place ? ` · last seen ${s.place}` : ''}{showBrand && s.brand ? ` · ${brands.find((b) => b.id === s.brand)?.short ?? s.brand}` : ''}</span>
+              </Link>)) : <div className="muted small">No delivery problems right now.</div>}
+          </div>
+        </>) : <Empty icon="truck" title={note}>{loading ? 'Shipping figures are being read and will show here shortly.' : 'Supabase is not set up or could not be reached. Open Shipping for details.'}</Empty>}
+    </Card>);
 }

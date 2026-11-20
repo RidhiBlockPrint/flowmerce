@@ -75,6 +75,7 @@ def create_app() -> FastAPI:
 
     app.include_router(api)
     _include_shipping(app)   # must come before the /api catch-all below
+    _include_cro(app)        # likewise
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
     def api_not_found(rest: str):
@@ -92,6 +93,26 @@ def _include_shipping(app: FastAPI) -> None:
         print(f"Shipping module not loaded:\n{traceback.format_exc()}")
         return
     app.include_router(shipping)
+
+
+def _include_cro(app: FastAPI) -> None:
+    """Mount the CRO module's /api/cro routes. Kept independent like Shipping: if it cannot load, SEO and
+    Shipping still start."""
+    try:
+        from ..cro.api import cro
+    except Exception:  # noqa: BLE001 - a broken optional module must never stop SEO
+        print(f"CRO module not loaded:\n{traceback.format_exc()}")
+        return
+    app.include_router(cro)
+
+
+def _start_cro_scheduler() -> None:
+    try:
+        from ..cro import scheduler as cro_scheduler
+        if cro_scheduler.start():
+            print("CRO: copying Shopify orders and checking alarms in the background.")
+    except Exception:  # noqa: BLE001
+        print(f"CRO background job not started:\n{traceback.format_exc()}")
 
 
 def _start_shipping_refresher() -> None:
@@ -145,4 +166,5 @@ def startup(with_scheduler: bool = True) -> FastAPI:
         ai_jobs.start_runner()   # recovers interrupted AI jobs, then works through the queue; does nothing when AI execution is disabled
         app.router.add_event_handler("shutdown", ai_jobs.stop_runner)   # graceful: finish or hand back running jobs
         _start_shipping_refresher()
+        _start_cro_scheduler()
     return app

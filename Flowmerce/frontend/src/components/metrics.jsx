@@ -3,13 +3,14 @@ import Link from 'next/link';
 import { Delta, SourceBadge } from './ui';
 import { Icon } from './Icon';
 import { Sparkline } from './charts';
+import { CountUp } from './motion';
 import { fmtCompact, fmtDate, fmtInt, fmtPct, fmtPos, fmtSeconds, pctChange, timeAgo } from '../lib/format';
 export const BRAND_COLOR = { ridhi: 'var(--series-ridhi)', cpc: 'var(--series-cpc)' };
 export function Kpi({ label, value, delta, invert, foot, spark, na, icon }) {
     return (<div className="kpi">
       <div className="kpi-label">{icon ? <Icon name={icon} size="sm"/> : null}{label}</div>
       <div className="row" style={{ alignItems: 'flex-end', gap: 10 }}>
-        <div className={`kpi-value ${na ? 'na' : ''}`}>{value}</div>
+        <div className={`kpi-value ${na ? 'na' : ''}`}>{na ? value : <CountUp value={value}/>}</div>
         {spark && spark.length > 2 ? <div className="hide-sm" style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', justifyContent: 'flex-end', paddingBottom: 4 }}><Sparkline values={spark} width={72}/></div> : null}
       </div>
       <div className="kpi-foot">{delta !== undefined ? <Delta value={delta} invert={invert}/> : null}{foot}</div>

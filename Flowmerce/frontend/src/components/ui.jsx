@@ -98,9 +98,25 @@ export function LoadingBlock({ rows = 4 }) {
       {Array.from({ length: rows }, (_, i) => <Skeleton key={i} h={i === 0 ? 22 : 14} w={i === 0 ? '40%' : `${90 - i * 9}%`}/>)}
     </div>);
 }
+/**
+ * A page's tab bar. Tabs marked `advanced: true` (set up once, rarely opened) sit behind an "Advanced" toggle at the end
+ * of the bar, so the everyday tabs stay uncluttered; they show while one of them is open.
+ */
 export function Tabs({ tabs, value, onChange }) {
+    const daily = tabs.filter((t) => !t.advanced);
+    const advanced = tabs.filter((t) => t.advanced);
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    const open = showAdvanced || advanced.some((t) => t.key === value);
+    const tab = (t, cls = 'tab') => (<button key={t.key} role="tab" className={cls} aria-selected={t.key === value} onClick={() => onChange(t.key)}>{t.label}</button>);
     return (<div className="tabs" role="tablist">
-      {tabs.map((t) => (<button key={t.key} role="tab" className="tab" aria-selected={t.key === value} onClick={() => onChange(t.key)}>{t.label}</button>))}
+      {daily.map((t) => tab(t))}
+      {advanced.length ? (<>
+        <button type="button" className={`tab tab-toggle${open ? ' open' : ''}`} aria-expanded={open} onClick={() => setShowAdvanced((o) => !o)}
+          title={open ? 'Hide the advanced tabs' : `Advanced: ${advanced.map((t) => t.label).join(', ')}`}>
+          <Icon name="settings" size="sm"/>Advanced<Icon name={open ? 'chevronLeft' : 'chevronRight'} size="sm"/>
+        </button>
+        {open ? advanced.map((t) => tab(t, 'tab tab-adv')) : null}
+      </>) : null}
     </div>);
 }
 export function Field({ label, hint, children, counter, full }) {

@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flowmerce samples v3</title>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f7f5f2;--surface:#fff;--s2:#fbfaf8;--s3:#f3f0ec;--ink:#1e1a17;--ink2:#4a433d;--muted:#776e67;--faint:#a39a92;--line:#e7e1d9;
+--info:#2f5d8a;--info-soft:#e8f0f8;--ok:#2d6a3e;--ok-soft:#e7f2ea;--cpc:#7d6557;--cpc-soft:#f4ebe5;--cpc-ink:#634e42;--blush:#f1d3c1;--saffron:#efb34c;--saffron-soft:#fdf3e0;
+--crit:#b42318;--crit-soft:#fdecea;--ridhi:#850000;--ridhi-soft:#f9ebe9;--serif:'Libre Caslon Text',Georgia,serif;--sans:'Plus Jakarta Sans',system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px}
+button{font:inherit;color:inherit;cursor:pointer}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 70px}
+h1{font-family:var(--serif);font-weight:400;font-size:34px;margin:0 0 6px}h2{font-family:var(--serif);font-weight:400;font-size:26px;margin:0 0 4px}
+.lead{color:var(--muted);max-width:800px;line-height:1.55;margin:0 0 14px}
+.tag{display:inline-flex;gap:8px;align-items:center;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ok);margin:44px 0 6px}
+.tag b{background:var(--ok);color:#fff;border-radius:999px;width:22px;height:22px;display:grid;place-items:center;font-size:11px}
+.new{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}.new span{background:var(--ok-soft);color:var(--ok);border-radius:999px;padding:4px 11px;font-size:12px;font-weight:600}
+.new span:before{content:'+ '}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px 20px}
+.grid{display:grid;gap:14px}.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:900px){.g2,.g3{grid-template-columns:minmax(0,1fr)}}
+.label{font-size:12px;color:var(--muted);font-weight:600}.num{font-variant-numeric:tabular-nums}
+.rise{animation:rise .55s cubic-bezier(.2,.7,.2,1) both}@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+.d1{animation-delay:.07s}.d2{animation-delay:.14s}.d3{animation-delay:.21s}.d4{animation-delay:.28s}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 9px;font-size:11.5px;font-weight:700}
+.p-ok{background:var(--ok-soft);color:var(--ok)}.p-info{background:var(--info-soft);color:var(--info)}.p-crit{background:var(--crit-soft);color:var(--crit)}.p-warn{background:var(--saffron-soft);color:#8a5a08}
+.seg{display:inline-flex;background:var(--s3);border-radius:10px;padding:3px;gap:2px}.seg button{border:0;background:none;padding:6px 12px;border-radius:8px;font-size:12.5px;font-weight:600;color:var(--muted);transition:background .15s,color .15s}
+.seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(30,26,23,.12)}
+.up{color:var(--ok);font-weight:700;font-size:12px}.down{color:var(--crit);font-weight:700;font-size:12px}
+@keyframes grow{from{transform:scaleX(0)}}@keyframes pop{from{transform:scale(.5);opacity:0}}
+/* ===== 1 ===== */
+.top{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px}@media(max-width:900px){.top{grid-template-columns:minmax(0,1fr)}}
+.score{background:linear-gradient(135deg,var(--info-soft),#fff 55%,var(--ok-soft));border:1px solid var(--line);border-radius:22px;padding:22px 24px;position:relative;overflow:hidden}
+.score-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:22px;align-items:center}
+.big{font-family:var(--serif);font-size:46px;line-height:1.05;margin:4px 0}
+.goal{margin-top:16px}.goal-bar{position:relative;height:12px;border-radius:6px;background:rgba(47,93,138,.12);overflow:visible}
+.goal-fill{position:absolute;inset:0 auto 0 0;border-radius:6px;background:linear-gradient(90deg,var(--info),var(--ok));transform-origin:left;animation:grow 1.2s cubic-bezier(.2,.7,.2,1) .3s both}
+.goal-pace{position:absolute;top:-5px;bottom:-5px;width:2px;background:var(--ink)}.goal-pace span{position:absolute;top:-20px;left:-24px;font-size:10.5px;color:var(--ink2);white-space:nowrap}
+.goal-meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:8px}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.tile{border-radius:16px;padding:14px 16px;border:1px solid var(--line);position:relative;overflow:hidden;transition:transform .18s,box-shadow .18s}
+.tile:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(30,26,23,.08)}
+.tile b{display:block;font-size:26px;margin-top:2px}.tile svg{position:absolute;right:10px;bottom:12px}
+.tile .tip{position:absolute;left:12px;right:12px;bottom:8px;background:var(--ink);color:#fff;font-size:11.5px;padding:6px 9px;border-radius:8px;opacity:0;transform:translateY(6px);transition:.18s}
+.tile:hover .tip{opacity:1;transform:none}
+.t-info{background:var(--info-soft)}.t-ok{background:var(--ok-soft)}.t-blush{background:#fbefe6}.t-sun{background:var(--saffron-soft)}
+.line{stroke-dasharray:300;stroke-dashoffset:300;animation:dash 1.4s ease .3s forwards}@keyframes dash{to{stroke-dashoffset:0}}
+.journey{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:22px;margin-top:14px}@media(max-width:900px){.journey{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.step{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;gap:12px;align-items:center}
+.step:not(:last-child):after{content:'';position:absolute;right:-17px;top:50%;width:12px;height:12px;border-top:2px solid var(--faint);border-right:2px solid var(--faint);transform:translateY(-50%) rotate(45deg)}
+.step b{font-size:21px;display:block}.drop{font-size:11.5px;font-weight:700;color:var(--crit)}
+.todo-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.todo{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 16px;transition:opacity .25s,background .25s}
+.todo.done{opacity:.55;background:var(--s2)}.todo.done b{text-decoration:line-through}
+.check{width:26px;height:26px;border-radius:8px;border:2px solid var(--line);background:#fff;display:grid;place-items:center;color:#fff;transition:.2s}
+.todo.done .check{background:var(--ok);border-color:var(--ok);animation:pop .3s cubic-bezier(.2,.7,.2,1.5)}
+.gain{font-size:12px;font-weight:700;color:var(--ok);white-space:nowrap}
+.celebrate{display:none;margin-top:10px;padding:10px 14px;border-radius:12px;background:var(--ok-soft);color:var(--ok);font-weight:700;animation:rise .4s both}
+/* ===== 2 ===== */
+.health{display:grid;grid-template-columns:auto minmax(0,1fr);gap:20px;align-items:center}
+.hbars{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}@media(max-width:900px){.hbars{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.hb{background:var(--s2);border:1px solid var(--line);border-radius:12px;padding:10px 12px}.hb .bar{height:6px;border-radius:3px;background:var(--s3);margin-top:8px;overflow:hidden}
+.hb .bar span{display:block;height:100%;border-radius:3px;transform-origin:left;animation:grow 1s cubic-bezier(.2,.7,.2,1) .2s both}
+.chart-wrap{position:relative}.ttip{position:absolute;pointer-events:none;background:var(--ink);color:#fff;font-size:12px;padding:7px 10px;border-radius:9px;transform:translate(-50%,-115%);white-space:nowrap;opacity:0;transition:opacity .12s}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin:8px 0 6px;flex-wrap:wrap}.legend i{display:inline-block;width:16px;height:6px;border-radius:3px;vertical-align:middle;margin-right:6px}
+.segrow{display:grid;grid-template-columns:78px minmax(0,1fr) 62px;gap:10px;align-items:center;margin:10px 0;font-size:13px}
+.stack{display:flex;height:18px;border-radius:9px;overflow:hidden;background:var(--s3);gap:2px}.stack span{transform-origin:left;animation:grow .9s cubic-bezier(.2,.7,.2,1) both;position:relative;transition:filter .15s}
+.stack span:hover{filter:brightness(1.15)}
+.sweep{stroke-dasharray:157;stroke-dashoffset:157;animation:sweep 1.3s cubic-bezier(.2,.7,.2,1) .3s forwards}@keyframes sweep{to{stroke-dashoffset:var(--to)}}
+/* ===== 3 ===== */
+.lane-event{--bg:var(--saffron-soft);--fg:#8a5a08;--c:var(--saffron)}.lane-due{--bg:var(--crit-soft);--fg:var(--crit);--c:var(--crit)}
+.lane-research{--bg:var(--info-soft);--fg:var(--info);--c:var(--info)}.lane-draft{--bg:var(--cpc-soft);--fg:var(--cpc-ink);--c:var(--cpc)}
+.lane-live{--bg:var(--ok-soft);--fg:var(--ok);--c:var(--ok)}.lane-auto{--bg:var(--ridhi-soft);--fg:var(--ridhi);--c:var(--ridhi)}
+.calbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px}
+.filters{display:flex;flex-wrap:wrap;gap:6px}.f{border:1px solid transparent;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;background:var(--bg);color:var(--fg);transition:opacity .15s,border-color .15s}
+.f.off{opacity:.35}.f:hover{border-color:var(--c)}
+.calwrap{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:14px}@media(max-width:980px){.calwrap{grid-template-columns:minmax(0,1fr)}}
+.week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.wh{font-size:11px;font-weight:700;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;padding:0 4px}
+.day{min-height:112px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:7px;display:flex;flex-direction:column;gap:4px;text-align:left;transition:transform .15s,box-shadow .15s,border-color .15s}
+.day:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(30,26,23,.08)}.day.sel{border:2px solid var(--info);padding:6px;box-shadow:0 0 0 4px var(--info-soft)}
+.day.today .dn{color:#fff;background:var(--ink);border-radius:6px;padding:0 6px}.dn{font-weight:700;font-size:12px;align-self:flex-start}
+.day .load{margin-top:auto;height:4px;border-radius:2px;background:var(--s3);overflow:hidden}.day .load span{display:block;height:100%;background:var(--info);border-radius:2px}
+.chip{display:flex;align-items:center;gap:5px;border-radius:7px;padding:4px 7px;font-size:11px;font-weight:600;line-height:1.25;background:var(--bg);color:var(--fg);transition:opacity .2s,transform .2s,box-shadow .2s;animation:pop .35s cubic-bezier(.2,.7,.2,1.3) both}
+.chip .dot{width:7px;height:7px;border-radius:50%;flex:none}.ridhi{background:var(--ridhi)}.cpc{background:#a2836f}
+.chip.dim{opacity:.18}.chip.hl{box-shadow:0 0 0 2px var(--c);transform:scale(1.03)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;position:sticky;top:12px;align-self:start}
+.panel h3{font-family:var(--serif);font-weight:400;font-size:20px;margin:0 0 2px}
+.sec-l{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin:14px 0 8px}
+.tl{position:relative;padding-left:22px}.tl:before{content:'';position:absolute;left:7px;top:4px;bottom:4px;width:2px;background:var(--line)}
+.tli{position:relative;margin-bottom:10px;animation:rise .35s both}.tli:before{content:'';position:absolute;left:-19px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--c);box-shadow:0 0 0 3px #fff}
+.tli .t{font-size:11px;color:var(--muted);font-weight:700}.tli b{display:block;font-size:13px}
+.chain{display:flex;align-items:center;gap:4px;margin-top:6px}.chain span{height:6px;flex:1;border-radius:3px;background:var(--s3)}.chain span.on{background:var(--c)}
+.mini-form{display:grid;gap:8px}.mini-form .opts{display:flex;flex-wrap:wrap;gap:6px}.opt{border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 10px;font-size:12.5px;font-weight:600}
+.opt.on{border-color:var(--info);background:var(--info-soft);color:var(--info)}
+.go{border:0;background:var(--ink);color:#fff;border-radius:10px;padding:9px 12px;font-weight:700}
+.note{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.5}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;stroke-dashoffset:0!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Samples, round 3</h1>
+  <p class="lead">Each one builds on what you picked last time: the "store pulse" Overview, the recoloured charts, and the colour-lane calendar now in the app. The green "+" tags list what's new. Everything you can click here works: tabs, toggles, hover, ticking off actions, picking a day. Figures are copied from your screenshots or made up for the sample.</p>
+
+  <!-- =============== 1 =============== -->
+  <div class="tag"><b>1</b>CRO Overview: store pulse, with a goal and a to-do list</div>
+  <h2>See how far you are from this month's goal, then tick off what to do</h2>
+  <div class="new"><span>Monthly goal bar with today's pace mark</span><span>This month / last month switch</span><span>Hover a tile for what it means</span><span>Each journey step shows its own rate</span><span>Tick actions off, with a "well done" line</span></div>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><div class="seg" id="period"><button class="on" data-p="now">This month</button><button data-p="last">Last month</button></div></div>
+  <div class="top">
+    <div class="score rise">
+      <div class="score-row">
+        <svg viewBox="0 0 160 160" width="160" height="160" aria-label="Visits, carts and orders">
+          <circle cx="80" cy="80" r="70" fill="none" stroke="#e8f0f8" stroke-width="12"/><circle cx="80" cy="80" r="70" fill="none" stroke="#2f5d8a" stroke-width="12" stroke-linecap="round" stroke-dasharray="440 440" transform="rotate(-90 80 80)"/>
+          <circle cx="80" cy="80" r="52" fill="none" stroke="#e7f2ea" stroke-width="12"/><circle class="line" cx="80" cy="80" r="52" fill="none" stroke="#2d6a3e" stroke-width="12" stroke-linecap="round" stroke-dasharray="180 327" transform="rotate(-90 80 80)"/>
+          <circle cx="80" cy="80" r="34" fill="none" stroke="#fdf3e0" stroke-width="12"/><circle class="line" cx="80" cy="80" r="34" fill="none" stroke="#efb34c" stroke-width="12" stroke-linecap="round" stroke-dasharray="78 214" transform="rotate(-90 80 80)"/>
+          <text x="80" y="78" text-anchor="middle" font-size="20" font-weight="700" fill="#1e1a17" id="cvr">2.03%</text><text x="80" y="95" text-anchor="middle" font-size="10" fill="#776e67">convert</text>
+        </svg>
+        <div>
+          <span class="pill p-ok" id="mood">✓ Ahead of last month</span>
+          <div class="big num" id="rev">$129,930</div>
+          <div class="label" id="revsub">Revenue, 1–20 Nov · <span class="up">▲ 11.0%</span></div>
+        </div>
+      </div>
+      <div class="goal">
+        <div class="label" style="margin-bottom:22px">Goal for November: <b style="color:var(--ink)">$190,000</b></div>
+        <div class="goal-bar"><div class="goal-fill" id="goalfill" style="width:68%"></div><div class="goal-pace" style="left:66%"><span>Today's pace</span></div></div>
+        <div class="goal-meta"><span id="goaltxt">68% reached, 2 pts ahead of pace</span><span>10 days left</span></div>
+      </div>
+    </div>
+    <div class="tiles">
+      <div class="tile t-info rise d1"><span class="label">Orders</span><b class="num" id="t1">1,138</b><span class="up" id="t1d">▲ 23.3%</span>
+        <svg viewBox="0 0 90 34" width="90" height="34"><path class="line" d="M2,28 L15,24 L28,26 L41,18 L54,20 L67,10 L88,6" fill="none" stroke="#2f5d8a" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <div class="tip">Paid orders placed in the period</div></div>
+      <div class="tile t-ok rise d2"><span class="label">Conversion</span><b class="num" id="t2">2.03%</b><span class="up" id="t2d">▲ 40.0%</span>
+        <svg viewBox="0 0 90 34" width="90" height="34"><path class="line" d="M2,30 L15,26 L28,22 L41,24 L54,14 L67,12 L88,8" fill="none" stroke="#2d6a3e" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <div class="tip">Visits that ended in an order</div></div>
+      <div class="tile t-blush rise d3"><span class="label">Average order</span><b class="num" id="t3">$114.17</b><span class="down" id="t3d">▼ 10.0%</span>
+        <svg viewBox="0 0 90 34" width="90" height="34"><path class="line" d="M2,8 L15,10 L28,9 L41,16 L54,14 L67,22 L88,24" fill="none" stroke="#7d6557" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <div class="tip">Revenue ÷ orders. Bundles lift this</div></div>
+      <div class="tile t-sun rise d4"><span class="label">Sessions</span><b class="num" id="t4">51,001</b><span class="label">visits</span>
+        <svg viewBox="0 0 90 34" width="90" height="34"><path class="line" d="M2,24 L15,20 L28,22 L41,16 L54,18 L67,12 L88,14" fill="none" stroke="#b07a1e" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <div class="tip">Store visits from every channel</div></div>
+    </div>
+  </div>
+  <div class="journey">
+    <div class="step rise d1"><svg width="46" height="46" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.9" fill="none" stroke="#e8f0f8" stroke-width="4"/><circle class="line" cx="18" cy="18" r="15.9" fill="none" stroke="#2f5d8a" stroke-width="4" stroke-dasharray="100 100" transform="rotate(-90 18 18)"/></svg>
+      <div><span class="label">Visited</span><b class="num">51,001</b><span class="drop">48,162 left</span></div></div>
+    <div class="step rise d2"><svg width="46" height="46" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.9" fill="none" stroke="#e8f0f8" stroke-width="4"/><circle class="line" cx="18" cy="18" r="15.9" fill="none" stroke="#4f7aa6" stroke-width="4" stroke-dasharray="5.6 94.4" transform="rotate(-90 18 18)"/><text x="18" y="21" text-anchor="middle" font-size="8" font-weight="700" fill="#1e1a17">5.6%</text></svg>
+      <div><span class="label">Added to cart</span><b class="num">2,839</b><span class="drop">1,324 left</span></div></div>
+    <div class="step rise d3"><svg width="46" height="46" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.9" fill="none" stroke="#e7f2ea" stroke-width="4"/><circle class="line" cx="18" cy="18" r="15.9" fill="none" stroke="#3f7d58" stroke-width="4" stroke-dasharray="53 47" transform="rotate(-90 18 18)"/><text x="18" y="21" text-anchor="middle" font-size="8" font-weight="700" fill="#1e1a17">53%</text></svg>
+      <div><span class="label">Reached checkout</span><b class="num">1,515</b><span class="drop">480 left</span></div></div>
+    <div class="step rise d4"><svg width="46" height="46" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.9" fill="none" stroke="#e7f2ea" stroke-width="4"/><circle class="line" cx="18" cy="18" r="15.9" fill="none" stroke="#2d6a3e" stroke-width="4" stroke-dasharray="68 32" transform="rotate(-90 18 18)"/><text x="18" y="21" text-anchor="middle" font-size="8" font-weight="700" fill="#1e1a17">68%</text></svg>
+      <div><span class="label">Bought</span><b class="num">1,035</b><span class="pill p-ok">2.03% of visits</span></div></div>
+  </div>
+  <p class="note">The small ring on each step is the share of the step before that made it through: 53% of carts reached checkout, 68% of checkouts paid.</p>
+  <div class="todo-list" id="todos">
+    <div class="todo"><button class="check" aria-label="Mark done">✓</button><div><b>Send abandoned-checkout emails before Black Friday</b><div class="label">730 shoppers reached checkout and left</div></div><span class="pill p-ok">High</span><span class="gain">≈ +36 orders</span></div>
+    <div class="todo"><button class="check" aria-label="Mark done">✓</button><div><b>Restock the quilts that stopped selling</b><div class="label">Aquamarine Blue Quilt: 8 sold → 0 this week</div></div><span class="pill p-ok">High</span><span class="gain">≈ +8 a week</span></div>
+    <div class="todo"><button class="check" aria-label="Mark done">✓</button><div><b>Make product pages easier on phones</b><div class="label">Social visitors convert at 1.35%, desktop 2.67%</div></div><span class="pill p-info">Medium</span><span class="gain">mobile → 1.7%</span></div>
+  </div>
+  <div class="celebrate" id="cheer">All three done this week. Claude checks the effect in 7 days.</div>
+
+  <!-- =============== 2 =============== -->
+  <div class="tag"><b>2</b>Conversion and Cart &amp; checkout: one health score, live charts</div>
+  <h2>One "checkout health" score up top, and a chart you can read by hovering</h2>
+  <div class="new"><span>Checkout health score from 4 checks</span><span>7 / 30 / 90 days switch</span><span>Hover the chart for each day</span><span>Hover a split bar for its share</span><span>Best and worst day marked</span></div>
+  <div class="card rise">
+    <div class="health">
+      <svg viewBox="0 0 120 70" width="170"><path d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#f3f0ec" stroke-width="12" stroke-linecap="round"/>
+        <path class="sweep" style="--to:42" d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#2d6a3e" stroke-width="12" stroke-linecap="round"/>
+        <text x="60" y="52" text-anchor="middle" font-size="22" font-weight="700" fill="#1e1a17">73</text><text x="60" y="64" text-anchor="middle" font-size="8.5" fill="#776e67">of 100 · good</text></svg>
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><b style="font-size:16px">Checkout health</b><span class="pill p-ok">▲ 6 points vs last month</span></div>
+        <div class="hbars" style="margin-top:10px">
+          <div class="hb"><span class="label">Cart kept</span><div class="num"><b>37%</b> <span class="up">ahead</span></div><div class="bar"><span style="width:82%;background:var(--ok)"></span></div></div>
+          <div class="hb"><span class="label">Checkout finished</span><div class="num"><b>70%</b> <span class="up">ahead</span></div><div class="bar"><span style="width:94%;background:var(--ok)"></span></div></div>
+          <div class="hb"><span class="label">Visit to cart</span><div class="num"><b>5.6%</b> <span class="down">behind</span></div><div class="bar"><span style="width:48%;background:var(--crit)"></span></div></div>
+          <div class="hb"><span class="label">Mobile vs desktop</span><div class="num"><b>78%</b> <span class="label">of desktop</span></div><div class="bar"><span style="width:66%;background:var(--info)"></span></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card rise d2">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><b>Conversion rate by day</b><div class="seg" id="range"><button data-r="7">7 days</button><button class="on" data-r="30">30 days</button><button data-r="90">90 days</button></div></div>
+      <div class="legend"><span><i style="background:#2f5d8a"></i>Conversion</span><span><i style="background:#e7f2ea"></i>Typical range</span><span><i style="background:#2d6a3e;width:8px;height:8px;border-radius:50%"></i>Best day</span><span><i style="background:#b42318;width:8px;height:8px;border-radius:50%"></i>Worst day</span></div>
+      <div class="chart-wrap" id="cw"><svg id="chart" viewBox="0 0 520 210" style="width:100%;height:auto;display:block"></svg><div class="ttip" id="tt"></div></div>
+    </div>
+    <div class="card rise d3"><b>Who converts</b>
+      <div class="segrow"><span>Mobile</span><div class="stack"><span title="Social 62%" style="width:62%;background:#2f5d8a"></span><span title="Search 30%" style="width:30%;background:#2d6a3e;animation-delay:.1s"></span><span title="Direct 8%" style="width:8%;background:#7d6557;animation-delay:.2s"></span></div><span class="num"><b>2.09%</b></span></div>
+      <div class="segrow"><span>Desktop</span><div class="stack"><span title="Social 38%" style="width:38%;background:#2f5d8a"></span><span title="Search 52%" style="width:52%;background:#2d6a3e;animation-delay:.1s"></span><span title="Direct 10%" style="width:10%;background:#7d6557;animation-delay:.2s"></span></div><span class="num"><b>2.67%</b></span></div>
+      <div class="segrow"><span>Tablet</span><div class="stack"><span title="Social 45%" style="width:45%;background:#2f5d8a"></span><span title="Search 40%" style="width:40%;background:#2d6a3e;animation-delay:.1s"></span><span title="Direct 15%" style="width:15%;background:#7d6557;animation-delay:.2s"></span></div><span class="num"><b>1.91%</b></span></div>
+      <div class="legend"><span><i style="background:#2f5d8a"></i>Social</span><span><i style="background:#2d6a3e"></i>Search</span><span><i style="background:#7d6557"></i>Direct</span></div>
+      <div style="display:flex;gap:10px;align-items:flex-start;background:var(--saffron-soft);border-radius:12px;padding:10px 12px;margin-top:8px">
+        <span class="pill" style="background:#efb34c;color:#1e1a17">!</span>
+        <div><b>Search converts best on desktop (2.9%)</b><div class="label" style="margin-top:3px">Point Google Shopping ads at desktop first while mobile pages are improved.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =============== 3 =============== -->
+  <div class="tag"><b>3</b>Content calendar: filters, the day panel beside it, one blog's chain</div>
+  <h2>Filter by type or brand, pick a day, follow a blog from research to live</h2>
+  <div class="new"><span>Filter chips by type and brand</span><span>Day panel beside the calendar, not over it</span><span>The day as a timeline with times</span><span>Hover a chip to light up its whole chain</span><span>How full each day is, as a bar</span></div>
+  <div class="card rise">
+    <div class="calbar">
+      <div class="filters" id="filters">
+        <button class="f lane-event" data-l="event">★ Event</button><button class="f lane-research" data-l="research">Research</button><button class="f lane-draft" data-l="draft">Draft</button>
+        <button class="f lane-live" data-l="live">Goes live</button><button class="f lane-auto" data-l="auto">Automatic blog</button><button class="f lane-due" data-l="due">Publish by</button>
+        <button class="f" style="--bg:#fff;--fg:var(--ink2);--c:var(--ridhi);border-color:var(--line)" data-b="ridhi"><span class="dot ridhi" style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px"></span>Ridhi</button>
+        <button class="f" style="--bg:#fff;--fg:var(--ink2);--c:#a2836f;border-color:var(--line)" data-b="cpc"><span class="dot cpc" style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px"></span>CPC</button>
+      </div>
+      <div class="seg"><button>Month</button><button class="on">2 weeks</button><button>Agenda</button></div>
+    </div>
+    <div class="calwrap">
+      <div>
+        <div class="week" id="week"></div>
+        <p class="note">Hover "Quilt care" to see its research, draft and go-live light up together.</p>
+      </div>
+      <aside class="panel" id="panel"></aside>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var $ = function(s, r){ return (r || document).querySelector(s); }, $$ = function(s, r){ return [].slice.call((r || document).querySelectorAll(s)); };
+  /* ---- 1: period switch, todos ---- */
+  var P = { now: { rev: '$129,930', sub: 'Revenue, 1–20 Nov · <span class="up">▲ 11.0%</span>', cvr: '2.03%', mood: '✓ Ahead of last month', goal: '68%', gt: '68% reached, 2 pts ahead of pace', t: ['1,138','2.03%','$114.17','51,001'], d: ['▲ 23.3%','▲ 40.0%','▼ 10.0%'] },
+            last: { rev: '$184,220', sub: 'Revenue, October · <span class="down">▼ 3.2%</span>', cvr: '0.90%', mood: '• Goal missed by 3%', goal: '97%', gt: '97% of the $190,000 goal', t: ['1,614','0.90%','$114.14','163,125'], d: ['▼ 3.7%','▼ 49.7%','▲ 4.9%'] } };
+  $$('#period button').forEach(function(b){ b.onclick = function(){
+    $$('#period button').forEach(function(x){ x.classList.toggle('on', x === b); });
+    var p = P[b.dataset.p];
+    $('#rev').textContent = p.rev; $('#revsub').innerHTML = p.sub; $('#cvr').textContent = p.cvr; $('#mood').textContent = p.mood;
+    $('#mood').className = 'pill ' + (b.dataset.p === 'now' ? 'p-ok' : 'p-warn');
+    var g = $('#goalfill'); g.style.animation = 'none'; g.offsetWidth; g.style.width = p.goal; g.style.animation = ''; $('#goaltxt').textContent = p.gt;
+    ['t1','t2','t3','t4'].forEach(function(id, i){ $('#' + id).textContent = p.t[i]; });
+    ['t1d','t2d','t3d'].forEach(function(id, i){ var el = $('#' + id); el.textContent = p.d[i]; el.className = p.d[i][0] === '▲' ? (i === 2 ? 'up' : 'up') : 'down'; });
+  }; });
+  $$('#todos .todo').forEach(function(t){ $('.check', t).onclick = function(){ t.classList.toggle('done'); $('#cheer').style.display = $$('#todos .todo.done').length === 3 ? 'block' : 'none'; }; });
+  /* ---- 2: chart with range switch and hover ---- */
+  function series(n){ var s = [], seed = n * 7; for (var i = 0; i < n; i++){ seed = (seed * 9301 + 49297) % 233280; var r = seed / 233280; s.push(+(1.1 + Math.sin(i / 3) * 0.35 + r * 0.7 + (i === 2 && n > 7 ? -0.9 : 0)).toFixed(2)); } return s; }
+  function draw(n){
+    var d = series(n), W = 520, H = 210, L = 34, T = 10, B = 24, iw = W - L - 8, ih = H - T - B, max = 3;
+    var x = function(i){ return L + (n === 1 ? iw / 2 : i / (n - 1) * iw); }, y = function(v){ return T + ih - v / max * ih; };
+    var pts = d.map(function(v, i){ return x(i).toFixed(1) + ',' + y(v).toFixed(1); });
+    var hi = d.indexOf(Math.max.apply(null, d)), lo = d.indexOf(Math.min.apply(null, d));
+    var grid = [0,1,2,3].map(function(v){ return '<line x1="' + L + '" x2="' + (W - 8) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="#f0ebe5"/><text x="' + (L - 6) + '" y="' + (y(v) + 4) + '" font-size="10" fill="#a39a92" text-anchor="end">' + v + '%</text>'; }).join('');
+    $('#chart').innerHTML = '<defs><linearGradient id="g3" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#2f5d8a" stop-opacity=".28"/><stop offset="1" stop-color="#2f5d8a" stop-opacity="0"/></linearGradient></defs>'
+      + '<rect x="' + L + '" y="' + y(2.5) + '" width="' + iw + '" height="' + (y(1.5) - y(2.5)) + '" fill="#e7f2ea"/>' + grid
+      + '<path d="M' + pts.join(' L') + ' L' + x(n - 1) + ',' + y(0) + ' L' + x(0) + ',' + y(0) + 'Z" fill="url(#g3)" style="animation:rise .6s both"/>'
+      + '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#2f5d8a" stroke-width="2.5" stroke-linejoin="round" style="stroke-dasharray:2000;stroke-dashoffset:2000;animation:dash 1.2s ease forwards"/>'
+      + '<circle cx="' + x(hi) + '" cy="' + y(d[hi]) + '" r="5" fill="#2d6a3e" stroke="#fff" stroke-width="2"/><circle cx="' + x(lo) + '" cy="' + y(d[lo]) + '" r="5" fill="#b42318" stroke="#fff" stroke-width="2"/>'
+      + '<line id="xh" y1="' + T + '" y2="' + (T + ih) + '" stroke="#1e1a17" stroke-dasharray="3 3" opacity="0"/><circle id="xd" r="5" fill="#2f5d8a" stroke="#fff" stroke-width="2" opacity="0"/>'
+      + '<rect x="' + L + '" y="0" width="' + iw + '" height="' + H + '" fill="transparent" id="hit"/>';
+    var tt = $('#tt'), cw = $('#cw');
+    $('#hit').onmousemove = function(e){
+      var r = $('#chart').getBoundingClientRect(), px = (e.clientX - r.left) / r.width * W, i = Math.max(0, Math.min(n - 1, Math.round((px - L) / iw * (n - 1))));
+      $('#xh').setAttribute('x1', x(i)); $('#xh').setAttribute('x2', x(i)); $('#xh').setAttribute('opacity', 1);
+      $('#xd').setAttribute('cx', x(i)); $('#xd').setAttribute('cy', y(d[i])); $('#xd').setAttribute('opacity', 1);
+      tt.innerHTML = '<b>Day ' + (i + 1) + '</b> · ' + d[i].toFixed(2) + '%' + (i === hi ? ' · best' : i === lo ? ' · worst' : '');
+      tt.style.left = (x(i) / W * r.width) + 'px'; tt.style.top = (y(d[i]) / H * r.height) + 'px'; tt.style.opacity = 1;
+    };
+    $('#hit').onmouseleave = function(){ tt.style.opacity = 0; $('#xh').setAttribute('opacity', 0); $('#xd').setAttribute('opacity', 0); };
+  }
+  $$('#range button').forEach(function(b){ b.onclick = function(){ $$('#range button').forEach(function(x){ x.classList.toggle('on', x === b); }); draw(+b.dataset.r); }; });
+  draw(30);
+  /* ---- 3: calendar ---- */
+  var days = ['Mon 16','Tue 17','Wed 18','Thu 19','Fri 20','Sat 21','Sun 22','Mon 23','Tue 24','Wed 25','Thu 26','Fri 27','Sat 28','Sun 29'];
+  var items = {
+    4: [['research','ridhi','Research · New Year’s Eve','nye','09:00']],
+    5: [['due','','Publish by · Winter begins','','—'],['research','ridhi','Research · Quilt care','qc','09:00']],
+    7: [['draft','ridhi','Draft · New Year’s Eve','nye','09:00']],
+    8: [['auto','cpc','Automatic blog · Christmas stockings','cs','10:00'],['auto','ridhi','Automatic blog · Layer a bed for winter','lb','10:00'],['draft','ridhi','Draft · Quilt care','qc','11:00']],
+    10: [['event','','★ Thanksgiving','','all day']],
+    11: [['event','','★ Black Friday','','all day'],['live','ridhi','Goes live · Quilt care','qc','10:00'],['auto','cpc','Automatic blog · planned','','10:00']],
+    13: [['live','ridhi','Goes live · New Year’s Eve','nye','10:00']]
+  };
+  var hidden = {}, hiddenB = {}, sel = 8, today = 4;
+  var wk = $('#week');
+  wk.innerHTML = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(function(d){ return '<div class="wh">' + d + '</div>'; }).join('')
+    + days.map(function(d, i){
+      var it = items[i] || [];
+      return '<button class="day' + (i === today ? ' today' : '') + (i === sel ? ' sel' : '') + '" data-i="' + i + '"><span class="dn">' + d.split(' ')[1] + '</span>'
+        + it.map(function(c, k){ return '<span class="chip lane-' + c[0] + '" data-l="' + c[0] + '" data-b="' + c[1] + '" data-k="' + c[3] + '" style="animation-delay:' + (i * 30 + k * 50) + 'ms">' + (c[1] ? '<span class="dot ' + c[1] + '"></span>' : '') + c[2] + '</span>'; }).join('')
+        + '<span class="load"><span style="width:' + Math.min(100, it.length * 34) + '%"></span></span></button>';
+    }).join('');
+  function apply(){ $$('.chip', wk).forEach(function(c){ c.classList.toggle('dim', !!hidden[c.dataset.l] || !!hiddenB[c.dataset.b]); }); }
+  $$('#filters .f').forEach(function(f){ f.onclick = function(){ if (f.dataset.l) hidden[f.dataset.l] = !hidden[f.dataset.l]; else hiddenB[f.dataset.b] = !hiddenB[f.dataset.b]; f.classList.toggle('off'); apply(); }; });
+  $$('.chip', wk).forEach(function(c){ c.onmouseenter = function(){ if (!c.dataset.k) return; $$('.chip[data-k="' + c.dataset.k + '"]', wk).forEach(function(x){ x.classList.add('hl'); }); };
+    c.onmouseleave = function(){ $$('.chip.hl', wk).forEach(function(x){ x.classList.remove('hl'); }); }; });
+  var chainOf = { qc: ['Research 21 Nov','Draft 24 Nov','Live 27 Nov'], nye: ['Research 20 Nov','Draft 23 Nov','Live 29 Nov'], cs: ['Topic 19 Nov','Written 20 Nov','Live 24 Nov'], lb: ['Topic 19 Nov','Written 20 Nov','Live 24 Nov'] };
+  function panel(i){
+    var it = items[i] || [];
+    var h = '<h3>' + days[i].replace('Mon','Monday').replace('Tue','Tuesday').replace('Wed','Wednesday').replace('Thu','Thursday').replace('Fri','Friday').replace('Sat','Saturday').replace('Sun','Sunday') + ' November</h3>'
+      + '<div class="label">' + (it.length ? it.length + ' thing' + (it.length > 1 ? 's' : '') + ' Flowmerce does this day' : 'Nothing planned yet') + '</div>'
+      + '<div class="sec-l">What Flowmerce does</div><div class="tl">'
+      + (it.length ? it.map(function(c, k){
+          var ch = chainOf[c[3]], step = c[0] === 'research' ? 1 : c[0] === 'draft' ? 2 : 3;
+          return '<div class="tli lane-' + c[0] + '" style="animation-delay:' + k * 70 + 'ms"><span class="t">' + c[4] + '</span><b>' + c[2] + '</b>'
+            + (ch ? '<div class="label">' + ch.join(' → ') + '</div><div class="chain"><span class="on"></span><span class="' + (step > 1 ? 'on' : '') + '"></span><span class="' + (step > 2 ? 'on' : '') + '"></span></div>' : '')
+            + '</div>'; }).join('') : '<div class="label" style="padding:8px 0">A free day: a good one for research.</div>')
+      + '</div><div class="sec-l">Schedule another task</div><div class="mini-form"><div class="opts"><button class="opt on">Research topics</button><button class="opt">Write draft</button><button class="opt">Publish request</button></div>'
+      + '<div class="opts"><button class="opt on"><span class="dot ridhi" style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px"></span>Ridhi</button><button class="opt"><span class="dot cpc" style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px"></span>CPC</button></div>'
+      + '<button class="go">Add to ' + days[i] + ' Nov</button><div class="label">About $0.40 of today’s Claude limit</div></div>';
+    $('#panel').innerHTML = h;
+    $$('#panel .opts').forEach(function(g){ $$('.opt', g).forEach(function(o){ o.onclick = function(){ $$('.opt', g).forEach(function(x){ x.classList.toggle('on', x === o); }); }; }); });
+  }
+  $$('.day', wk).forEach(function(d){ d.onclick = function(){ $$('.day', wk).forEach(function(x){ x.classList.remove('sel'); }); d.classList.add('sel'); panel(+d.dataset.i); }; });
+  panel(sel);
+})();
+</script>
+</body>
+</html>

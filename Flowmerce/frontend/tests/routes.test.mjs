@@ -5,32 +5,47 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { REDIRECTS } from '../redirects.mjs';
-import { NAV, NAV_ITEMS, SETTINGS, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../src/lib/routes.mjs';
+import { NAV, NAV_ITEMS, SETTINGS, hrefOf, itemActive, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../src/lib/routes.mjs';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'app');
 const pageExists = (path) => existsSync(join(APP, path.replace(/^\//, '').replace(/:id/g, '[id]').replace(/:brand/g, '[brand]'), 'page.jsx'));
 const bare = (dest) => dest.split('?')[0];
 
-test('the menu has exactly the agreed modules and pages, in order', () => {
-    assert.deepEqual(NAV.map((e) => [e.label, e.kind === 'module' ? e.items.map((i) => i.label) : null]), [
-        ['Home', null],
-        ['SEO & Blog', ['Articles', 'Topics & keywords', 'Content calendar', 'Publishing', 'SEO & traffic', 'Automation']],
-        ['Shipping', null],
+test('the menu has exactly the agreed modules and pages, in order, with rarely used ones under Advanced', () => {
+    const labels = (list) => (list ?? []).map((i) => i.label);
+    assert.deepEqual(NAV.map((e) => [e.label, e.kind === 'module' ? labels(e.items) : null, e.kind === 'module' ? labels(e.advanced) : null]), [
+        ['Home', null, null],
+        ['SEO & Blog', ['Overview', 'Articles', 'Content calendar', 'Publishing'], ['Write it yourself', 'Topics & keywords', 'SEO & traffic', 'Automation']],
+        ['Shipping', ['Overview', 'Shipments', 'Unfulfilled', 'Checks and exceptions'], ['Analytics']],
+        ['Conversion (CRO)', ['Overview', 'Conversion', 'Cart & checkout', 'Products', 'Sales', 'Recommendations'], ['Alarms', 'Change log']],
     ]);
     assert.deepEqual(SETTINGS.items.map((i) => i.label), ['Integrations', 'Brands', 'Data management', 'Audit log']);
 });
 
-test('Automation lives inside SEO & Blog, and Shipping is one top-level entry', () => {
+test('Automation lives inside SEO & Blog (Advanced), and Shipping and CRO open their own page', () => {
     assert.ok(!NAV.some((e) => e.label === 'Automation'));
-    assert.equal(NAV.find((e) => e.id === 'seo').items.find((i) => i.label === 'Automation').to, '/automation');
+    assert.equal(NAV.find((e) => e.id === 'seo').advanced.find((i) => i.label === 'Automation').to, '/automation');
     assert.equal(NAV.find((e) => e.id === 'shipping').to, '/shipping');
+    assert.equal(NAV.find((e) => e.id === 'cro').to, '/cro');
+});
+
+test('a tab in the menu links to that tab and is highlighted only while it is open', () => {
+    const ship = NAV.find((e) => e.id === 'shipping');
+    const overview = ship.items[0];
+    const checks = ship.items.find((i) => i.tab === 'checks');
+    assert.equal(hrefOf(overview), '/shipping');
+    assert.equal(hrefOf(checks), '/shipping?tab=checks');
+    assert.ok(itemActive(overview, '/shipping', '') && !itemActive(checks, '/shipping', ''));
+    assert.ok(itemActive(checks, '/shipping', 'checks') && !itemActive(overview, '/shipping', 'checks'));
+    assert.ok(itemActive(NAV.find((e) => e.id === 'seo').items[1], '/articles/4', ''));
 });
 
 test('each page belongs to one module, so the sidebar can expand and highlight the right parent', () => {
-    for (const p of ['/articles', '/articles/42', '/topics', '/calendar', '/publishing', '/analytics', '/automation'])
+    for (const p of ['/blog', '/write', '/articles', '/articles/42', '/topics', '/calendar', '/publishing', '/analytics', '/automation'])
         assert.equal(moduleOf(p), 'seo', p);
     assert.equal(moduleOf('/'), 'home');
     assert.equal(moduleOf('/shipping'), 'shipping');
+    assert.equal(moduleOf('/cro'), 'cro');
     for (const p of ['/settings/integrations', '/settings/brands', '/settings/data', '/settings/audit'])
         assert.equal(moduleOf(p), 'settings', p);
     assert.equal(moduleOf('/nope'), null);
@@ -39,7 +54,7 @@ test('each page belongs to one module, so the sidebar can expand and highlight t
 test('every menu item opens a real page, and no page appears twice', () => {
     for (const i of NAV_ITEMS)
         assert.ok(pageExists(i.to === '/' ? '' : i.to), `${i.label} -> ${i.to}`);
-    const tos = NAV_ITEMS.map((i) => i.to);
+    const tos = NAV_ITEMS.map(hrefOf);
     assert.equal(new Set(tos).size, tos.length);
 });
 
@@ -100,4 +115,5 @@ test('Shipping has no date range or article search', () => {
     assert.ok(pathMatches('/shipping', '/shipping'));
     assert.equal(usesRange('/shipping'), false);
     assert.equal(showsSearch('/shipping'), false);
+    assert.equal(showsSearch('/cro'), false);
 });

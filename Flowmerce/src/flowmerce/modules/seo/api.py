@@ -22,7 +22,7 @@ from .integrations.google import check_access, ga4_configured, gsc_configured, s
 from .integrations.shopify_public import fetch_public_articles
 from .integrations.status import all_statuses, mark_error, mark_success, record_check, status_of
 from .permissions import PERMISSIONS, ROLE_LABELS, is_role, perms_for
-from .services import ai_budget, ai_jobs, analytics, articles, autopilot, calendar_plan, excel, home, keyword_file, publishing, workflow
+from .services import ai_budget, ai_jobs, analytics, articles, auto_blog, autopilot, calendar_plan, excel, home, images, keyword_file, publishing, workflow
 from .services.brands import all_brands, brand, brand_public, brand_settings, update_brand_settings
 from .services.demo import clear_demo, demo_loaded, load_demo
 from .services.sync import products_for, sync_ga4, sync_gsc, sync_shopify
@@ -699,7 +699,7 @@ def calendar_view(request: Request):
         raise HttpError(400, "Choose a range of up to 400 days.")
     return {"from": start, "to": end, "events": calendar_plan.events_between(b, start, end), "schedule": calendar_plan.list_schedule(b, start, end),
             "upcoming": calendar_plan.upcoming(b), "budget": ai_budget.status(),
-            "scheduledPublishes": all_rows("SELECT id, brand_id, title, publish_at FROM articles WHERE publish_at IS NOT NULL AND substr(publish_at,1,10) BETWEEN ? AND ?"
+            "scheduledPublishes": all_rows("SELECT id, brand_id, title, publish_at, status FROM articles WHERE publish_at IS NOT NULL AND substr(publish_at,1,10) BETWEEN ? AND ?"
                                            + (" AND brand_id = ?" if b else ""), start, end, *([b] if b else []))}
 
 
@@ -757,6 +757,43 @@ def autopilot_runs(request: Request):
 def autopilot_run(rid: str, request: Request):
     auth.require_perm(request, "view")
     return autopilot.get_run(to_int(rid))
+
+
+# ---------------- the automatic blog pipeline and the SEO & Blog overview ----------------
+
+@api.get("/blog/overview")
+def blog_overview(request: Request):
+    """The SEO & Blog overview: the automatic blog slots of the next weeks, how far each one is, and projected figures."""
+    auth.require_perm(request, "view")
+    return auto_blog.overview(brand_q(request))
+
+
+@api.patch("/blog/autopilot")
+def blog_autopilot_settings(request: Request, body: dict = JSONBody):
+    """Switch the automatic blog pipeline on or off, or change its publishing weekdays."""
+    return auto_blog.update_settings(auth.require_perm(request, "workflow:run"), body)
+
+
+@api.post("/blog/slots/{sid}/skip")
+def blog_slot_skip(sid: str, request: Request):
+    """Skip one automatic blog slot that has not started."""
+    return auto_blog.skip(auth.require_perm(request, "workflow:run"), to_int(sid))
+
+
+@api.get("/articles/{aid}/answer-checks")
+def article_answer_checks(aid: str, request: Request):
+    """Required fields, SEO, AEO, GEO and LLMO checks for one article (services/answer_checks.py)."""
+    auth.require_perm(request, "view")
+    return auto_blog.check_article(to_int(aid))
+
+
+@api.post("/images/upload")
+async def image_upload(request: Request):
+    """A featured image from the person's computer: the raw file is the request body (?brand=&filename=&alt=). It is
+    stored in the brand's Shopify Files and its URL is returned for the article's image field."""
+    u = auth.require_perm(request, "article:write")
+    data = await _read_limited(request, images.MAX_BYTES)
+    return await run_in_threadpool(images.upload, u, str(q(request, "brand") or ""), data, s(q(request, "filename"), 200), s(q(request, "alt"), 500))
 
 
 async def _read_limited(request: Request, limit: int) -> bytes:

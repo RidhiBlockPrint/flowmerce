@@ -23,6 +23,9 @@ seo = [
     "anthropic>=0.68",
     "google-auth>=2.35",
     "requests>=2.32",
+    # IANA timezone data for zoneinfo: Windows has none built in. CRO splits orders into the store's
+    # local days (US Pacific, with daylight saving).
+    "tzdata>=2024.1",
 ]
 
 [project.scripts]

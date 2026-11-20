@@ -32,7 +32,13 @@ function niceTicks(max, count = 4, integer = false) {
         out.push(out[out.length - 1] + step);
     return out;
 }
-export function LineChart({ series, height = 220, yFormat = fmtCompact, invertY, ariaLabel }) {
+/**
+ * Optional extras: `refLine` { y, label } draws a dashed reference (for example the typical store's rate); `area` fills
+ * under the first solid series; `extremes` 'high' or 'low' says which end is good and marks the best day (green) and
+ * the worst day (red) of the first series.
+ */
+export function LineChart({ series, height = 220, yFormat = fmtCompact, invertY, ariaLabel, refLine, area, extremes }) {
+    const gid = useMemo(() => `lc${Math.random().toString(36).slice(2, 8)}`, []);
     const [ref, width] = useWidth();
     const [hover, setHover] = useState(null);
     const [asTable, setAsTable] = useState(false);
@@ -45,7 +51,7 @@ export function LineChart({ series, height = 220, yFormat = fmtCompact, invertY,
     const ih = height - m.t - m.b;
     const yMin = invertY ? Math.max(0, Math.floor(Math.min(...values, 1))) : 0;
     const whole = yFormat === fmtCompact || !!invertY;
-    const ticks = invertY ? niceTicks(Math.max(...values, 1) - yMin, 4, true).map((t) => t + yMin) : niceTicks(Math.max(...values, 0), 4, whole);
+    const ticks = invertY ? niceTicks(Math.max(...values, 1) - yMin, 4, true).map((t) => t + yMin) : niceTicks(Math.max(...values, refLine?.y ?? 0, 0), 4, whole);
     const yMax = ticks[ticks.length - 1] || 1;
     const x = (i) => m.l + (xs.length <= 1 ? iw / 2 : (i / (xs.length - 1)) * iw);
     const y = (v) => invertY ? m.t + ((v - yMin) / (yMax - yMin || 1)) * ih : m.t + ih - (v / yMax) * ih;
@@ -88,6 +94,20 @@ export function LineChart({ series, height = 220, yFormat = fmtCompact, invertY,
                 <line className="grid-line" x1={m.l} x2={m.l + iw} y1={y(t)} y2={y(t)}/>
                 <text className="axis-text" x={m.l - 8} y={y(t) + 4} textAnchor="end">{yFormat(t)}</text>
               </g>))}
+            {refLine ? (<g className="line-fade">
+                <line x1={m.l} x2={m.l + iw} y1={y(refLine.y)} y2={y(refLine.y)} stroke="var(--ink-2)" strokeDasharray="4 4" strokeWidth={1.2} opacity={0.6}/>
+                <text className="axis-text" x={m.l + iw} y={y(refLine.y) - 5} textAnchor="end" style={{ fill: 'var(--ink-2)', fontWeight: 600 }}>{refLine.label}</text>
+              </g>) : null}
+            {area && series[0] && !series[0].dashed ? (() => {
+                const pts = series[0].points.filter((p) => p.y !== null);
+                if (pts.length < 2)
+                    return null;
+                const base = y(invertY ? yMax : yMin);
+                const d = pts.map((p, k) => `${k ? 'L' : 'M'}${x(xIndex.get(p.x)).toFixed(1)},${y(p.y).toFixed(1)}`).join('')
+                    + `L${x(xIndex.get(pts[pts.length - 1].x)).toFixed(1)},${base}L${x(xIndex.get(pts[0].x)).toFixed(1)},${base}Z`;
+                return (<><defs><linearGradient id={gid} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor={series[0].color} stopOpacity="0.24"/><stop offset="1" stopColor={series[0].color} stopOpacity="0"/></linearGradient></defs>
+                  <path className="line-fade" d={d} fill={`url(#${gid})`}/></>);
+            })() : null}
             {xs.map((d, i) => (i % labelEvery === 0 || i === xs.length - 1) && (i === xs.length - 1 || xs.length - 1 - i >= labelEvery * 0.6) ? (<text key={d} className="axis-text" x={x(i)} y={height - 6} textAnchor={i === 0 ? 'start' : i === xs.length - 1 ? 'end' : 'middle'}>{fmtDay(d)}</text>) : null)}
             {series.map((s) => {
                 let dStr = '';
@@ -101,8 +121,20 @@ export function LineChart({ series, height = 220, yFormat = fmtCompact, invertY,
                     dStr += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.y).toFixed(1)}`;
                     pen = true;
                 }
-                return <path key={s.key} d={dStr} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" strokeDasharray={s.dashed ? '5 4' : undefined}/>;
+                return <path key={s.key} className={s.dashed ? 'line-fade' : 'line-draw'} d={dStr} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" strokeDasharray={s.dashed ? '5 4' : undefined}/>;
             })}
+            {extremes && series[0] ? (() => {
+                const pts = series[0].points.filter((p) => p.y !== null);
+                if (pts.length < 3)
+                    return null;
+                const hi = pts.reduce((a, b) => (b.y > a.y ? b : a));
+                const lo = pts.reduce((a, b) => (b.y < a.y ? b : a));
+                const [best, worst] = extremes === 'low' ? [lo, hi] : [hi, lo];
+                return (<g className="line-fade">
+                  <circle cx={x(xIndex.get(best.x))} cy={y(best.y)} r={5} fill="var(--ok)" stroke="var(--surface)" strokeWidth={2}><title>{`Best day: ${fmtDay(best.x)}, ${yFormat(best.y)}`}</title></circle>
+                  <circle cx={x(xIndex.get(worst.x))} cy={y(worst.y)} r={5} fill="var(--crit)" stroke="var(--surface)" strokeWidth={2}><title>{`Worst day: ${fmtDay(worst.x)}, ${yFormat(worst.y)}`}</title></circle>
+                </g>);
+            })() : null}
             {multi && width > 480 ? endLabels.map(({ s, yv }) => (<text key={s.key} x={m.l + iw + 8} y={yv + 4} className="axis-text" style={{ fill: 'var(--ink-2)', fontWeight: 600 }}>{s.label}</text>)) : null}
             {hover !== null ? (<g>
                 <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={m.t} y2={m.t + ih}/>
@@ -128,7 +160,7 @@ export function Sparkline({ values, color = 'var(--accent)', width = 90, height 
     const max = Math.max(...values, 1);
     const min = Math.min(...values, 0);
     const d = values.map((v, i) => `${i ? 'L' : 'M'}${((i / (values.length - 1)) * (width - 4) + 2).toFixed(1)},${(height - 3 - ((v - min) / (max - min || 1)) * (height - 6)).toFixed(1)}`).join('');
-    return <svg width={width} height={height} aria-hidden style={{ display: 'block' }}><path d={d} fill="none" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"/></svg>;
+    return <svg width={width} height={height} aria-hidden style={{ display: 'block' }}><path className="line-draw" d={d} fill="none" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
 export function BarList({ rows, format = fmtCompact, empty = 'Nothing to show' }) {
     const max = Math.max(...rows.map((r) => r.value), 1);

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Direction C · Flowmerce warm</title>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f6f3ef;--card:#fff;--card2:#fbfaf8;--line:#e7e1d9;--line2:#efebe5;--ink:#221d19;--ink2:#4a423b;--muted:#7a7068;--faint:#a89e95;--brand:#a0522d;--brand-soft:#f6ebe3;--ok:#2d6a3e;--ok-soft:#e7f2ea;--warn:#9a5b06;--warn-soft:#fdf1dc;--orange:#c2571a;--crit:#b42318;--crit-soft:#fdecea;--info:#2f5d8a;--info-soft:#e8f0f8}
+*{box-sizing:border-box;margin:0}
+body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:13px;width:1440px;position:relative}
+.serif{font-family:'Libre Caslon Text',Georgia,serif}
+.app{display:grid;grid-template-columns:236px 1fr;min-height:1180px}
+aside{background:#fff;border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:3px}
+.logo{font-size:19px;font-weight:600;padding:2px 10px 2px}.logo b{color:#b07a2a}
+.tagline{font-size:11px;color:var(--muted);padding:0 10px 18px}
+.nav{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;color:var(--ink2);font-weight:500}
+.nav.on{background:#f3e6e2;color:#8a1c1c;font-weight:600}
+.nav .ic{width:15px;height:15px;border:1.6px solid currentColor;border-radius:4px;opacity:.75}
+.nav small{margin-left:auto;font-weight:600;font-size:11px;background:var(--crit-soft);color:var(--crit);padding:1px 7px;border-radius:10px}
+.sub-nav{padding-left:35px;color:var(--muted);font-weight:500;padding-top:7px;padding-bottom:7px;display:flex}
+.sub-nav span{margin-left:auto;color:var(--faint)}
+main{padding:18px 34px 40px;padding-right:470px}
+.top{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+.brands{display:inline-flex;background:#fff;border:1px solid var(--line);border-radius:10px;padding:3px}
+.brands span{padding:5px 12px;border-radius:7px;font-weight:600;color:var(--ink2);display:flex;align-items:center;gap:6px}
+.brands .on{background:var(--bg)}
+.brands i{width:7px;height:7px;border-radius:50%}
+h1{font-size:30px;font-weight:400;letter-spacing:-.01em}
+.lede{color:var(--muted);margin-top:4px;font-size:13.5px}
+.btn{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 13px;font-weight:600;color:var(--ink);display:inline-flex;gap:6px;align-items:center}
+.btn.dark{background:var(--ink);color:#fff;border-color:var(--ink)}
+.tabs{display:flex;gap:4px;margin:18px 0 18px;background:#ece6df;padding:4px;border-radius:12px;width:max-content}
+.tabs span{padding:7px 14px;border-radius:9px;color:var(--ink2);font-weight:600}
+.tabs .on{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.tabs em{font-style:normal;color:var(--faint);font-weight:500;margin-left:4px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:0 1px 2px rgba(34,29,25,.04)}
+.hero{display:grid;grid-template-columns:1.1fr 1fr;gap:0;overflow:hidden}
+.hero-l{padding:22px 24px;border-right:1px solid var(--line2)}
+.big{font-size:52px;line-height:1;letter-spacing:-.02em}
+.ring{display:flex;gap:18px;align-items:center;margin-top:18px}
+.hero-r{padding:18px 20px;display:grid;grid-template-columns:1fr 1fr;gap:10px;background:var(--card2)}
+.mini{background:#fff;border:1px solid var(--line2);border-radius:12px;padding:12px 14px}
+.mini .l{color:var(--muted);font-size:12px;font-weight:500}.mini .v{font-size:22px;font-weight:700;margin-top:4px;letter-spacing:-.02em}.mini .mf{font-size:11.5px;color:var(--faint);margin-top:2px}
+.journey{display:flex;margin-top:18px;gap:8px}
+.step{flex:1;border-radius:12px;padding:12px 14px;background:#fff;border:1px solid var(--line);position:relative}
+.step .l{font-size:12px;color:var(--muted);font-weight:600}.step .v{font-size:22px;font-weight:700;margin-top:3px}
+.step .w{font-size:11.5px;margin-top:6px;font-weight:600}
+.step::after{content:"›";position:absolute;right:-9px;top:50%;transform:translateY(-50%);color:var(--faint);font-size:16px;z-index:2;background:var(--bg);width:10px;text-align:center}
+.step:last-child::after{display:none}
+.sec-h{display:flex;align-items:baseline;justify-content:space-between;margin:24px 0 10px}
+.sec-h h2{font-size:19px;font-weight:400}
+.sec-h span{color:var(--muted)}
+.queue .row{display:grid;grid-template-columns:30px 1.1fr 1.6fr 110px 170px;gap:14px;align-items:center;padding:13px 18px;border-top:1px solid var(--line2)}
+.queue .row:first-child{border-top:0}
+.queue .row.sel{background:#fbf5f0;box-shadow:inset 3px 0 0 var(--brand)}
+.av{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-weight:700;font-size:11px}
+.o{font-weight:700}.o small{display:block;font-weight:500;color:var(--muted);font-size:11.5px;margin-top:2px}
+.why{color:var(--ink2)}.why small{display:block;color:var(--faint);margin-top:2px;font-size:11.5px}
+.pill{display:inline-flex;justify-self:start;white-space:nowrap;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:20px}
+.p-crit{background:var(--crit-soft);color:var(--crit)}.p-warn{background:var(--warn-soft);color:var(--warn)}.p-info{background:var(--info-soft);color:var(--info)}.p-ok{background:var(--ok-soft);color:var(--ok)}
+.acts{display:flex;gap:6px;justify-content:flex-end}
+.a{border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-weight:600;font-size:12px;background:#fff}
+.a.pri{background:var(--ink);color:#fff;border-color:var(--ink)}
+.filters{display:flex;gap:6px;margin-bottom:10px}
+.f{border:1px solid var(--line);background:#fff;border-radius:20px;padding:5px 11px;font-weight:600;color:var(--ink2);font-size:12px}
+.f.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.f b{color:inherit;opacity:.6;margin-left:4px;font-weight:600}
+/* drawer */
+.drawer{position:absolute;top:0;right:0;width:440px;min-height:1180px;background:#fff;border-left:1px solid var(--line);box-shadow:-12px 0 32px rgba(34,29,25,.07);padding:22px 24px}
+.dh{display:flex;justify-content:space-between;align-items:flex-start}
+.dh h3{font-size:24px;font-weight:400}
+.x{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);display:grid;place-items:center;color:var(--muted)}
+.meta{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0;padding:14px;background:var(--card2);border:1px solid var(--line2);border-radius:12px}
+.meta div small{display:block;color:var(--muted);font-size:11.5px}.meta div b{font-weight:600}
+.route{display:flex;align-items:center;gap:8px;margin:6px 0 18px}
+.route .seg{flex:1;height:6px;border-radius:3px;background:var(--line)}
+.tl{position:relative;padding-left:22px}
+.tl::before{content:"";position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:var(--line2)}
+.ev{position:relative;padding:0 0 16px}
+.ev::before{content:"";position:absolute;left:-21px;top:3px;width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--faint)}
+.ev.now::before{border-color:var(--crit);background:var(--crit-soft)}
+.ev.done::before{border-color:var(--ok);background:var(--ok)}
+.ev b{font-weight:600}.ev p{color:var(--muted);font-size:12px;margin-top:2px}
+.suggest{margin-top:8px;padding:14px;border-radius:12px;background:var(--brand-soft);border:1px solid #edd8c8}
+.suggest b{display:block;margin-bottom:4px}
+.dbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.dbtns span{text-align:center;padding:9px;border-radius:10px;border:1px solid var(--line);font-weight:600}
+.dbtns .pri{background:var(--ink);color:#fff;border-color:var(--ink);grid-column:span 2}
+</style></head><body>
+<div class="app">
+<aside>
+  <div class="logo">flow<b>merce</b></div><div class="tagline">Ecommerce in a Flow</div>
+  <div class="nav"><span class="ic"></span>Home</div>
+  <div class="nav"><span class="ic"></span>SEO &amp; Blog</div>
+  <div class="nav on"><span class="ic"></span>Shipping<small>7</small></div>
+  <div class="sub-nav">Needs action<span style="color:var(--crit);font-weight:700">30</span></div>
+  <div class="sub-nav">In transit<span>371</span></div>
+  <div class="sub-nav">Unfulfilled<span>721</span></div>
+  <div class="sub-nav">Delivered<span>1,204</span></div>
+  <div class="nav" style="margin-top:auto"><span class="ic"></span>Settings</div>
+</aside>
+<main>
+  <div class="top"><span class="brands"><span class="on">All</span><span><i style="background:#8a1c1c"></i>Ridhi</span><span><i style="background:#a2836f"></i>CPC</span></span>
+    <span style="margin-left:auto;color:var(--muted)">Synced 4 min ago</span><span class="btn">⟳ Refresh</span></div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-end"><div><h1 class="serif">Good afternoon. 30 parcels need you today.</h1><div class="lede">7 are critical, 18 are missing tracking numbers, and 5 have carrier exceptions.</div></div></div>
+  <div class="tabs"><span class="on">Overview</span><span>Shipments<em>566</em></span><span>Unfulfilled<em>721</em></span><span>Checks<em>61</em></span><span>Analytics</span></div>
+
+  <div class="card hero">
+    <div class="hero-l">
+      <div style="color:var(--muted);font-weight:600">Active shipments</div>
+      <div style="display:flex;align-items:baseline;gap:12px;margin-top:6px"><span class="big serif">566</span><span class="pill p-ok">84% on track</span></div>
+      <div class="ring">
+        <svg width="96" height="96" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15.9" fill="none" stroke="#efebe5" stroke-width="4"/>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#2d6a3e" stroke-width="4" stroke-dasharray="83.6 100" transform="rotate(-90 18 18)"/>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#d6a419" stroke-width="4" stroke-dasharray="3.4 100" stroke-dashoffset="-83.6" transform="rotate(-90 18 18)"/>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#c2571a" stroke-width="4" stroke-dasharray="1.4 100" stroke-dashoffset="-87" transform="rotate(-90 18 18)"/>
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#b42318" stroke-width="4" stroke-dasharray="1.2 100" stroke-dashoffset="-88.4" transform="rotate(-90 18 18)"/></svg>
+        <div style="display:grid;grid-template-columns:auto auto;gap:6px 18px;font-size:12.5px">
+          <span><b style="color:var(--ok)">●</b> On track 0–3 d</span><b>473</b>
+          <span><b style="color:#d6a419">●</b> Watch 4–5 d</span><b>19</b>
+          <span><b style="color:var(--orange)">●</b> Late 6–8 d</span><b>8</b>
+          <span><b style="color:var(--crit)">●</b> Critical 9+ d</span><b>7</b>
+        </div></div>
+    </div>
+    <div class="hero-r">
+      <div class="mini"><div class="l">On-time delivery</div><div class="v">91%</div><div class="mf">last 30 days ↑ 2 pt</div></div>
+      <div class="mini"><div class="l">Avg. delivery time</div><div class="v">5.2 d</div><div class="mf">dispatch to doorstep</div></div>
+      <div class="mini"><div class="l">Value at risk</div><div class="v" style="color:var(--crit)">$1,860</div><div class="mf">7 critical orders</div></div>
+      <div class="mini"><div class="l">Delivered · 30 d</div><div class="v">1,204</div><div class="mf">left the active queue</div></div>
+    </div>
+  </div>
+
+  <div class="journey">
+    <div class="step"><div class="l">Ordered</div><div class="v">721</div><div class="w" style="color:var(--warn)">94 waiting 9+ days</div></div>
+    <div class="step"><div class="l">Dispatched</div><div class="v">138</div><div class="w" style="color:var(--crit)">18 no tracking</div></div>
+    <div class="step"><div class="l">In transit</div><div class="v">371</div><div class="w" style="color:var(--crit)">7 stuck · 16 exceptions</div></div>
+    <div class="step"><div class="l">Out for delivery</div><div class="v">57</div><div class="w" style="color:var(--ok)">all moving</div></div>
+    <div class="step"><div class="l">Delivered</div><div class="v">1,204</div><div class="w" style="color:var(--muted)">last 30 days</div></div>
+  </div>
+
+  <div class="sec-h"><h2 class="serif">Today's triage</h2><span>Work top to bottom · each row has a suggested next step</span></div>
+  <div class="filters"><span class="f on">All<b>30</b></span><span class="f">Critical<b>7</b></span><span class="f">Exceptions<b>5</b></span><span class="f">No tracking<b>18</b></span><span class="f">Amazon mismatch<b>12</b></span></div>
+  <div class="card queue">
+    <div class="row sel"><span class="av" style="background:var(--crit-soft);color:var(--crit)">57d</span><div class="o">#6927<small>USPS · Ridhi</small></div><div class="why">No carrier scan for 56 days<small>Last: Package delayed in transit</small></div><span class="pill p-crit">Critical</span><div class="acts"><span class="a">Snooze</span><span class="a pri">Reship</span></div></div>
+    <div class="row"><span class="av" style="background:var(--crit-soft);color:var(--crit)">49d</span><div class="o">#RBP6285<small>USPS · Ridhi</small></div><div class="why">Carrier exception, delayed<small>2 months without a scan</small></div><span class="pill p-crit">Critical</span><div class="acts"><span class="a">Snooze</span><span class="a pri">File claim</span></div></div>
+    <div class="row"><span class="av" style="background:var(--crit-soft);color:var(--crit)">45d</span><div class="o">#RBP6237<small>Amazon · Ridhi</small></div><div class="why">Delivery date unavailable<small>Amazon MCF parcel</small></div><span class="pill p-crit">Critical</span><div class="acts"><span class="a">Snooze</span><span class="a pri">Ask Amazon</span></div></div>
+    <div class="row"><span class="av" style="background:var(--warn-soft);color:var(--warn)">2d</span><div class="o">#RBP6035<small>DHL · Ridhi</small></div><div class="why">Dispatched without tracking<small>Promised 30 Sep, 49 days late</small></div><span class="pill p-warn">No tracking</span><div class="acts"><span class="a">Snooze</span><span class="a pri">Add tracking</span></div></div>
+    <div class="row"><span class="av" style="background:var(--info-soft);color:var(--info)">4d</span><div class="o">#RBP8447<small>Amazon · Ridhi</small></div><div class="why">Shipped by Amazon, unfulfilled in Shopify<small>2 parcels, TBA336493314556</small></div><span class="pill p-info">Mismatch</span><div class="acts"><span class="a">Snooze</span><span class="a pri">Mark fulfilled</span></div></div>
+  </div>
+</main></div>
+
+<div class="drawer">
+  <div class="dh"><div><div style="color:var(--muted);font-weight:600">Order · Ridhi</div><h3 class="serif">#6927</h3></div><span class="x">✕</span></div>
+  <div style="display:flex;gap:6px;margin-top:10px"><span class="pill p-crit">Critical · 57 days</span><span class="pill p-warn">No movement</span></div>
+  <div class="meta">
+    <div><small>Carrier</small><b>USPS Priority</b></div><div><small>Tracking</small><b style="font-family:Consolas,monospace;font-size:12px">93612896840686…</b></div>
+    <div><small>Ordered</small><b>18 Sep, 10:42</b></div><div><small>Promised by</small><b style="color:var(--crit)">2 Oct · 48 d late</b></div>
+    <div><small>Ship to</small><b>Portland, OR</b></div><div><small>Order value</small><b>$248.00</b></div>
+  </div>
+  <div style="font-weight:600;margin-bottom:6px">Journey</div>
+  <div class="route"><span class="seg" style="background:var(--ok)"></span><span class="seg" style="background:var(--ok)"></span><span class="seg" style="background:var(--crit)"></span><span class="seg"></span><span class="seg"></span></div>
+  <div style="display:flex;justify-content:space-between;color:var(--faint);font-size:11px;margin:-10px 0 18px"><span>Ordered</span><span>Dispatched</span><span>In transit</span><span>Out</span><span>Delivered</span></div>
+  <div style="font-weight:600;margin-bottom:10px">Tracking history</div>
+  <div class="tl">
+    <div class="ev now"><b>Package delayed in transit</b><p>23 Sep, 06:10 · Chicago IL Distribution Center</p></div>
+    <div class="ev done"><b>Arrived at USPS regional facility</b><p>21 Sep, 22:47 · Chicago IL</p></div>
+    <div class="ev done"><b>Departed shipping partner facility</b><p>20 Sep, 14:03 · Newark NJ</p></div>
+    <div class="ev done"><b>Picked up by shipping partner</b><p>19 Sep, 18:30 · Jaipur → Newark</p></div>
+    <div class="ev done"><b>Dispatched from Shopify</b><p>19 Sep, 11:15 · label created</p></div>
+  </div>
+  <div class="suggest"><b>Suggested next step</b>No scan for 56 days is past USPS's 30-day lost-parcel window. Reship to the customer and file a missing-mail claim.</div>
+  <div class="dbtns"><span class="pri">Reship order</span><span>File USPS claim</span><span>Open in Shopify ↗</span></div>
+  <div style="margin-top:18px;font-weight:600">Team notes</div>
+  <div style="margin-top:8px;padding:12px;border:1px solid var(--line2);border-radius:12px;color:var(--muted)">Customer emailed on 14 Nov asking for an update. · <i>Priya, 5 d ago</i></div>
+</div>
+</body></html>

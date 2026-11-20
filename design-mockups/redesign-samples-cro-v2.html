@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flowmerce CRO samples v2</title>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f7f5f2;--surface:#fff;--s2:#fbfaf8;--s3:#f3f0ec;--ink:#1e1a17;--ink2:#4a433d;--muted:#776e67;--faint:#a39a92;--line:#e7e1d9;
+--info:#2f5d8a;--info-soft:#e8f0f8;--ok:#2d6a3e;--ok-soft:#e7f2ea;--cpc:#7d6557;--cpc-soft:#f4ebe5;--blush:#f1d3c1;--saffron:#efb34c;--saffron-soft:#fdf3e0;--crit:#b42318;--crit-soft:#fdecea;
+--serif:'Libre Caslon Text',Georgia,serif;--sans:'Plus Jakarta Sans',system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px}
+h1{font-family:var(--serif);font-weight:400;font-size:34px;margin:0 0 6px}h2{font-family:var(--serif);font-weight:400;font-size:26px;margin:0 0 4px}
+.lead{color:var(--muted);max-width:780px;line-height:1.55;margin:0 0 16px}
+.tag{display:inline-flex;gap:8px;align-items:center;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--info);margin:40px 0 6px}
+.tag b{background:var(--info);color:#fff;border-radius:999px;width:22px;height:22px;display:grid;place-items:center;font-size:11px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}.chips span{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px 11px;font-size:12px;color:var(--ink2)}
+.palette{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 6px}.palette span{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px 10px 3px 4px}
+.palette i{width:16px;height:16px;border-radius:50%}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px 20px}
+.grid{display:grid;gap:14px}.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(3,minmax(0,1fr))}.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:900px){.g2,.g3,.g4{grid-template-columns:minmax(0,1fr)}}
+.label{font-size:12px;color:var(--muted);font-weight:600}.num{font-variant-numeric:tabular-nums}
+.rise{animation:rise .55s cubic-bezier(.2,.7,.2,1) both}@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+.d1{animation-delay:.07s}.d2{animation-delay:.14s}.d3{animation-delay:.21s}.d4{animation-delay:.28s}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 9px;font-size:11.5px;font-weight:700}
+.p-ok{background:var(--ok-soft);color:var(--ok)}.p-info{background:var(--info-soft);color:var(--info)}.p-crit{background:var(--crit-soft);color:var(--crit)}.p-cpc{background:var(--cpc-soft);color:var(--cpc)}
+/* sample 1 */
+.pulse{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:14px}
+@media(max-width:900px){.pulse{grid-template-columns:minmax(0,1fr)}}
+.score{position:relative;overflow:hidden;background:linear-gradient(135deg,var(--info-soft) 0%,#fff 55%,var(--ok-soft) 100%);border:1px solid var(--line);border-radius:22px;padding:22px 24px;display:grid;grid-template-columns:auto minmax(0,1fr);gap:22px;align-items:center}
+.score:after{content:'';position:absolute;right:-60px;top:-60px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(239,179,76,.25),transparent 70%)}
+.orbit circle{fill:none;stroke-linecap:round}.spin-in{transform-origin:center;animation:spinin 1.4s cubic-bezier(.2,.7,.2,1) both}@keyframes spinin{from{transform:rotate(-120deg);opacity:0}}
+.big{font-family:var(--serif);font-size:44px;line-height:1.05;margin:4px 0}
+.mood{display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:5px 12px 5px 6px;font-size:13px;font-weight:600}
+.mood i{width:22px;height:22px;border-radius:50%;background:var(--ok);display:grid;place-items:center;color:#fff;font-style:normal;font-size:12px}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.tile{border-radius:16px;padding:14px 16px;border:1px solid var(--line);position:relative;overflow:hidden;transition:transform .18s,box-shadow .18s}
+.tile:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(30,26,23,.08)}
+.tile b{display:block;font-size:26px;margin-top:2px}.tile .spark{position:absolute;right:10px;bottom:10px;width:90px;height:34px}
+.t-info{background:var(--info-soft)}.t-ok{background:var(--ok-soft)}.t-blush{background:#fbefe6}.t-sun{background:var(--saffron-soft)}
+.up{color:var(--ok);font-weight:700;font-size:12px}.down{color:var(--crit);font-weight:700;font-size:12px}
+.path{stroke-dasharray:300;stroke-dashoffset:300;animation:dash 1.4s ease .3s forwards}@keyframes dash{to{stroke-dashoffset:0}}
+.river{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;align-items:stretch;margin-top:14px}
+@media(max-width:900px){.river{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}
+.stage{position:relative;padding:16px 18px;background:var(--surface);border:1px solid var(--line);border-radius:16px;margin-right:22px}
+.stage:not(:last-child):after{content:'';position:absolute;right:-17px;top:50%;width:12px;height:12px;border-top:2px solid var(--faint);border-right:2px solid var(--faint);transform:translateY(-50%) rotate(45deg)}
+.stage .dot{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;font-weight:700;color:#fff;margin-bottom:10px;animation:pop .5s cubic-bezier(.2,.7,.2,1.4) both}
+@keyframes pop{from{transform:scale(.4);opacity:0}}
+.stage b{font-size:22px;display:block}.drop{display:inline-block;margin-top:8px;font-size:11.5px;font-weight:700;color:var(--crit);background:var(--crit-soft);border-radius:999px;padding:2px 9px}
+.meter{height:6px;border-radius:3px;background:var(--s3);margin-top:10px;overflow:hidden}.meter span{display:block;height:100%;border-radius:3px;transform-origin:left;animation:grow 1s cubic-bezier(.2,.7,.2,1) .3s both}
+@keyframes grow{from{transform:scaleX(0)}}
+.next{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}@media(max-width:900px){.next{grid-template-columns:minmax(0,1fr)}}
+.todo{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;transition:transform .18s,box-shadow .18s}
+.todo:hover{transform:translateY(-3px);box-shadow:0 12px 26px rgba(30,26,23,.08)}
+.todo .n{width:28px;height:28px;border-radius:9px;background:var(--info);color:#fff;display:grid;place-items:center;font-weight:700;font-size:13px}
+.todo .gain{margin-top:auto;font-size:12px;color:var(--ok);font-weight:700}
+/* sample 2 */
+.gauge-wrap{display:flex;gap:16px;align-items:center}
+.sweep{stroke-dasharray:157;stroke-dashoffset:157;animation:sweep 1.3s cubic-bezier(.2,.7,.2,1) .3s forwards}@keyframes sweep{to{stroke-dashoffset:var(--to)}}
+.draw{stroke-dasharray:1400;stroke-dashoffset:1400;animation:draw 1.6s cubic-bezier(.35,.6,.2,1) .2s forwards}@keyframes draw{to{stroke-dashoffset:0}}
+.fade{opacity:0;animation:fade 1s ease .6s forwards}@keyframes fade{to{opacity:1}}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin:8px 0 6px;flex-wrap:wrap}.legend i{display:inline-block;width:18px;height:6px;border-radius:3px;vertical-align:middle;margin-right:6px}
+.stack{display:flex;height:16px;border-radius:8px;overflow:hidden;background:var(--s3);gap:2px}.stack span{transform-origin:left;animation:grow .9s cubic-bezier(.2,.7,.2,1) both}
+.seg-row{display:grid;grid-template-columns:80px minmax(0,1fr) 70px;gap:10px;align-items:center;margin:10px 0;font-size:13px}
+.note{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.5}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;stroke-dashoffset:0!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CRO samples, round 2</h1>
+  <p class="lead">A new Overview (sample 1) and a recoloured Conversion and Cart &amp; checkout (sample 2). Both use only colours already in Flowmerce: ink, info blue, success green, CPC umber, blush, and saffron as a small accent. The crimson and yellow pairing is gone. Figures are copied from your screenshots and are only illustrations.</p>
+  <div class="palette"><span><i style="background:#1e1a17"></i>Ink</span><span><i style="background:#2f5d8a"></i>Info blue</span><span><i style="background:#2d6a3e"></i>Success green</span><span><i style="background:#7d6557"></i>CPC umber</span><span><i style="background:#f1d3c1"></i>Blush</span><span><i style="background:#efb34c"></i>Saffron (accent only)</span><span><i style="background:#b42318"></i>Alert red (losses only)</span></div>
+
+  <!-- ===== SAMPLE 1 ===== -->
+  <div class="tag"><b>1</b>CRO Overview: "store pulse"</div>
+  <h2>Light, airy and quick to read: a score, four tinted tiles, the journey as steps</h2>
+  <p class="lead">No dark block. A soft blue-to-green score card with a three-ring orbit (visits, carts, orders) and a plain sentence of how the store is doing, four pastel tiles with small trend lines, then the shopper journey as four big steps with the loss between each, and the next three actions as cards with the gain they aim for.</p>
+  <div class="chips"><span>Three-ring orbit spins in</span><span>Pastel tiles lift on hover</span><span>Journey as steps with "lost here"</span><span>Actions show the expected gain</span></div>
+  <div class="pulse">
+    <div class="score rise">
+      <svg class="orbit spin-in" viewBox="0 0 160 160" width="170" height="170" aria-label="Visits, carts and orders">
+        <circle cx="80" cy="80" r="70" stroke="#e8f0f8" stroke-width="12"/><circle cx="80" cy="80" r="70" stroke="#2f5d8a" stroke-width="12" stroke-dasharray="440 440" transform="rotate(-90 80 80)"/>
+        <circle cx="80" cy="80" r="52" stroke="#e7f2ea" stroke-width="12"/><circle class="path" cx="80" cy="80" r="52" stroke="#2d6a3e" stroke-width="12" stroke-dasharray="180 327" transform="rotate(-90 80 80)"/>
+        <circle cx="80" cy="80" r="34" stroke="#fdf3e0" stroke-width="12"/><circle class="path" cx="80" cy="80" r="34" stroke="#efb34c" stroke-width="12" stroke-dasharray="78 214" transform="rotate(-90 80 80)"/>
+        <text x="80" y="78" text-anchor="middle" font-size="20" font-weight="700" fill="#1e1a17">2.03%</text><text x="80" y="95" text-anchor="middle" font-size="10" fill="#776e67">convert</text>
+      </svg>
+      <div style="position:relative;z-index:1">
+        <span class="mood"><i>✓</i>A good month so far</span>
+        <div class="big num" data-count="129930" data-prefix="$">$0</div>
+        <div class="label">Revenue, 1–20 Nov · <span class="up">▲ 11.0%</span> vs the 20 days before</div>
+        <p class="note" style="margin-top:10px">More orders (+23%) at smaller baskets (−10%). The biggest gap: 1,324 shoppers left their cart.</p>
+      </div>
+    </div>
+    <div class="tiles">
+      <div class="tile t-info rise d1"><span class="label">Orders</span><b class="num" data-count="1138">0</b><span class="up">▲ 23.3%</span>
+        <svg class="spark" viewBox="0 0 90 34"><path class="path" d="M2,28 L15,24 L28,26 L41,18 L54,20 L67,10 L88,6" fill="none" stroke="#2f5d8a" stroke-width="2.5" stroke-linecap="round"/></svg></div>
+      <div class="tile t-ok rise d2"><span class="label">Conversion</span><b class="num" data-count="2.03" data-suffix="%" data-dec="2">0</b><span class="up">▲ 40.0%</span>
+        <svg class="spark" viewBox="0 0 90 34"><path class="path" d="M2,30 L15,26 L28,22 L41,24 L54,14 L67,12 L88,8" fill="none" stroke="#2d6a3e" stroke-width="2.5" stroke-linecap="round"/></svg></div>
+      <div class="tile t-blush rise d3"><span class="label">Average order</span><b class="num" data-count="114.17" data-prefix="$" data-dec="2">0</b><span class="down">▼ 10.0%</span>
+        <svg class="spark" viewBox="0 0 90 34"><path class="path" d="M2,8 L15,10 L28,9 L41,16 L54,14 L67,22 L88,24" fill="none" stroke="#7d6557" stroke-width="2.5" stroke-linecap="round"/></svg></div>
+      <div class="tile t-sun rise d4"><span class="label">Sessions</span><b class="num" data-count="51001">0</b><span class="label">1–20 Nov</span>
+        <svg class="spark" viewBox="0 0 90 34"><path class="path" d="M2,24 L15,20 L28,22 L41,16 L54,18 L67,12 L88,14" fill="none" stroke="#b07a1e" stroke-width="2.5" stroke-linecap="round"/></svg></div>
+    </div>
+  </div>
+  <div class="river">
+    <div class="stage rise d1"><div class="dot" style="background:#2f5d8a">1</div><span class="label">Visited the store</span><b class="num">51,001</b><div class="meter"><span style="width:100%;background:#2f5d8a"></span></div><span class="drop">48,162 left</span></div>
+    <div class="stage rise d2"><div class="dot" style="background:#4f7aa6;animation-delay:.1s">2</div><span class="label">Added to cart</span><b class="num">2,839</b><div class="meter"><span style="width:56%;background:#4f7aa6"></span></div><span class="drop">1,324 left the cart</span></div>
+    <div class="stage rise d3"><div class="dot" style="background:#3f7d58;animation-delay:.2s">3</div><span class="label">Reached checkout</span><b class="num">1,515</b><div class="meter"><span style="width:38%;background:#3f7d58"></span></div><span class="drop">480 left at payment</span></div>
+    <div class="stage rise d4"><div class="dot" style="background:#2d6a3e;animation-delay:.3s">4</div><span class="label">Bought</span><b class="num">1,035</b><div class="meter"><span style="width:26%;background:#2d6a3e"></span></div><span class="pill p-ok" style="margin-top:8px">2.03% of visits</span></div>
+  </div>
+  <div class="next">
+    <div class="todo rise d1"><span class="n">1</span><b>Send abandoned-checkout emails before Black Friday</b><span class="label">730 shoppers reached checkout and left</span><span class="gain">Aim: win back 5% → about 36 orders</span></div>
+    <div class="todo rise d2"><span class="n">2</span><b>Restock the quilts that stopped selling</b><span class="label">Aquamarine Blue Quilt: 8 sold → 0 this week</span><span class="gain">Aim: back to 8 a week</span></div>
+    <div class="todo rise d3"><span class="n" style="background:#7d6557">3</span><b>Make product pages easier on phones</b><span class="label">Social visitors convert at 1.35%, desktop 2.67%</span><span class="gain">Aim: mobile to 1.7%</span></div>
+  </div>
+
+  <!-- ===== SAMPLE 2 ===== -->
+  <div class="tag"><b>2</b>CRO Conversion and Cart &amp; checkout, recoloured</div>
+  <h2>Blue for the store's own line, green for "better than typical", umber for the rest</h2>
+  <p class="lead">Same layout as last time, but with new colours. Gauges turn green when the store beats the typical store and red only when it is behind. The day chart is info blue over a green "typical range" band. Device and channel splits use blue, green and umber.</p>
+  <div class="chips"><span>Gauges: green ahead, red behind</span><span>Blue area chart, green typical band</span><span>Blue, green and umber splits</span><span>Spike note in saffron</span></div>
+  <div class="grid g3">
+    <div class="card rise d1"><div class="label">Cart abandonment</div>
+      <div class="gauge-wrap"><svg viewBox="0 0 120 70" width="150"><path d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#f3f0ec" stroke-width="12" stroke-linecap="round"/>
+        <path class="sweep" style="--to:58" d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#2d6a3e" stroke-width="12" stroke-linecap="round"/>
+        <line x1="95" y1="22" x2="102" y2="15" stroke="#1e1a17" stroke-width="2.5"/><text x="60" y="58" text-anchor="middle" font-size="18" font-weight="700" fill="#1e1a17">63%</text></svg>
+      <div><span class="pill p-ok">7 pts better than typical</span><p class="note" style="margin:6px 0 0">Black mark = typical store (70%)</p></div></div></div>
+    <div class="card rise d2"><div class="label">Checkout abandonment</div>
+      <div class="gauge-wrap"><svg viewBox="0 0 120 70" width="150"><path d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#f3f0ec" stroke-width="12" stroke-linecap="round"/>
+        <path class="sweep" style="--to:110" d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#2d6a3e" stroke-width="12" stroke-linecap="round"/>
+        <line x1="94" y1="21" x2="101" y2="14" stroke="#1e1a17" stroke-width="2.5"/><text x="60" y="58" text-anchor="middle" font-size="18" font-weight="700" fill="#1e1a17">30%</text></svg>
+      <div><span class="pill p-ok">39 pts better than typical</span><p class="note" style="margin:6px 0 0">Black mark = typical store (69%)</p></div></div></div>
+    <div class="card rise d3"><div class="label">Conversion rate</div>
+      <div class="gauge-wrap"><svg viewBox="0 0 120 70" width="150"><path d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#f3f0ec" stroke-width="12" stroke-linecap="round"/>
+        <path class="sweep" style="--to:92" d="M10,62 A50,50 0 0 1 110,62" fill="none" stroke="#b42318" stroke-width="12" stroke-linecap="round"/>
+        <line x1="77" y1="14" x2="80" y2="6" stroke="#1e1a17" stroke-width="2.5"/><text x="60" y="58" text-anchor="middle" font-size="18" font-weight="700" fill="#1e1a17">0.90%</text></svg>
+      <div><span class="pill p-crit">Below typical (2.5%)</span><p class="note" style="margin:6px 0 0">October · −49.7% vs September</p></div></div></div>
+  </div>
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card rise d2"><b>Conversion rate by day</b>
+      <div class="legend"><span><i style="background:#2f5d8a"></i>October</span><span><i style="background:#e7f2ea"></i>Typical range 1.5–2.5%</span></div>
+      <svg viewBox="0 0 520 200" style="width:100%;height:auto">
+        <defs><linearGradient id="gb" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#2f5d8a" stop-opacity=".30"/><stop offset="1" stop-color="#2f5d8a" stop-opacity="0"/></linearGradient></defs>
+        <rect x="0" y="60" width="520" height="50" fill="#e7f2ea"/>
+        <path class="fade" d="M0,120 L17,180 L34,130 L52,90 L69,92 L86,100 L104,98 L121,135 L138,160 L155,152 L172,95 L190,80 L207,100 L224,82 L242,120 L259,140 L276,105 L293,88 L311,90 L328,110 L345,115 L362,115 L380,82 L397,108 L414,96 L431,118 L449,108 L466,95 L483,86 L500,95 L520,70 L520,200 L0,200Z" fill="url(#gb)"/>
+        <path class="draw" d="M0,120 L17,180 L34,130 L52,90 L69,92 L86,100 L104,98 L121,135 L138,160 L155,152 L172,95 L190,80 L207,100 L224,82 L242,120 L259,140 L276,105 L293,88 L311,90 L328,110 L345,115 L362,115 L380,82 L397,108 L414,96 L431,118 L449,108 L466,95 L483,86 L500,95 L520,70" fill="none" stroke="#2f5d8a" stroke-width="2.5" stroke-linejoin="round"/>
+        <circle class="fade" cx="520" cy="70" r="5" fill="#2f5d8a" stroke="#fff" stroke-width="2"/>
+      </svg></div>
+    <div class="card rise d3"><b>Sessions by device and channel</b>
+      <div class="seg-row"><span>Mobile</span><div class="stack"><span style="width:62%;background:#2f5d8a"></span><span style="width:30%;background:#2d6a3e;animation-delay:.1s"></span><span style="width:8%;background:#7d6557;animation-delay:.2s"></span></div><span class="num"><b>2.09%</b></span></div>
+      <div class="seg-row"><span>Desktop</span><div class="stack"><span style="width:38%;background:#2f5d8a"></span><span style="width:52%;background:#2d6a3e;animation-delay:.1s"></span><span style="width:10%;background:#7d6557;animation-delay:.2s"></span></div><span class="num"><b>2.67%</b></span></div>
+      <div class="legend"><span><i style="background:#2f5d8a"></i>Social</span><span><i style="background:#2d6a3e"></i>Search</span><span><i style="background:#7d6557"></i>Direct</span></div>
+      <div style="display:flex;gap:10px;align-items:flex-start;background:var(--saffron-soft);border-radius:12px;padding:10px 12px;margin-top:10px">
+        <span class="pill" style="background:#efb34c;color:#1e1a17">!</span>
+        <div><b>3 Oct: 45,000 sessions at 0.3% conversion</b><div class="label" style="margin-top:3px">Unusual days get a note on the chart (bot traffic, a viral post, a sale), so they're not read as a real change.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.querySelectorAll('[data-count]').forEach(function(el){
+    var to = parseFloat(el.dataset.count), dec = +(el.dataset.dec || 0), pre = el.dataset.prefix || '', suf = el.dataset.suffix || '';
+    var fmt = function(v){ return pre + v.toLocaleString('en-US', {minimumFractionDigits: dec, maximumFractionDigits: dec}) + suf; };
+    if (reduce) { el.textContent = fmt(to); return; }
+    var t0 = performance.now(), d = 1200;
+    (function step(t){ var k = Math.min(1, (t - t0) / d), e = 1 - Math.pow(1 - k, 3); el.textContent = fmt(to * e); if (k < 1) requestAnimationFrame(step); })(t0);
+  });
+})();
+</script>
+</body>
+</html>

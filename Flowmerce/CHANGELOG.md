@@ -2,6 +2,146 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-20 (CRO Overview rebuilt as design A2)
+
+Owner request: build design A2 (the approved "Gauge trio" in the content calendar's colours). Verified: frontend tests
+(68, 6 new in `tests/cro-overview.test.mjs`) and `next build` pass; checked in the browser on a preview server with
+live data for Ridhi and CPC: a single day, last 7 days, picking a day from the strip, the chart's 7/14/28 days, area,
+bars, table and the hover tooltip, and phone width. Not checked: the CSV download in a browser, and demo mode.
+
+- **Changed** CRO Overview layout: a "Last 14 days" strip like the calendar's (orders per day, a line coloured by how
+  well the day converted; click a day to look at it), then three cards: orders with the last 7 days as blocks, store
+  conversion as a gauge with the store's own bands over the last 28 days (below usual, usual, strong) and its rank,
+  revenue and average order, and visits by day coloured by conversion (14 or 28 days, hover for the day's figures).
+- **Changed** the sales chart: the last 7, 14 or 28 days of the chosen range against the same number of days before,
+  calendar events (Halloween, Diwali, ...) shaded, the busiest day labelled, a dotted daily average, a tooltip with both
+  periods and the change, area/bars/table, net sales/total sales/orders, CSV download and an 8-week strip showing the
+  part drawn. Store changes in those days are still listed under it.
+- **Changed** shopper journey, "What to do next" and the monthly goal use the calendar's lane chips (impact, area,
+  priority); the goal has its own card. The tinted tiles, the gradient score card and the ring journey are removed.
+- **Added** `lib/cro.js` helpers for the Overview (`salesWindow`, `conversionScale`, `conversionBand`, `niceAxis`,
+  `toCsv`) with tests.
+
+## 2026-11-20 (Article editor: Claude box in the side panel)
+
+Verified: frontend tests and `next build` pass; checked in the browser on the local app (article 50).
+
+- **Changed** article editor: "Claude instructions" (revise this draft, standing instructions) is the first box in the
+  right-hand panel, so it is reachable without scrolling past the article. Owner request.
+- **Removed** the "Ownership" box (assignee, topic, first imported, kept in step via, created, last saved) from the
+  editor's side panel. Owner request.
+- **Changed** the Claude box is only a text box and an "Ask Claude to revise" button: the title, help texts, the
+  Claude spend line, the brand-documents list and the "Standing instructions" editor are gone. Saved standing
+  instructions still go with every Claude request; they are edited under Settings → Brands. Owner request.
+- **Changed** Settings → Brands → "Voice and automation": a "Standing instructions for Claude" box and the list of brand
+  documents Claude reads (moved from the article editor). Saved with the other brand settings; admins only.
+
+## 2026-11-20 (Design round 3 built: CRO store pulse, checkout health, calendar day panel)
+
+Owner request: build the three round-3 samples (`design-mockups/redesign-samples-v3.html`). Verified: CRO backend tests
+(67, 3 new in `tests/unit/cro/test_goals.py`), ruff and `mypy --strict` for `modules/cro`, frontend tests, `next build`;
+checked in the browser on the local app with live data: CRO Overview and Cart & checkout, and the calendar's Month,
+2 weeks and Agenda views with the day panel. A monthly goal was not saved (that is the owner's figure to enter).
+
+- **Changed** CRO Overview is a "store pulse": a score card with three rings (visits; carts that reached checkout;
+  checkouts that paid) around the conversion rate, a mood line, the revenue, and the month's revenue goal as a bar with
+  today's pace mark (set or change the goal on the card). Four tinted tiles (orders, conversion, average order,
+  sessions) with small trend lines and a hover note on what each means. The journey as four steps, each with a ring of
+  the share that got through from the step before and how many left. "What to do next" can be ticked off (remembered
+  in this browser for that plan).
+- **Changed** CRO Cart & checkout: a checkout health score out of 100 from four checks (carts kept, checkouts finished,
+  visits that bought, mobile against desktop; 25 points each in proportion to the typical store), half-circle gauges
+  with the typical store marked (green when better, red when behind), and the day charts in blue and umber with a filled
+  area, a dashed "Typical" line and the best and worst day marked. Device and channel splits are coloured bars of the
+  share of sessions with each one's conversion rate. Conversion tab charts get the same reference line and markers.
+- **Changed** content calendar: filter chips for each kind of item and each brand; the selected day sits beside the
+  calendar (under it on narrow screens) as a timeline with times, then "Schedule another task" with the cost of a
+  Claude task; hovering an item lights up the other steps of the same blog; each event's chain shows research, draft
+  and live progress; a bar on each day shows how full it is; Month, 2 weeks and Agenda views.
+- **Added** `GET/PUT /api/cro/goal?brand=` (`modules/cro/goals.py`, kept in `app_settings` as `cro_goal:<brand>`,
+  audited); `api.put` in `lib/api.js`; `Gauge` in `components/motion.jsx`; `LineChart` options `refLine`, `area`,
+  `extremes`; sparklines draw themselves.
+
+## 2026-11-20 (Content calendar: colour lanes and a day panel)
+
+Verified: frontend tests, SEO backend tests and `next build` pass; checked in the browser on the local app (month grid,
+two-week strip, the 24 Nov day panel and its schedule form). Owner request after the design samples.
+
+- **Changed** Content calendar: every kind of item has its own colour (event, publish by, research, draft, publish
+  request, goes live, automatic blog) with a brand dot; a "Next 14 days" strip sits on top (today in ink, one bar per
+  kind of item); days lift on hover and items pop in. The automatic blogs (`/api/blog/overview`) are on the calendar too;
+  their own publish request and go-live are not listed a second time.
+- **Added** clicking a day opens a panel: first "What Flowmerce does this day" (each item with its state, message and
+  next step: Skip, Remove, Open article), then "Schedule another task" for that day (the same form as "Schedule a
+  task"; past days cannot take a new task).
+- **Fixed** an article whose publish request still waits for a reviewer no longer reads "Scheduled on Shopify"; it says it
+  goes live once a reviewer authorizes it (`/api/calendar` `scheduledPublishes` now carries the article status).
+
+## 2026-11-20 (Clearer CRO action plan; featured image from a link or the computer)
+
+Verified: backend unit tests pass except the existing `test_unfinished_pages_are_not_mounted` (5 new in
+`tests/unit/seo/test_image_upload.py`); frontend tests and `next build` pass. Checked in the browser on the local app:
+CRO Recommendations and the article editor's Featured image card. **Not run live:** an upload from the computer. The
+stores' Shopify access tokens do not have the `write_files` scope (checked read-only), so until it is added an upload
+shows how to add it and asks for a link instead.
+
+- **Changed** CRO Recommendations: the summary paragraph under "Claude's action plan" is gone. Each action is a numbered
+  card: the instruction as its heading, impact and effort tags, then "What to do" (numbered steps) beside "Why" (one
+  line) and "The numbers" (short bullets), and what it improves. Claude is asked for shorter fields from now on (a title
+  of up to 10 words, a one-sentence reason, 2-4 figures). The Overview's "What to do next" shows the same numbers.
+- **Changed** article editor, Featured image: "Choose from N products" is replaced by "From a link" (paste any https://
+  image address) and "From your computer" (drop or choose a JPG, PNG, WebP or GIF up to 15 MB). An uploaded file is
+  stored in the brand's Shopify Files and its CDN address becomes the image URL. Also "Remove image".
+- **Added** `POST /api/images/upload?brand=&filename=&alt=` (raw file body, no new dependency), `services/images.py`
+  (type checked from the file's first bytes, size limit, audit), `integrations/shopify.upload_image` (staged upload,
+  fileCreate, waits for processing). Needs the Shopify scope `write_files`.
+
+## 2026-11-20 (Claude CRO action plan; automatic blogs; SEO & Blog overview; Advanced menus; motion everywhere)
+
+Owner requests of 2026-11-20 and decisions taken the same day: automatic blogs stay HIDDEN Shopify drafts until a reviewer
+authorizes them; two a week per brand (Tuesday and Friday); rarely used pages go into an "Advanced" group inside each
+module; automatic blogs are OFF until an admin starts them in ONE copy of Flowmerce (this computer or the hosted copy).
+Verified: backend unit tests pass except the existing `test_unfinished_pages_are_not_mounted` (13 new: 8 in
+`tests/unit/seo/test_auto_blog.py`, 5 in `tests/unit/cro/test_ai_advice.py`); ruff and `mypy --strict` clean for
+`modules/cro`; frontend tests pass; `next build` passes. See the session report for what was checked in the browser.
+Not run live: an automatic blog end to end (it is off), and the Claude CRO plan was tried only as far as noted in the report.
+
+- **Added** CRO Recommendations: "Claude's action plan". Claude reads the store's last 30 days (orders, revenue,
+  conversion funnel, device and channel split, products, order health, the rule-based findings, the change log; no
+  customer details) and returns up to 8 ranked actions with impact, effort, the figures behind each and the steps. Same
+  ANTHROPIC_API_KEY and the same daily Claude limit as SEO & Blog (kind `cro_advice`, about $0.30). Opening the tab asks
+  once a day per store; Refresh asks again. The Overview's "What to do next" shows its top 3. `GET/POST /api/cro/ai-advice`.
+- **Added** automatic blogs (`services/auto_blog.py`): two slots a week per brand, 4 weeks ahead. Five days before a slot,
+  "Write a blog" runs with no person involved (topic research with upcoming events, topic and keywords picked, draft with
+  every field filled), then Flowmerce adds up to 3 product photos to the body, runs the new quality check, sends what
+  Claude can fix back once, approves it as "Flowmerce (auto)", saves a hidden Shopify draft and puts a publish request for
+  the slot's day on the content calendar. Nothing goes live without a reviewer. About $2 of Claude per blog.
+- **Added** the AEO / GEO / LLMO quality check (`services/answer_checks.py`): required fields, SEO, answer engines (direct
+  answer first, question headings, FAQ, lists), AI search (facts and figures, brand named, sources, product links) and AI
+  readability (short paragraphs, descriptive headings, images with alt text). `GET /api/articles/{id}/answer-checks`.
+- **Added** SEO & Blog → Overview (`/blog`): the blogs of the next 4 weeks as a ring, figures beside it (waiting for a
+  reviewer, live in 30 days, average quality, projected monthly clicks at today's Search Console clicks per live
+  article (none until there are 28 days of data and 3 live articles), Claude cost), a
+  five-week blog calendar, "Coming up" rows with quality by group, Skip, and Start / Pause automatic blogs.
+- **Added** SEO & Blog → Advanced → Write it yourself (`/write`): the manual tools in order (topic, approval, draft,
+  images and checks, review, publish), each opening its page.
+- **Changed** the sidebar: every module lists its everyday pages and a collapsed "Advanced" group. SEO & Blog: Overview,
+  Articles, Content calendar, Publishing; Advanced: Write it yourself, Topics & keywords, SEO & traffic, Automation.
+  Shipping and Conversion (CRO) list their tabs; Advanced: Shipping Analytics; CRO Alarms and Change log. Tab bars
+  keep the same tabs behind an "Advanced" toggle.
+- **Changed** Shipping Overview: the subtitle, the "Good afternoon. N orders need you today." heading and the summary
+  paragraph under it are gone; the cards and charts are unchanged; "Escalation list (CSV)" stays when there are critical
+  orders.
+- **Changed** CRO visuals: a visitor-journey card (conversion ring against the typical store, funnel bars), abandonment
+  rings on Cart & checkout, a revenue-by-product-group ring and best-seller bars on Products, an order-health ring on Sales.
+- **Changed** motion across the app (`components/motion.jsx`, CSS "motion, second pass"): figures count up, rings and
+  lines draw themselves, bars grow, cards arrive one after another, the active tab's underline slides in, critical
+  pills pulse. The count-up writes into its own text node (no re-render per frame) and everything is off for reduced
+  motion; tab and filter changes do not wait on any of it.
+- **Architecture** SQLite migration 7: table `auto_blogs`; `autopilot_runs.slot_id`, `autopilot_runs.revise_job_id`
+  (autopilot step `revise`). Settings `app_settings` keys `auto_blog` and `cro_advice:<brand>`. `ai_budget.ESTIMATE_USD`
+  gains `cro_advice`.
+
 ## 2026-11-20 (Faster tab and filter changes)
 
 Measured on the hosted copy before the change: a filter click 0.35-0.45 s, a tab 0.4-1.1 s, the first view after 5
@@ -19,6 +159,62 @@ Analytics 112-125 ms → 38-63 ms locally. Not yet measured on the hosted copy.
   every request (`board.py` `_memoized`; 0.3-0.7 s each on the hosting's CPU, and one such request held up the others).
 - **Changed** a Shipping board older than 5 minutes, or from before a data refresh, keeps answering while its replacement
   is built in the background; pages only wait for a brand's first board, Refresh now, or a team mark or outcome.
+
+## 2026-11-20 (Faster pages; fuller Home Shipping card and Shipping overview)
+
+Verified: backend 687 passed, 1 failed (the existing `test_unfinished_pages_are_not_mounted`); 10 new CRO tests in
+`tests/unit/cro/test_reads.py`; ruff and `mypy --strict` clean for `modules/cro`; frontend tests pass; `next build`
+passes. Timed read-only on live data: CRO's order copy loads in 2.2 s for
+Ridhi (was 6.7 s) and 1.7 s for CPC (was 3.1 s); repeated CRO settings / alarms / Home reads 0.01 s (were 0.8 / 1.9 /
+0.5 s). Checked in the browser with a preview build reading the live API (port 3001, deleted afterwards): Home,
+Shipping overview and Analytics at 1440 and 1200 px and at phone width (no sideways scroll). Remembered answers in
+`useApi` come from commit c5d575b (another session), not from this change. **Not yet in the running app:** it needs a
+restart.
+
+- **Changed** CRO keeps its order copy ready: once older than 2 minutes it is still shown at once and reloaded in the
+  background (a copy older than 30 minutes is reloaded first). Both stores are loaded, with the Home summary, when
+  Flowmerce starts. Pages of orders and line items are read at the same time, and Home reads both stores at once.
+- **Changed** CRO settings, alarm rules, alerts, change log and sync state are kept for 30 seconds and forgotten on
+  every change Flowmerce makes to them (and after each order sync). Alarm checks and the sync lock still read the
+  database every time.
+- **Changed** the moving background draws about 15 frames a second instead of 60 (same look, a quarter of the work);
+  page and card fade-ins take 0.2 s instead of up to 0.6 s.
+- **Changed** Home: the Shipping card is as tall as Sales and shows active parcels by age (ring and legend), delivered
+  and on time in 30 days, delivery problems, and the oldest delivery problems (each opens the order).
+- **Changed** the ring cards (Active shipments, Articles live): the total sits inside a larger ring, the label and pill
+  on top, and each legend row has a bar and a percentage of its share.
+- **Changed** Shipping overview tiles each show a small picture: on-time against the 90% goal, delivery days (1-2 to
+  9+), critical parcels by carrier, and delivered by week.
+- **Changed** the article editor never shows a remembered copy of an article: `useApi(path, { remember: false })`
+  (on top of c5d575b's remembered answers) always loads it fresh and does not keep it.
+- **Fixed** Shipping Analytics: "Value at risk" no longer sits alone on a second row (one row of seven on wide
+  screens, 4 + 3 otherwise).
+
+## 2026-11-19 (Shipping: delivered in Shopify means delivered in Flowmerce)
+
+- **Fixed** an order Shopify shows as delivered could stay on the Shipping board as "no tracking / pending" (CPC #6948).
+  Two causes: (1) Flowmerce's own Shopify copy was last read before the delivery, and the order then passed the 60-day
+  limit of Flowmerce's Shopify keys, so the copy never updated, while the refresh ignored the hub's newer "delivered".
+  `ops.refresh_from_shopify_orders()` (105) now counts a fulfilment as delivered when the hub's copy of it says so,
+  unless Shopify cancelled it. (2) Two orders sent in one parcel share one tracking number (#6948 and #6949), but
+  only one of them owned the tracking row, so the other showed "Tracking missing". `ops.flow_board` (108) now gives
+  that order the shared parcel's number, status and last scan, plus the real dispatch time instead of the time
+  Flowmerce stored the row. The board resolves both orders as Delivered once the shared number is delivered.
+- **Fixed** any tracking number on a parcel's Shopify fulfilment now counts, not only the one its row shows: CPC #8446
+  lists TBA336415473219 (delivered by Amazon on 18 Nov), whose tracking row belongs to #8426, and stayed on the board.
+- **Fixed** "Marked DONE by the team, but Shopify shows not fulfilled" (Checks tab) listed delivered orders, many marked
+  critical with "Package delivered near the front door" from Amazon (114 rows, now 47). Delivered orders, by any
+  source, are left out.
+- **Fixed** dispatch time is the earlier of the Shopify fulfilment and the carrier's first movement (108): # RBP8183 went
+  out through Amazon on 5 Nov but was entered in Shopify on 19 Nov, and showed "On track, 0 days".
+- **Fixed** the age figures add up to the active total: the Overview ring, "Shipments by age" and "Aging by carrier"
+  now include the parcels no carrier reports on ("Unconfirmed", 58), and the Overview headline names every open-check
+  type (it named 4 of 8, so 53 orders read as 41).
+- **Fixed** the team's "still in transit" count no longer includes a parcel whose order was delivered after the mark
+  (# RBP7010); the order drawer shows the Amazon (MCF) line only on the Amazon parcel, not on a FedEx parcel of the same
+  order; the drawer has side padding (its text touched or was cut at the left edge on narrow screens).
+  **Run `db/central/105_refresh_from_shopify_orders.sql` and `108_flow_board_amazon.sql` (or `supabase_setup.sql`) in the
+  Supabase SQL editor.** 108 changed again after the first run today, so run it once more.
 
 ## 2026-11-19 (Shorter lists on Content calendar and Publishing)
 
@@ -49,6 +245,137 @@ was not clicked live (it would have saved a real hidden draft to Shopify); its c
 - **Changed** Home, SEO & traffic, Automation and Shipping show only the daily essentials; the rest is under "Show more"
   (remembered per browser). Automation shows only stages that need attention.
 - **Architecture** new table `autopilot_runs` (migration 6). New `services/autopilot.py`, `components/More.jsx`.
+
+## 2026-11-20 (CRO: any date range; sales first on Home)
+
+Verified: 49 CRO backend tests pass (10 new in `tests/unit/cro/test_ranges.py`); full backend suite 677 passed, 1 failed
+(the existing `test_unfinished_pages_are_not_mounted`); ruff and `mypy --strict` clean for `modules/cro`; frontend
+tests 61 pass (2 new); `next build` passes. Read-only live check through the service layer: 1-15 Nov for Ridhi gave
+876 orders against 714 in the 15 days before, conversion 1.98% against 1.54%, and Shopify accepted the date-based
+ShopifyQL queries; the Home summary answered for both stores. Checked in the browser in demo mode (preview on port
+3001, deleted afterwards): Home order, the range picker, a custom 2-15 Nov range, and the phone layout of both
+pages. **Not yet seen in the running app:** it needs a restart to load the new backend and frontend.
+
+- **Added** any date range on the CRO page: quick picks (Today, Yesterday, Last 7 / 14 / 30 days, This month,
+  Last month) and "Pick dates..." (a calendar from-to; the same day twice = one day). Compare with the previous
+  period of the same length, the same days a week earlier, the 4-week weekday average (single day) or nothing.
+  The range is in the address (`?r=custom&from=...&to=...&cmp=...`) and applies to Overview, Conversion,
+  Cart & checkout, Products and Sales. Quick picks use the store's own "today" (Shopify timezone).
+- **Added** API: `from`, `to` (YYYY-MM-DD) and `compare` on `/api/cro/overview`, `sales-breakdown`, `sales-trend`,
+  `order-health`, `products`, `conversion`, `segments` (the older `period` / `days` still work); ShopifyQL by
+  explicit dates; ranges up to 366 days; orders older than the 63-day snapshot are read on demand.
+- **Added** `GET /api/cro/home`: per store, yesterday and today so far (orders and net sales against the 4-week
+  weekday average / same time last week), yesterday's conversion rate and the last 14 days. It never fails: a store
+  that cannot be read says why.
+- **Changed** Home: Sales (daily orders and net sales, Ridhi and CPC separate, 14-day charts) on the left and the
+  Shipping snapshot on the right come first, then Today's to-do, then the SEO & Blog block (content pipeline,
+  article journey). Sales also shows while the SEO data is loading or failed. The two shipping figures that were
+  in the SEO block are removed (they are in the Shipping card above).
+- **Added** a note when a range starts before CRO's order copy (20 Sep 2026 for Ridhi): order figures before then
+  are missing; sessions and conversion are complete.
+- **Changed** the Overview sales chart can show net sales, total sales or orders; store changes logged in the
+  chosen days are listed under it.
+
+## 2026-11-20 (CRO module, phase 3: the Conversion (CRO) page)
+
+Verified: frontend tests 59 pass (5 new in `tests/demo-cro.test.mjs`; `routes.test.mjs` and `demo-all.test.mjs` extended);
+`next build` passes (`/cro` 9.5 kB). Checked in the browser in demo mode on a separate preview build (port 3001, own
+`NEXT_DIST_DIR`, deleted afterwards): every tab renders, logging and removing a change works, editing an alarm
+works, and the phone layout (375 px) has no sideways scroll. **Not checked on live data:** the local Flowmerce
+(ports 8787/3000) was not running at the time; the running app shows the page only after its frontend is rebuilt.
+
+- **Added** menu entry "Conversion (CRO)" (`/cro`, after Shipping) with tabs Overview (KPI cards against the
+  same-weekday baseline with "too early to compare", 14-day sales trend against the 14 days before, top
+  recommendations, recent store changes), Conversion (daily conversion rate and sessions, funnel, day table),
+  Cart & checkout (abandonment trends next to industry references, device and channel splits), Products (top /
+  average / low), Sales (gross-to-total breakdown, 30-day order health), Recommendations, Alarms (switch all or
+  one rule on/off, edit name / threshold / keyword, add a product alarm, alert history) and Change log (add, remove).
+- **Added** one store at a time: the page follows the top bar's Ridhi / CPC, and shows its own Ridhi / CPC
+  switch when the top bar says All (conversion rates of two stores are never added together). "Sync now" reads
+  the store's latest orders.
+- **Added** plain explanations instead of zeros: missing Shopify analytics access (`reports_access_missing`),
+  CRO not set up, the `cro` schema not reachable, and "first order load still running".
+- **Added** demo data for every `/api/cro/*` route (`src/demo/modules/cro.js`); demo snapshot version 2.
+
+## 2026-11-19 (CRO: "sales declining" needs real volume)
+
+Verified: 39 CRO tests pass (1 new, 1 updated); ruff and `mypy --strict` clean. Checked read-only on both stores'
+live order copy. The running server picks the change up only after a restart.
+
+- **Changed** a product is reported as declining only when it sold at least 5 units and $300 in the week before
+  (`metrics.DECLINE_MIN_UNITS` / `DECLINE_MIN_REVENUE`, owner decision). On 19 Nov this cut Ridhi's 116 candidate
+  drops to 14 and CPC's 80 to 13. The top three shown changed from quilts going from 2 sales to 0 to drops such as
+  Oak Brown Quilt 9 -> 2 sold ($1,346 -> $248). The evidence line now shows units sold in both weeks.
+
+## 2026-11-19 (CRO: safer order sync after the first live run)
+
+Observed: Ridhi's first CRO order load stopped at 2,100 of its orders (placed 20 Sep - 6 Nov) and left its lock held,
+with no error recorded; CPC never started. A thread dump (py-spy, installed in `.venv` only) of the running server
+showed it had no CRO job at all (it started at 09:31 UTC, before CRO was mounted). The sync was run by another,
+short-lived Flowmerce process that exited mid-load. Which process it was is not established. Meanwhile the
+Recommendations page showed false "quilt orders stalled" and "sales declining" items from the partial data.
+
+Verified: 38 CRO tests pass (6 new); full suite 658 passed, 1 failed (the existing
+`test_unfinished_pages_are_not_mounted`); ruff and `mypy --strict` clean for `modules/cro`. Not re-run live.
+
+- **Fixed** `SCHEDULER=false` (used by the smoke test and other short-lived runs) now also stops the CRO background
+  job, so such runs never sync live data (`scheduler.enabled()`).
+- **Fixed** the sync saves its progress (`cro.sync_state.cursor`, only moving forward) and refreshes its lock after
+  every batch of 50 orders, so an interrupted load continues where it stopped instead of re-reading 60 days.
+- **Fixed** a lock not refreshed for 10 minutes belongs to a process that died and is cleared (compare-and-set, so a
+  live sync keeps its lock). Previously it blocked the store for 30 minutes.
+- **Fixed** until a store's first order load has finished, every order-based response carries
+  `order_data.first_load_complete = false` with a note, and Recommendations skips its order-based checks (listed in
+  `skipped`). Alarms already waited for a finished sync.
+
+## 2026-11-19 (CRO module, phase 2: backend, order copy, `/api/cro`)
+
+Verified: 32 new tests in `tests/unit/cro/` pass; full suite 652 passed, 1 failed (the existing
+`test_unfinished_pages_are_not_mounted`, about the `login` page folder); ruff and `mypy --strict` clean for
+`modules/cro` (the 53 project-wide mypy findings are all in existing Shipping files). Read-only live checks:
+112 is recorded as applied in Supabase; the `cro` schema is **not yet exposed** in the Data API (PGRST106);
+Shopify order + line-item reads work on both stores; ShopifyQL is **refused** on both stores (no `read_reports` /
+Level 2 customer data yet). Not verified: 113 has not been run; no sync, alarm or page tested against live data.
+
+- **Added** `src/flowmerce/modules/cro/`, ported from the CRO prototype and rebuilt on Flowmerce's foundations:
+  brand-aware (`ridhi`/`cpc`), Supabase through Shipping's REST client (schema `cro`), Shopify through each brand's
+  existing app (one app per store for every module), `require_perm("view")` on every route and the audit log on
+  every change. Routes under `/api/cro`: overview, sales-breakdown, sales-trend, order-health, products, conversion,
+  funnel, segments, recommendations, benchmarks, alarms (list/create/update), alerts, settings, sync, status,
+  change-log (list/add/delete).
+- **Added** background job (`CRO_SYNC_MINUTES`, default 15): copies new Shopify orders into `cro.orders` /
+  `cro.order_lines`, reloads the page snapshot, checks the alarms. Started next to Shipping's refresher in
+  `seo/app.py`; a CRO failure never stops SEO or Shipping.
+- **Added** `db/central/113_cro_orders.sql` (owner chose a CRO-owned order copy): `cro.orders`, `cro.order_lines`,
+  `cro.sync_state`, functions `save_orders`, `begin_sync` / `end_sync` (per-store lock), `delete_change_log`; drops
+  112's `cro.daily_sales` view, which the code does not use. Rollback 112 now also covers 113.
+- **Added** dependency `tzdata` (seo extra, owner-approved): Windows has no timezone database, and CRO splits orders
+  into the store's local days.
+- **Changed** from the prototype: conversion rate is computed from Shopify's session counts (no 0.025-vs-2.5 guess);
+  the "revenue pacing" recommendation compares today with the same weekday last week, not yesterday; the product
+  alarm uses a keyword setting instead of the hard-coded "quilt", and waits while the order copy is stale; alarms
+  are shown in the app only (no email); timezone comes from Shopify (fallback `ops.stores`, then UTC).
+- **Removed** nothing from Flowmerce. Not ported from the prototype: its SQLAlchemy models and migrations, its own
+  Shopify client and embedded-app login, the API-key and CORS setup, test endpoints, SMTP email, the Vite/TypeScript
+  frontend.
+
+## 2026-11-19 (CRO module, phase 1: the `cro` schema in Supabase)
+
+Not verified: the SQL has not been run (no PostgreSQL on this computer); it was checked by reading only. No Python
+or frontend code yet: the CRO pages and API come in later phases.
+
+- **Added** `db/central/112_cro.sql` (and its copy `supabase/112_cro.sql`): schema `cro` with `store_settings`,
+  `alarm_rules` (conversion-rate drop, no orders for a product keyword; thresholds editable), `alerts` (the database
+  refuses a second open alert per rule and a second conversion-drop alert per day) and `change_log`, plus the view
+  `cro.daily_sales` (orders and revenue per store per local day from `ops.orders`). Default rules: RBP conversion drop
+  20% and no quilt orders for 12 hours; CPC conversion drop 20%. RLS on; only `service_role` / `flowmerce_app` get rights.
+  Reads `ops.orders` / `ops.stores` only; never writes `ops`, `seo` or `public`.
+- **Added** `db/central/rollback/112_rollback_cro.sql`: drops schema `cro` only; refuses while the team has recorded
+  alerts, change-log entries, settings or added/edited rules, unless `flowmerce.allow_cro_rollback_with_data = 'yes'`.
+- **Changed** `scripts/build_supabase_setup.py` includes 112, and the generated header says to expose `cro` as well
+  as `ops`; `supabase_setup.sql` regenerated (112 appended, nothing else changed).
+- **Known gap** `ops.orders` has no subtotal / discounts / shipping / tax / refunded amounts filled, and `ops.items` is
+  never filled, so the sales breakdown, top products and the quilt alarm still need a data source (phase 2 decision).
 
 ## 2026-11-19 (Blog: Claude writes with each brand's own guides; content calendar; daily Claude limit)
 
@@ -88,32 +415,6 @@ from 128 ms to 6 ms; on the hosting's small CPU each request rebuilt the board i
   until the snapshot is reloaded, a team mark or outcome changes it, or 5 minutes pass; parallel requests for one
   brand wait for a single build. After each background reload (scheduler, MCF sheet sync, stale cache) the "all"
   board is built in the background so the next page does not wait.
-
-## 2026-11-19 (Shipping: delivered in Shopify means delivered in Flowmerce)
-
-- **Fixed** an order Shopify shows as delivered could stay on the Shipping board as "no tracking / pending" (CPC #6948).
-  Two causes: (1) Flowmerce's own Shopify copy was last read before the delivery, and the order then passed the 60-day
-  limit of Flowmerce's Shopify keys, so the copy never updated, while the refresh ignored the hub's newer "delivered".
-  `ops.refresh_from_shopify_orders()` (105) now counts a fulfilment as delivered when the hub's copy of it says so,
-  unless Shopify cancelled it. (2) Two orders sent in one parcel share one tracking number (#6948 and #6949), but
-  only one of them owned the tracking row, so the other showed "Tracking missing". `ops.flow_board` (108) now gives
-  that order the shared parcel's number, status and last scan, plus the real dispatch time instead of the time
-  Flowmerce stored the row. The board resolves both orders as Delivered once the shared number is delivered.
-- **Fixed** any tracking number on a parcel's Shopify fulfilment now counts, not only the one its row shows: CPC #8446
-  lists TBA336415473219 (delivered by Amazon on 18 Nov), whose tracking row belongs to #8426, and stayed on the board.
-- **Fixed** "Marked DONE by the team, but Shopify shows not fulfilled" (Checks tab) listed delivered orders, many marked
-  critical with "Package delivered near the front door" from Amazon (114 rows, now 47). Delivered orders, by any
-  source, are left out.
-- **Fixed** dispatch time is the earlier of the Shopify fulfilment and the carrier's first movement (108): # RBP8183 went
-  out through Amazon on 5 Nov but was entered in Shopify on 19 Nov, and showed "On track, 0 days".
-- **Fixed** the age figures add up to the active total: the Overview ring, "Shipments by age" and "Aging by carrier"
-  now include the parcels no carrier reports on ("Unconfirmed", 58), and the Overview headline names every open-check
-  type (it named 4 of 8, so 53 orders read as 41).
-- **Fixed** the team's "still in transit" count no longer includes a parcel whose order was delivered after the mark
-  (# RBP7010); the order drawer shows the Amazon (MCF) line only on the Amazon parcel, not on a FedEx parcel of the same
-  order; the drawer has side padding (its text touched or was cut at the left edge on narrow screens).
-  **Run `db/central/105_refresh_from_shopify_orders.sql` and `108_flow_board_amazon.sql` (or `supabase_setup.sql`) in the
-  Supabase SQL editor.** 108 changed again after the first run today, so run it once more.
 
 ## 2026-11-19 (Shipping: a delivered order is never an alert)
 

@@ -1,7 +1,7 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams as useQuery } from 'next/navigation';
 import { useNavigate } from '../lib/nav';
 import { Icon } from './Icon';
 import { Logo } from './Logo';
@@ -14,7 +14,7 @@ import { DemoBanner } from './DemoBanner';
 import { AmbientBackground } from './AmbientBackground';
 import { BudgetWarning } from './claude';
 import { IS_DEMO } from '../demo';
-import { NAV, SETTINGS, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../lib/routes.mjs';
+import { NAV, SETTINGS, hrefOf, itemActive, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../lib/routes.mjs';
 export function Shell({ children }) {
     const { me, can, brand } = useApp();
     const [navOpen, setNavOpen] = useState(false);
@@ -55,9 +55,11 @@ export function Shell({ children }) {
           </Link>
           <button type="button" className="btn ghost icon-only sidebar-close" aria-label="Close navigation" onClick={() => setNavOpen(false)}><Icon name="close"/></button>
           {inSettings ? (<SettingsNav can={can}/>) : (<nav aria-label="Modules">
-            {NAV.map((e) => (e.kind === 'module'
-                ? <ModuleNav key={e.id} entry={e} can={can} count={pendingPublish} alert={failedPublish}/>
-                : <NavItem key={e.id} to={e.to} icon={e.icon} end={e.end} module={e.id}>{e.label}</NavItem>))}
+            <Suspense fallback={null}>
+              {NAV.map((e) => (e.kind === 'module'
+                  ? <ModuleNav key={e.id} entry={e} can={can} count={pendingPublish} alert={failedPublish}/>
+                  : <NavItem key={e.id} to={e.to} icon={e.icon} end={e.end} module={e.id}>{e.label}</NavItem>))}
+            </Suspense>
           </nav>)}
           <div className="sidebar-foot">
             {inSettings ? null : <NavItem to={SETTINGS.to} icon={SETTINGS.icon} module="settings" active={false}>{SETTINGS.label}</NavItem>}
@@ -106,23 +108,47 @@ function BackButton() {
     };
     return <Button variant="ghost" size="sm" icon="chevronLeft" onClick={back} aria-label="Go back" title="Back to the previous page">Back</Button>;
 }
-/** A SEO & Blog entry that expands to its pages. It opens by itself when one of its pages is open and closes in other modules. */
+/**
+ * A module entry that expands to its everyday pages and, below them, a collapsed "Advanced" group (pages and tabs that
+ * are set up once or opened now and then). It opens by itself when one of its pages is open and closes in other
+ * modules. A module that is one page with tabs (Shipping, CRO) opens that page from its own entry too.
+ */
 function ModuleNav({ entry, can, count, alert }) {
     const pathname = usePathname() ?? '/';
+    const tab = useQuery()?.get('tab') ?? '';
     const here = moduleOf(pathname) === entry.id;
     const [open, setOpen] = useState(here);
     useEffect(() => { setOpen(here); }, [here]);
-    const items = entry.items.filter((i) => !i.perm || can(i.perm));
+    const allowed = (list) => (list ?? []).filter((i) => !i.perm || can(i.perm));
+    const items = allowed(entry.items);
+    const advanced = allowed(entry.advanced);
+    const advancedHere = advanced.some((i) => itemActive(i, pathname, tab));
+    const [advOpen, setAdvOpen] = useState(advancedHere);
+    useEffect(() => { if (advancedHere) setAdvOpen(true); }, [advancedHere]);
+    const badgeCount = (i) => (i.badge === 'publishing' ? count : 0);
+    const advancedCount = advanced.reduce((n, i) => n + badgeCount(i), 0);
     const listId = `nav-${entry.id}`;
+    const item = (i) => (<li key={hrefOf(i)}><NavItem to={hrefOf(i)} icon={i.icon} count={badgeCount(i)} alert={alert} active={itemActive(i, pathname, tab)}>{i.label}</NavItem></li>);
+    const head = (<>
+      <Icon name={entry.icon}/>
+      {entry.label}
+      {!open && count && (items.some((i) => i.badge) || advanced.some((i) => i.badge)) ? <span className={`count ${alert ? 'alert' : ''}`} aria-label={`${count} publishing items need attention`}>{count}</span> : null}
+      <Icon name={open ? 'chevronDown' : 'chevronRight'} size="sm" className="nav-chevron"/>
+    </>);
     return (<div className="nav-module">
-      <button type="button" className={`nav-item nav-parent ${here ? 'parent-active' : ''}`} aria-expanded={open} aria-controls={listId} onClick={() => setOpen((o) => !o)}>
-        <Icon name={entry.icon}/>
-        {entry.label}
-        {!open && count ? <span className={`count ${alert ? 'alert' : ''}`} aria-label={`${count} publishing items need attention`}>{count}</span> : null}
-        <Icon name={open ? 'chevronDown' : 'chevronRight'} size="sm" className="nav-chevron"/>
-      </button>
+      {entry.to && !here ? <Link href={entry.to} className="nav-item nav-parent" aria-controls={listId}>{head}</Link>
+          : (<button type="button" className={`nav-item nav-parent ${here ? 'parent-active' : ''}`} aria-expanded={open} aria-controls={listId} onClick={() => setOpen((o) => !o)}>{head}</button>)}
       {open ? (<ul id={listId} className="nav-sub">
-          {items.map((i) => (<li key={i.to}><NavItem to={i.to} icon={i.icon} count={i.badge === 'publishing' ? count : 0} alert={alert}>{i.label}</NavItem></li>))}
+          {items.map(item)}
+          {advanced.length ? (<li className="nav-adv">
+              <button type="button" className={`nav-item nav-adv-toggle ${advOpen ? 'open' : ''}`} aria-expanded={advOpen} onClick={() => setAdvOpen((o) => !o)}
+                title={`Advanced: ${advanced.map((i) => i.label).join(', ')}`}>
+                <Icon name="settings" size="sm"/>Advanced
+                {!advOpen && advancedCount ? <span className={`count ${alert ? 'alert' : ''}`}>{advancedCount}</span> : null}
+                <Icon name={advOpen ? 'chevronDown' : 'chevronRight'} size="sm" className="nav-chevron"/>
+              </button>
+              {advOpen ? <ul className="nav-sub nav-sub-adv">{advanced.map(item)}</ul> : null}
+            </li>) : null}
         </ul>) : null}
     </div>);
 }

@@ -5,7 +5,8 @@ read_products, set as RIDHI_SHOPIFY_ADMIN_TOKEN / CPC_SHOPIFY_ADMIN_TOKEN. It ne
 
 Writes are deliberately narrow: create_hidden_draft() always sends isPublished: false, and
 update_hidden_draft() first reads the article and refuses if it is live. The only function that can
-make an article visible is publish_article(), called by services/publishing.py after its own checks."""
+make an article visible is publish_article(), called by services/publishing.py after its own checks.
+upload_image() stores a picture in the store's Files for a featured image (needs the extra scope write_files)."""
 from __future__ import annotations
 
 import threading
@@ -113,6 +114,46 @@ def _gql(b: BrandConfig, query: str, variables: dict | None = None) -> dict:
             raise RuntimeError("Shopify: " + "; ".join(e.get("message", "") for e in errors))
         return data["data"]
     raise RuntimeError("Shopify kept rate-limiting the request; try again shortly.")
+
+
+class MissingScope(RuntimeError):
+    """The store's access token lacks a scope a call needs (Shopify answers "Access denied")."""
+
+
+def upload_image(b: BrandConfig, data: bytes, filename: str, mime: str, alt: str = "") -> str:
+    """Put an image in the store's Files (Shopify CDN) and return its public URL, for use as a featured image. Nothing on
+    the storefront changes: a file is only a stored image until an article uses it. Needs the `write_files` scope.
+    Steps: a staged upload target, the file posted to it, fileCreate, then waiting until Shopify has processed it."""
+    try:
+        staged = _gql(b, """mutation($input: [StagedUploadInput!]!) { stagedUploadsCreate(input: $input) {
+                              stagedTargets { url resourceUrl parameters { name value } } userErrors { field message } } }""",
+                      {"input": [{"filename": filename, "mimeType": mime, "resource": "IMAGE", "httpMethod": "POST", "fileSize": str(len(data))}]})
+    except RuntimeError as e:
+        if "access denied" in str(e).lower() or "write_files" in str(e):
+            raise MissingScope(str(e)) from None
+        raise
+    res = staged["stagedUploadsCreate"]
+    if res["userErrors"] or not res["stagedTargets"]:
+        raise RuntimeError("Shopify refused the upload: " + "; ".join(x["message"] for x in res["userErrors"]))
+    target = res["stagedTargets"][0]
+    up = httpx.post(target["url"], data={x["name"]: x["value"] for x in target["parameters"]}, files={"file": (filename, data, mime)}, timeout=120)
+    if up.status_code >= 300:
+        raise RuntimeError(f"The image could not be sent to Shopify's storage ({up.status_code}).")
+    made = _gql(b, """mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) {
+                        files { id fileStatus ... on MediaImage { image { url } } } userErrors { field message } } }""",
+                {"files": [{"originalSource": target["resourceUrl"], "contentType": "IMAGE", "alt": alt[:500]}]})["fileCreate"]
+    if made["userErrors"] or not made["files"]:
+        raise RuntimeError("Shopify did not keep the image: " + "; ".join(x["message"] for x in made["userErrors"]))
+    f = made["files"][0]
+    for _ in range(20):   # Shopify processes the image in the background, usually within a few seconds
+        url = (f.get("image") or {}).get("url") or ""
+        if url:
+            return str(url)
+        if f.get("fileStatus") == "FAILED":
+            raise RuntimeError("Shopify could not process this image. Try a JPG or PNG under 15 MB.")
+        time.sleep(1.5)
+        f = _gql(b, "query($id: ID!) { node(id: $id) { ... on MediaImage { id fileStatus image { url } } } }", {"id": f["id"]})["node"] or {}
+    raise RuntimeError("Shopify is still processing the image. Try again in a minute.")
 
 
 def shop_info(b: BrandConfig) -> dict:

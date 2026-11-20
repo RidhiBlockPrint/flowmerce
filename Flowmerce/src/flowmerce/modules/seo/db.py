@@ -434,6 +434,27 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX autopilot_runs_brand ON autopilot_runs(brand_id, status);
     """,
+    # Blog: the automatic blog pipeline (services/auto_blog.py). One slot per brand and publishing day; an autopilot run
+    # writes it, a quality check (AEO/GEO/LLMO) may send it back to Claude once (revise_job_id), and the slot ends ready
+    # as a hidden Shopify draft with a publish request a reviewer must authorize.
+    """
+    CREATE TABLE auto_blogs (
+      id INTEGER PRIMARY KEY,
+      brand_id TEXT NOT NULL,
+      publish_on TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned','writing','ready','failed','skipped','missed')),
+      run_id INTEGER REFERENCES autopilot_runs(id) ON DELETE SET NULL,
+      article_id INTEGER REFERENCES articles(id) ON DELETE SET NULL,
+      checks_json TEXT NOT NULL DEFAULT '{}',
+      message TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (brand_id, publish_on)
+    );
+    CREATE INDEX auto_blogs_due ON auto_blogs(status, publish_on);
+    ALTER TABLE autopilot_runs ADD COLUMN slot_id INTEGER REFERENCES auto_blogs(id) ON DELETE SET NULL;
+    ALTER TABLE autopilot_runs ADD COLUMN revise_job_id TEXT;
+    """,
 ]
 
 _conn: sqlite3.Connection | None = None

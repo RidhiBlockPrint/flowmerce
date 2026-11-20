@@ -7,6 +7,7 @@
 import { fmtInt } from '../lib/format';
 import { Card, Pill } from './ui';
 import { Icon } from './Icon';
+import { CountUp } from './motion';
 
 export function greeting(d = new Date()) {
     const h = d.getHours();
@@ -34,12 +35,13 @@ export function Greeting({ count, noun = 'thing', parts = [], actions, calm = 'N
     </div>);
 }
 
-/** A small clickable stat card. */
-export function MiniStat({ label, value, foot, tone, onClick, title }) {
+/** A small clickable stat card. `children` is an optional small picture (bar, mini chart) kept at the bottom. */
+export function MiniStat({ label, value, foot, tone, onClick, title, children }) {
     const inner = (<>
       <span className="mini-label">{label}</span>
-      <span className="mini-value" style={tone ? { color: `var(--${tone})` } : undefined}>{value}</span>
+      <span className="mini-value" style={tone ? { color: `var(--${tone})` } : undefined}><CountUp value={value}/></span>
       {foot ? <span className="mini-foot">{foot}</span> : null}
+      {children ? <span className="mini-viz">{children}</span> : null}
     </>);
     return onClick ? <button type="button" className="mini" onClick={onClick} title={title}>{inner}</button> : <div className="mini static">{inner}</div>;
 }
@@ -48,42 +50,60 @@ export function MiniGrid({ children }) {
     return <div className="ov-minis">{children}</div>;
 }
 
+const share = (v, sum) => (sum ? v / sum : 0);
+const pctText = (f) => (f > 0 && f < 0.01 ? '<1%' : `${Math.round(f * 100)}%`);
+
 /**
- * A big total with a ring of its parts and a clickable legend.
- * segments: [{ key, name, range?, value, color, onClick? }]. The ring's centre shows `center` / `centerLabel`.
+ * A ring of the parts with the total in its centre, and a legend whose rows carry a bar of each part's share, so
+ * the card's width is used. segments: [{ key, name, range?, value, color, onClick? }]. `center` / `centerLabel`
+ * override the centre (default: the total). `compact` is the smaller form used inside another card.
  */
-export function RingCard({ label, total, onTotal, pill, segments, center, centerLabel }) {
+export function RingBody({ segments, total, center, centerLabel, compact }) {
     const sum = segments.reduce((n, s) => n + (s.value || 0), 0);
     let at = 0;
     const arcs = segments.filter((s) => s.value).map((s) => {
-        const len = sum ? (s.value / sum) * 100 : 0;
+        const len = share(s.value, sum) * 100;
         const a = { ...s, len: Math.max(len - 0.8, 0.4), off: at };
         at += len;
         return a;
     });
-    const head = (<><span className="age-total-label">{label}</span><span className="age-total-num serif">{typeof total === 'number' ? fmtInt(total) : total}</span></>);
+    const mid = center ?? (typeof total === 'number' ? fmtInt(total) : total);
+    const midText = String(mid ?? '');
+    return (<div className={`age-body${compact ? ' compact' : ''}`}>
+      <svg className="age-ring" viewBox="0 0 36 36" role="img" aria-label={segments.map((s) => `${s.name}: ${s.value}`).join(', ')}>
+        <circle cx="18" cy="18" r="15.9155" fill="none" stroke="var(--line-2)" strokeWidth="3.4"/>
+        {arcs.map((a, i) => (<circle key={a.key} className="ring-arc" style={{ animationDelay: `${i * 70}ms`, ...(a.onClick ? { cursor: 'pointer' } : {}) }} cx="18" cy="18" r="15.9155" fill="none" stroke={a.color} strokeWidth="3.4"
+            strokeDasharray={`${a.len} ${100 - a.len}`} strokeDashoffset={-a.off} transform="rotate(-90 18 18)"
+            onClick={a.onClick}><title>{`${a.name}: ${fmtInt(a.value)}`}</title></circle>))}
+        {mid !== undefined && mid !== null ? <text x="18" y={centerLabel ? 18.4 : 20} textAnchor="middle" className={`age-ring-num${midText.length > 5 ? ' long' : ''}`}><CountUp value={midText} as="tspan"/></text> : null}
+        {centerLabel ? <text x="18" y="23" textAnchor="middle" className="age-ring-sub">{centerLabel}</text> : null}
+      </svg>
+      <div className="age-legend">
+        {segments.map((s) => {
+            const f = share(s.value || 0, sum);
+            const body = (<>
+              <span className="age-dot" style={{ background: s.color }}/>
+              <span className="age-name">{s.name}{s.range && !compact ? <span className="age-range">{s.range}</span> : null}</span>
+              <span className="age-count"><CountUp value={fmtInt(s.value)}/></span>
+              <span className="age-pct">{pctText(f)}</span>
+              <span className="age-bar" aria-hidden="true"><span style={{ width: `${Math.max(f * 100, s.value ? 1.5 : 0)}%`, background: s.color }}/></span>
+            </>);
+            return s.onClick ? <button type="button" key={s.key} className={`age-item${s.value ? '' : ' zero'}`} onClick={s.onClick} title={`See ${s.name}`}>{body}</button>
+                : <div key={s.key} className={`age-item${s.value ? '' : ' zero'}`}>{body}</div>;
+        })}
+      </div>
+    </div>);
+}
+
+/** A card: its label (a link to the full list when `onTotal` is given) and a pill on top, the ring and legend below. */
+export function RingCard({ label, total, onTotal, pill, segments, center, centerLabel }) {
+    const head = <span className="age-total-label">{label}</span>;
     return (<Card className="age-card">
       <div className="age-top">
         {onTotal ? <button type="button" className="age-total" onClick={onTotal} title={`See ${String(label).toLowerCase()}`}>{head}</button> : <div className="age-total">{head}</div>}
         {pill ? <Pill tone={pill.tone ?? 'ok'}>{pill.label}</Pill> : null}
       </div>
-      <div className="age-body">
-        <svg className="age-ring" viewBox="0 0 36 36" role="img" aria-label={segments.map((s) => `${s.name}: ${s.value}`).join(', ')}>
-          <circle cx="18" cy="18" r="15.9155" fill="none" stroke="var(--line-2)" strokeWidth="3.6"/>
-          {arcs.map((a) => (<circle key={a.key} cx="18" cy="18" r="15.9155" fill="none" stroke={a.color} strokeWidth="3.6"
-              strokeDasharray={`${a.len} ${100 - a.len}`} strokeDashoffset={-a.off} transform="rotate(-90 18 18)"
-              style={a.onClick ? { cursor: 'pointer' } : undefined} onClick={a.onClick}><title>{`${a.name}: ${fmtInt(a.value)}`}</title></circle>))}
-          {center !== undefined ? <text x="18" y={centerLabel ? 17.2 : 19.4} textAnchor="middle" className="age-ring-num">{center}</text> : null}
-          {centerLabel ? <text x="18" y="21.6" textAnchor="middle" className="age-ring-sub">{centerLabel}</text> : null}
-        </svg>
-        <div className="age-legend">
-          {segments.map((s) => {
-              const body = (<><span className="age-dot" style={{ background: s.color }}/><span className="age-name">{s.name}{s.range ? <span className="age-range">{s.range}</span> : null}</span><span className="age-count">{fmtInt(s.value)}</span></>);
-              return s.onClick ? <button type="button" key={s.key} className={`age-item${s.value ? '' : ' zero'}`} onClick={s.onClick} title={`See ${s.name}`}>{body}</button>
-                  : <div key={s.key} className={`age-item${s.value ? '' : ' zero'}`}>{body}</div>;
-          })}
-        </div>
-      </div>
+      <RingBody segments={segments} total={total} center={center} centerLabel={centerLabel}/>
     </Card>);
 }
 

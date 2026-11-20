@@ -7,6 +7,9 @@ const GET = [
   '/auth/me', '/tasks', '/home', '/home?brand=ridhi', '/brands', '/publishing', '/articles', '/articles/counts', '/topics', '/keywords',
   '/analytics/gsc', '/automation', '/ai/jobs', '/integrations', '/data/kinds', '/data/health', '/audit',
   '/shipping/summary', '/shipping/shipments', '/shipping/analytics', '/shipping/checks',
+  '/cro/overview?brand=ridhi', '/cro/sales-trend?brand=cpc', '/cro/sales-breakdown?brand=ridhi', '/cro/order-health?brand=ridhi',
+  '/cro/products?brand=cpc', '/cro/conversion?brand=ridhi', '/cro/segments?brand=ridhi&dimension=channel', '/cro/recommendations?brand=ridhi', '/cro/ai-advice?brand=ridhi', '/cro/goal?brand=ridhi', '/blog/overview', '/blog/overview?brand=cpc',
+  '/cro/benchmarks', '/cro/home', '/cro/home?brand=cpc', '/cro/overview?brand=ridhi&from=2026-11-01&to=2026-11-07&compare=last_week', '/cro/alarms?brand=ridhi', '/cro/alerts?brand=ridhi', '/cro/change-log?brand=ridhi', '/cro/settings?brand=cpc',
 ];
 
 test('every page endpoint answers', async () => {

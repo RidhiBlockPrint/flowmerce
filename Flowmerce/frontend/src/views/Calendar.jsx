@@ -1,8 +1,10 @@
 'use client';
 /*
  * Content calendar: upcoming events and seasons with their "publish by" dates, and the schedule of what Flowmerce
- * researches, drafts and puts forward for publishing on which day. Scheduled Claude work runs within the daily limit;
- * a scheduled publish only creates a publish request, which a reviewer still authorizes.
+ * researches, drafts and puts forward for publishing on which day, plus the automatic blogs (services/auto_blog.py).
+ * Every kind of item has its own colour lane; a two-week strip sits on top. Clicking a day opens a panel: first what
+ * Flowmerce does that day, then a form to schedule another task for it. Scheduled Claude work runs within the daily
+ * limit; a scheduled publish only creates a publish request, which a reviewer still authorizes.
  */
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
@@ -16,6 +18,18 @@ import { BudgetLine, WriteBlog, usd } from '../components/claude';
 
 const ACTION = { research: ['Research topics', 'search'], draft: ['Write draft', 'edit'], publish: ['Publish request', 'publish'] };
 const TONE = { planned: 'info', done: 'ok', skipped: 'neutral', failed: 'crit' };
+/** Colour lane, label and icon of each kind of calendar item (CSS classes .lane-*). */
+const LANE = {
+    event: { cls: 'lane-event', label: 'Event', icon: 'star' },
+    deadline: { cls: 'lane-due', label: 'Publish by', icon: 'flag' },
+    research: { cls: 'lane-research', label: 'Research', icon: 'search' },
+    draft: { cls: 'lane-draft', label: 'Draft', icon: 'edit' },
+    publish: { cls: 'lane-publish', label: 'Publish request', icon: 'publish' },
+    live: { cls: 'lane-live', label: 'Goes live', icon: 'clock' },
+    auto: { cls: 'lane-auto', label: 'Automatic blog', icon: 'sparkle' },
+};
+const laneOf = (it) => (it.kind === 'entry' ? it.s.action : it.kind);
+const AUTO_STATUS = { planned: 'Planned', writing: 'Writing', ready: 'Ready, waiting for a reviewer', failed: 'Stopped', missed: 'Missed', skipped: 'Skipped' };
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const addDays = (s, n) => { const d = new Date(`${s}T12:00:00`); d.setDate(d.getDate() + n); return iso(d); };
@@ -24,16 +38,33 @@ export default function Calendar() {
     const brand = useBrandParam();
     const { can, me } = useApp();
     const toast = useToast();
-    const [month, setMonth] = useState(() => iso(new Date()).slice(0, 7));
+    const [view, setView] = useState('month');
+    const [anchor, setAnchor] = useState(() => iso(new Date()));
+    const month = anchor.slice(0, 7);
     const first = `${month}-01`;
-    const gridStart = addDays(first, -((new Date(`${first}T12:00:00`).getDay() + 6) % 7));
-    const gridEnd = addDays(gridStart, 41);
+    const monday = (s) => addDays(s, -((new Date(`${s}T12:00:00`).getDay() + 6) % 7));
+    const gridStart = view === 'month' ? monday(first) : view === 'twoweeks' ? monday(anchor) : anchor;
+    const gridLen = view === 'month' ? 42 : view === 'twoweeks' ? 14 : 30;
+    const gridEnd = addDays(gridStart, gridLen - 1);
     const cal = useApi(`/calendar${qs({ brand, from: gridStart, to: gridEnd })}`);
+    const auto = useApi(`/blog/overview${qs({ brand })}`);
     const [adding, setAdding] = useState(null);
+    const [selDay, setSelDay] = useState(null);
+    const [hidden, setHidden] = useState(() => new Set());
+    const [hover, setHover] = useState(null);
     const [addingEvent, setAddingEvent] = useState(false);
     const [planning, setPlanning] = useState(false);
     const [busy, setBusy] = useState('');
-    const shift = (n) => { const d = new Date(`${first}T12:00:00`); d.setMonth(d.getMonth() + n); setMonth(iso(d).slice(0, 7)); };
+    const shift = (n) => {
+        if (view === 'month') {
+            const d = new Date(`${first}T12:00:00`);
+            d.setMonth(d.getMonth() + n);
+            setAnchor(iso(d));
+        }
+        else
+            setAnchor(addDays(anchor, n * (view === 'twoweeks' ? 14 : 30)));
+    };
+    const toggleFilter = (k) => setHidden((h) => { const n = new Set(h); if (n.has(k)) n.delete(k); else n.add(k); return n; });
     const byDay = useMemo(() => {
         const m = {};
         const push = (day, item) => { (m[day] ||= []).push(item); };
@@ -42,12 +73,19 @@ export default function Calendar() {
             if (e.lead_days > 0)
                 push(e.publish_by, { kind: 'deadline', e });
         }
+        // An automatic blog stands for its own publish request and go-live, so those are not listed a second time.
+        const autoArticles = new Set((auto.data?.slots ?? []).filter((s) => s.article_id && s.status !== 'skipped').map((s) => s.article_id));
         for (const s of cal.data?.schedule ?? [])
-            push(s.run_on, { kind: 'entry', s });
+            if (!(s.action === 'publish' && autoArticles.has(s.article_id)))
+                push(s.run_on, { kind: 'entry', s });
         for (const a of cal.data?.scheduledPublishes ?? [])
-            push(a.publish_at.slice(0, 10), { kind: 'live', a });
+            if (!autoArticles.has(a.id))
+                push(a.publish_at.slice(0, 10), { kind: 'live', a });
+        for (const s of auto.data?.slots ?? [])
+            if (s.status !== 'skipped')
+                push(s.publish_on, { kind: 'auto', slot: s });
         return m;
-    }, [cal.data]);
+    }, [cal.data, auto.data]);
     const startResearch = async (ev) => {
         if (!brand)
             return toast.error(new Error('Pick one brand at the top of the page first.'));
@@ -84,10 +122,29 @@ export default function Calendar() {
             toast.error(e);
         }
     };
+    const removeEntry = async (s) => {
+        try { await api.del(`/calendar/schedule/${s.id}`); cal.reload(); } catch (e) { toast.error(e); }
+    };
     if (cal.error)
         return <ErrorState error={cal.error} onRetry={cal.reload}/>;
     const today = cal.data?.budget?.today ?? iso(new Date());
-    const days = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+    const days = Array.from({ length: gridLen }, (_, i) => addDays(gridStart, i));
+    const day = selDay ?? today;
+    const isHidden = (it) => hidden.has(laneOf(it)) || (brandOf(it) && hidden.has(`b:${brandOf(it)}`));
+    const title = view === 'month' ? new Date(`${first}T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+        : `${fmtDate(gridStart, { day: 'numeric', month: 'short' })} – ${fmtDate(gridEnd, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    const cell = (d, i) => {
+        const items = byDay[d] ?? [];
+        return (<button type="button" key={d} role="gridcell" onClick={() => setSelDay(d)}
+          className={`lanecal-day${d === today ? ' today' : ''}${d === day ? ' sel' : ''}${d < today ? ' past' : ''}${view === 'month' && d.slice(0, 7) !== month ? ' other' : ''}${view === 'twoweeks' ? ' tall' : ''}`}
+          aria-pressed={d === day} aria-label={`${fmtDate(d)}: ${items.length ? `${items.length} item${items.length === 1 ? '' : 's'}` : 'nothing planned'}`}>
+          <span className="lanecal-num">{view === 'twoweeks' ? `${WEEKDAYS[i % 7]} ${Number(d.slice(8))}` : Number(d.slice(8))}{d === today ? <span className="pill info" style={{ height: 18, padding: '0 6px' }}>Today</span> : null}</span>
+          {items.slice(0, view === 'twoweeks' ? 6 : 3).map((it, k) => <DayItem key={k} it={it} delay={(i % 7) * 25 + k * 40} dim={isHidden(it)} short
+            hl={hover && chainOf(it) === hover} onHover={setHover}/>)}
+          {items.length > (view === 'twoweeks' ? 6 : 3) ? <span className="lanecal-more">+{items.length - (view === 'twoweeks' ? 6 : 3)} more</span> : null}
+          <span className="lanecal-load" aria-hidden="true"><span style={{ width: `${Math.min(100, items.length * 25)}%` }}/></span>
+        </button>);
+    };
     return (<div>
       <PageHead title="Content calendar" sub="What to write, for which event, and when."
         actions={<>
@@ -98,25 +155,32 @@ export default function Calendar() {
         </>}/>
 
       <div className="col" style={{ gap: 16 }}>
-        <Card title={new Date(`${first}T12:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
-          actions={<div className="row" style={{ gap: 4 }}>
-            <Button size="sm" variant="ghost" icon="chevronLeft" iconOnly aria-label="Previous month" onClick={() => shift(-1)}/>
-            <Button size="sm" variant="ghost" onClick={() => setMonth(iso(new Date()).slice(0, 7))}>Today</Button>
-            <Button size="sm" variant="ghost" icon="chevronRight" iconOnly aria-label="Next month" onClick={() => shift(1)}/>
+        <Card title={title}
+          actions={<div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <div className="seg sm" role="group" aria-label="View">
+              {[['month', 'Month'], ['twoweeks', '2 weeks'], ['agenda', 'Agenda']].map(([k, l]) => <button key={k} aria-pressed={view === k} onClick={() => { setView(k); setAnchor(view === 'month' && k !== 'month' ? today : anchor); }}>{l}</button>)}
+            </div>
+            <Button size="sm" variant="ghost" icon="chevronLeft" iconOnly aria-label="Earlier" onClick={() => shift(-1)}/>
+            <Button size="sm" variant="ghost" onClick={() => { setAnchor(today); setSelDay(today); }}>Today</Button>
+            <Button size="sm" variant="ghost" icon="chevronRight" iconOnly aria-label="Later" onClick={() => shift(1)}/>
           </div>}>
-          {cal.loading && !cal.data ? <LoadingBlock rows={6}/> : (<div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4 }}>
-              {WEEKDAYS.map((d) => <div key={d} className="small muted strong" style={{ padding: '2px 4px' }}>{d}</div>)}
-              {days.map((d) => (<div key={d} onClick={() => can('workflow:run') && d >= today ? setAdding({ run_on: d }) : null}
-                  style={{ minHeight: 92, padding: 4, borderRadius: 8, border: `1px solid ${d === today ? 'var(--saffron)' : 'var(--line)'}`,
-                    background: d.slice(0, 7) === month ? 'var(--surface)' : 'var(--surface-2)', opacity: d < today ? 0.7 : 1, cursor: can('workflow:run') && d >= today ? 'pointer' : 'default', minWidth: 0 }}>
-                  <div className="small" style={{ fontWeight: d === today ? 700 : 500 }}>{Number(d.slice(8))}</div>
-                  {(byDay[d] ?? []).map((it, i) => <DayItem key={i} it={it} brands={me.brands}/>)}
-                </div>))}
-            </div>)}
-          <div className="row-wrap small muted mt-8" style={{ gap: 12 }}>
-            <span><Icon name="star" size="sm"/> Event</span><span><Icon name="flag" size="sm"/> Publish by</span>
-            <span><Icon name="search" size="sm"/> Research</span><span><Icon name="edit" size="sm"/> Draft</span><span><Icon name="publish" size="sm"/> Publish request</span><span><Icon name="clock" size="sm"/> Scheduled to go live</span>
+          <div className="calfilters" role="group" aria-label="Show">
+            {Object.entries(LANE).map(([k, l]) => <button type="button" key={k} className={`lane-chip ${l.cls} calfilter${hidden.has(k) ? ' off' : ''}`} aria-pressed={!hidden.has(k)} onClick={() => toggleFilter(k)}><Icon name={l.icon} size="sm"/>{l.label}</button>)}
+            {me.brands.map((b) => <button type="button" key={b.id} className={`calfilter brandfilter${hidden.has(`b:${b.id}`) ? ' off' : ''}`} aria-pressed={!hidden.has(`b:${b.id}`)} onClick={() => toggleFilter(`b:${b.id}`)}><span className={`brand-dot ${b.id}`}/>{b.short}</button>)}
           </div>
+          {cal.loading && !cal.data ? <LoadingBlock rows={6}/> : (<div className="calwrap">
+            <div style={{ minWidth: 0 }}>
+              {view === 'month' ? <TwoWeeks today={today} byDay={byDay} onPick={setSelDay}/> : null}
+              {view === 'agenda' ? <Agenda days={days} byDay={byDay} today={today} day={day} onPick={setSelDay} isHidden={isHidden} hover={hover} onHover={setHover}/>
+                  : (<div className="lanecal" role="grid" aria-label={view === 'month' ? 'Month' : 'Two weeks'}>
+                    {view === 'month' ? WEEKDAYS.map((d) => <div key={d} className="lanecal-head" role="columnheader">{d}</div>) : null}
+                    {days.map(cell)}
+                  </div>)}
+              <div className="small muted mt-8">Click a day to see what Flowmerce does then and to schedule a task. Hover an item to light up the other steps of the same blog.</div>
+            </div>
+            <DaySide day={day} today={today} items={byDay[day] ?? []} all={cal.data?.schedule ?? []} upcoming={cal.data?.upcoming ?? []} canRun={can('workflow:run')} brands={me.brands}
+              budget={cal.data?.budget} onChanged={() => { cal.reload(); auto.reload(); }} onSkip={(s) => setStatus(s, 'skipped')} onRemove={removeEntry}/>
+          </div>)}
         </Card>
 
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', alignItems: 'start' }}>
@@ -140,8 +204,8 @@ export default function Calendar() {
         </div>
       </div>
 
-      <Card title="Schedule this month" className="mt-16" flush>
-        {(cal.data?.schedule ?? []).length ? (<Paged rows={cal.data.schedule} resetKey={`${brand}|${month}`}>{(pageRows) => (<table className="table">
+      <Card title="Schedule in this view" className="mt-16" flush>
+        {(cal.data?.schedule ?? []).length ? (<Paged rows={cal.data.schedule} resetKey={`${brand}|${gridStart}`}>{(pageRows) => (<table className="table">
             <thead><tr><th>Day</th><th>Brand</th><th>Task</th><th>For</th><th>Status</th><th/></tr></thead>
             <tbody>{pageRows.map((s) => (<tr key={s.id}>
                 <td>{fmtDate(s.run_on)}</td>
@@ -152,7 +216,7 @@ export default function Calendar() {
                 <td><Pill tone={TONE[s.status]}>{s.status}</Pill>{s.message ? <div className="small muted">{s.message}</div> : null}</td>
                 <td className="r">{can('workflow:run') && s.status === 'planned' ? <Button size="xs" variant="ghost" onClick={() => setStatus(s, 'skipped')}>Skip</Button> : null}
                   {can('workflow:run') && s.status === 'skipped' ? <Button size="xs" variant="ghost" onClick={() => setStatus(s, 'planned')}>Plan again</Button> : null}
-                  {can('workflow:run') && s.status !== 'done' ? <Button size="xs" variant="ghost" icon="x" iconOnly aria-label="Delete" onClick={async () => { try { await api.del(`/calendar/schedule/${s.id}`); cal.reload(); } catch (e) { toast.error(e); } }}/> : null}</td>
+                  {can('workflow:run') && s.status !== 'done' ? <Button size="xs" variant="ghost" icon="x" iconOnly aria-label="Delete" onClick={() => removeEntry(s)}/> : null}</td>
               </tr>))}</tbody>
           </table>)}</Paged>) : <Empty icon="calendar" title="Nothing scheduled in this view">Click a day, use “Schedule a task”, or let Flowmerce plan upcoming events.</Empty>}
       </Card>
@@ -166,18 +230,175 @@ export default function Calendar() {
     </div>);
 }
 
-function DayItem({ it, brands }) {
-    const style = { fontSize: 11.5, lineHeight: 1.3, padding: '1px 4px', borderRadius: 4, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+/** What an item is called on the calendar and in the day panel. */
+function itemText(it) {
     if (it.kind === 'event')
-        return <div style={{ ...style, background: 'var(--info-soft, var(--surface-3))' }} title={`${it.e.name}${it.e.note ? ` — ${it.e.note}` : ''}`}><Icon name="star" size="sm"/> {it.e.name}</div>;
+        return it.e.name;
     if (it.kind === 'deadline')
-        return <div style={{ ...style, background: 'var(--warn-soft)' }} title={`Article for ${it.e.name} should be live by today`}><Icon name="flag" size="sm"/> {it.e.name}</div>;
+        return it.e.name;
     if (it.kind === 'live')
-        return <div style={style} title={`Goes live: ${it.a.title}`}><Icon name="clock" size="sm"/> {it.a.title}</div>;
+        return it.a.title;
+    if (it.kind === 'auto')
+        return it.slot.article_title || it.slot.topic_title || 'Topic chosen 5 days before';
     const s = it.s;
-    const label = s.action === 'publish' ? s.article_title : s.event_name || s.focus || s.topic_title || ACTION[s.action][0];
-    return (<div style={{ ...style, border: '1px solid var(--line)', textDecoration: s.status === 'skipped' ? 'line-through' : undefined }} title={`${ACTION[s.action][0]} (${s.status})${s.message ? ` — ${s.message}` : ''}`}>
-      <span className={`brand-dot ${s.brand_id}`}/> <Icon name={ACTION[s.action][1]} size="sm"/> {label}
+    return s.action === 'publish' ? s.article_title : s.event_name || s.focus || s.topic_title || ACTION[s.action][0];
+}
+const brandOf = (it) => (it.kind === 'entry' ? it.s.brand_id : it.kind === 'live' ? it.a.brand_id : it.kind === 'auto' ? it.slot.brand_id : it.e.brand_id || '');
+
+/** Items that belong to one blog share a key: the event they are for, else the article or topic. */
+function chainOf(it) {
+    if (it.kind === 'event' || it.kind === 'deadline')
+        return `e:${it.e.key}`;
+    if (it.kind === 'entry')
+        return it.s.event_key ? `e:${it.s.event_key}` : it.s.article_id ? `a:${it.s.article_id}` : it.s.topic_id ? `t:${it.s.topic_id}` : null;
+    if (it.kind === 'auto')
+        return it.slot.article_id ? `a:${it.slot.article_id}` : null;
+    return it.kind === 'live' ? `a:${it.a.id}` : null;
+}
+/** When in the day an item happens: research and drafting run during the day, publishing at 10:00 (business time). */
+const timeOf = (it) => (it.kind === 'event' ? 'All day' : it.kind === 'deadline' ? 'By today' : it.kind === 'live' || it.kind === 'auto' || (it.kind === 'entry' && it.s.action === 'publish') ? '10:00' : 'During the day');
+
+/** One chip on the grid: its colour lane, brand dot and short text. Dimmed by the filters; lit up with its chain. */
+function DayItem({ it, delay, dim, hl, onHover, short }) {
+    const lane = LANE[laneOf(it)];
+    const b = brandOf(it);
+    const off = (it.kind === 'entry' && it.s.status === 'skipped') || (it.kind === 'auto' && ['missed', 'failed'].includes(it.slot.status));
+    const key = chainOf(it);
+    return (<span className={`lane-chip ${lane.cls}${off ? ' off' : ''}${dim ? ' dim' : ''}${hl ? ' hl' : ''}`} style={{ animationDelay: `${delay}ms` }} title={`${lane.label}: ${itemText(it)}`}
+      onMouseEnter={key && onHover ? () => onHover(key) : undefined} onMouseLeave={key && onHover ? () => onHover(null) : undefined}>
+      {b ? <span className={`brand-dot ${b}`}/> : <Icon name={lane.icon} size="sm"/>}
+      {short && b ? <Icon name={lane.icon} size="sm"/> : null}
+      <span className="lane-text">{it.kind === 'event' || short ? itemText(it) : `${lane.label} · ${itemText(it)}`}</span>
+    </span>);
+}
+
+/** The next 14 days as a strip: today in ink, one coloured bar per kind of item on each day. Click a day to open it. */
+function TwoWeeks({ today, byDay, onPick }) {
+    const days = Array.from({ length: 14 }, (_, i) => addDays(today, i));
+    const count = days.reduce((n, d) => n + (byDay[d]?.length ?? 0), 0);
+    return (<div className="twoweeks">
+      <div className="twoweeks-head"><b>Next 14 days</b><span className="small muted">{count} item{count === 1 ? '' : 's'}</span></div>
+      <div className="twoweeks-row">
+        {days.map((d) => {
+            const lanes = [...new Set((byDay[d] ?? []).map(laneOf))];
+            return (<button type="button" key={d} className={`twoweeks-day${d === today ? ' today' : ''}`} onClick={() => onPick(d)} title={fmtDate(d)}>
+              <span className="twoweeks-wd">{WEEKDAYS[(new Date(`${d}T12:00:00`).getDay() + 6) % 7]}</span>
+              <span className="twoweeks-n">{Number(d.slice(8))}</span>
+              <span className="twoweeks-bars">{lanes.map((l) => <i key={l} className={LANE[l].cls}/>)}</span>
+            </button>);
+        })}
+      </div>
+    </div>);
+}
+
+/** Agenda: the days of the view that have something on them, as rows. */
+function Agenda({ days, byDay, today, day, onPick, isHidden, hover, onHover }) {
+    const busy = days.filter((d) => (byDay[d] ?? []).length);
+    if (!busy.length)
+        return <div className="daypanel-empty">Nothing is planned in these 30 days.</div>;
+    return (<div className="agenda stagger">
+      {busy.map((d) => (<button type="button" key={d} className={`agenda-row${d === day ? ' sel' : ''}${d === today ? ' today' : ''}`} onClick={() => onPick(d)}>
+        <span className="agenda-date"><span className="agenda-wd">{fmtDate(d, { weekday: 'short' })}</span><span className="agenda-n">{fmtDate(d, { day: 'numeric', month: 'short' })}</span></span>
+        <span className="agenda-items">{byDay[d].map((it, k) => <DayItem key={k} it={it} delay={k * 40} dim={isHidden(it)} hl={hover && chainOf(it) === hover} onHover={onHover}/>)}</span>
+      </button>))}
+    </div>);
+}
+
+/**
+ * The selected day, beside the calendar (under it on narrow screens). First what Flowmerce does that day, as a
+ * timeline with times; then a form to schedule another task for it (today or later only).
+ */
+function DaySide({ day, today, items, all, upcoming, canRun, brands, budget, onChanged, onSkip, onRemove }) {
+    const toast = useToast();
+    const order = ['event', 'deadline', 'research', 'draft', 'publish', 'live', 'auto'];
+    const sorted = [...items].sort((a, b) => order.indexOf(laneOf(a)) - order.indexOf(laneOf(b)));
+    const title = new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+    return (<aside className="dayside" aria-label={`What happens on ${title}`}>
+      <h3 className="dayside-title">{title}</h3>
+      <div className="small muted">{sorted.length ? `${sorted.length} thing${sorted.length === 1 ? '' : 's'} Flowmerce does this day` : 'Nothing planned yet'}</div>
+      <div className="daypanel-label mt-12"><Icon name="sparkle" size="sm"/>What Flowmerce does</div>
+      {sorted.length ? (<div className="dtimeline">
+          {sorted.map((it, i) => (<div key={`${day}-${i}`} className={`dtl-item ${LANE[laneOf(it)].cls}`} style={{ animationDelay: `${i * 60}ms` }}>
+            <span className="dtl-time">{timeOf(it)}</span>
+            <DayDetail it={it} brands={brands} canRun={canRun} onSkip={onSkip} onRemove={onRemove} all={all}/>
+          </div>))}
+        </div>) : <div className="daypanel-empty">{day >= today ? 'A free day: a good one for topic research.' : 'Nothing happened on this day.'}</div>}
+      <div className="daypanel-label mt-16"><Icon name="plus" size="sm"/>Schedule another task</div>
+      {!canRun ? <div className="small muted">Your role cannot schedule tasks.</div>
+          : day < today ? <div className="small muted">This day has passed. Pick today or a later day to schedule a task.</div>
+              : (<>
+                <ScheduleForm key={day} initial={{ run_on: day }} upcoming={upcoming} compact submitLabel={`Add to ${fmtDate(day, { weekday: 'short', day: 'numeric', month: 'short' })}`}
+                  onSaved={() => { toast.ok('Added to the calendar.'); onChanged(); }}/>
+                {budget?.estimates ? <div className="muted xs mt-8">Research costs about {usd(budget.estimates.topic_research)} and a draft about {usd(budget.estimates.content_generation)} of the daily Claude limit; a publish request costs nothing.</div> : null}
+              </>)}
+    </aside>);
+}
+
+/** How far one blog has got: research, draft, then live. From the calendar entries of the same event, or an automatic blog's state. */
+function chainSteps(it, all) {
+    if (it.kind === 'auto') {
+        const s = it.slot.status;
+        return [['Topic', ['writing', 'ready'].includes(s)], ['Written', s === 'ready'], ['Live', it.slot.article_status === 'published']];
+    }
+    const key = it.kind === 'entry' ? it.s.event_key : it.kind === 'event' || it.kind === 'deadline' ? it.e.key : '';
+    if (!key)
+        return null;
+    const of = (a) => all.filter((s) => s.event_key === key && s.action === a);
+    if (!all.some((s) => s.event_key === key))
+        return null;
+    const done = (a) => of(a).some((s) => s.status === 'done');
+    return [['Research', done('research')], ['Draft', done('draft')], ['Live', done('publish')]];
+}
+
+function DayDetail({ it, brands, canRun, onSkip, onRemove, all = [] }) {
+    const lane = LANE[laneOf(it)];
+    const b = brandOf(it);
+    let state = null;
+    let more = null;
+    let actions = null;
+    if (it.kind === 'entry') {
+        const s = it.s;
+        state = <Pill tone={TONE[s.status]}>{s.status}</Pill>;
+        more = (<>{s.topic_title ? <div>Topic: {s.topic_title}</div> : null}{s.message ? <div>{s.message}</div> : null}</>);
+        actions = canRun && s.status === 'planned' ? (<><Button size="xs" variant="ghost" onClick={() => onSkip(s)}>Skip</Button>
+          <Button size="xs" variant="ghost" icon="x" onClick={() => onRemove(s)}>Remove</Button></>) : null;
+        if (s.article_id)
+            actions = <>{actions}<Link className="btn ghost xs" href={`/articles/${s.article_id}`}>Open article</Link></>;
+    }
+    else if (it.kind === 'auto') {
+        const s = it.slot;
+        state = <Pill tone={s.status === 'ready' ? 'ok' : s.status === 'writing' ? 'info' : ['failed', 'missed'].includes(s.status) ? 'warn' : 'neutral'}>{AUTO_STATUS[s.status] ?? s.status}</Pill>;
+        more = (<>{s.message ? <div>{s.message}</div> : <div>Goes live at 10:00 once a reviewer authorizes it.</div>}
+          {s.checks?.score !== null && s.checks?.score !== undefined ? <div>Quality check: {s.checks.score}/100</div> : null}</>);
+        actions = s.article_id ? <Link className="btn ghost xs" href={`/articles/${s.article_id}`}>Open article</Link> : <Link className="btn ghost xs" href="/blog">SEO &amp; Blog overview</Link>;
+    }
+    else if (it.kind === 'live') {
+        const at = new Date(it.a.publish_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        state = it.a.status === 'scheduled' ? <Pill tone="ok">Scheduled</Pill> : it.a.status === 'published' ? <Pill tone="ok">Live</Pill> : <Pill tone="warn">Waiting for a reviewer</Pill>;
+        more = <div>{it.a.status === 'scheduled' ? `Scheduled on Shopify for ${at}.` : it.a.status === 'published' ? `Went live at ${at}.` : `Goes live at ${at} once a reviewer authorizes the publish request.`}</div>;
+        actions = <Link className="btn ghost xs" href={`/articles/${it.a.id}`}>Open article</Link>;
+    }
+    else if (it.kind === 'deadline') {
+        more = <div>An article for {it.e.name} ({fmtDate(it.e.date)}) should be live by today.</div>;
+    }
+    else if (it.e.note) {
+        more = <div>{it.e.note}</div>;
+    }
+    return (<div className={`daydetail ${lane.cls}`}>
+      <div className="daydetail-head">
+        <span className="daydetail-kind"><Icon name={lane.icon} size="sm"/>{lane.label}</span>
+        {b ? <BrandTag id={b} brands={brands}/> : null}
+        <span className="spacer"/>{state}
+      </div>
+      <div className="daydetail-title">{itemText(it)}</div>
+      {(() => {
+          const steps = chainSteps(it, all);
+          return steps ? (<div className="chainbar" title={steps.map(([l, ok]) => `${l}: ${ok ? 'done' : 'not yet'}`).join(' · ')}>
+            {steps.map(([l, ok]) => <span key={l} className={ok ? 'on' : ''}><i/>{l}</span>)}
+          </div>) : null;
+      })()}
+      {more ? <div className="daydetail-more">{more}</div> : null}
+      {actions ? <div className="row-wrap" style={{ gap: 6, marginTop: 6 }}>{actions}</div> : null}
     </div>);
 }
 
@@ -214,6 +435,13 @@ function BudgetForm({ budget, onSaved, canEdit }) {
 }
 
 function ScheduleDialog({ initial, upcoming, onClose, onSaved }) {
+    return (<Dialog wide title="Schedule a task" sub="Flowmerce does it on that day. Claude tasks wait if the daily limit is used up; a publish request is made once the article is approved, and a reviewer still authorizes it." onClose={onClose}>
+      <ScheduleForm initial={initial} upcoming={upcoming} onSaved={onSaved} onCancel={onClose}/>
+    </Dialog>);
+}
+
+/** The task form, used in the "Schedule a task" dialog and in a day's panel. */
+function ScheduleForm({ initial, upcoming, onSaved, onCancel, submitLabel = 'Add to schedule', compact }) {
     const { me, brand: current } = useApp();
     const [f, setF] = useState({ brand: current === 'all' ? 'ridhi' : current, action: initial.action ?? 'research', run_on: initial.run_on, event_key: initial.event_key ?? '', focus: '', topic_id: '', article_id: '' });
     const [busy, setBusy] = useState(false);
@@ -226,6 +454,7 @@ function ScheduleDialog({ initial, upcoming, onClose, onSaved }) {
         setErr('');
         try {
             await api.post('/calendar/schedule', { ...f, topic_id: f.topic_id ? Number(f.topic_id) : null, article_id: f.article_id ? Number(f.article_id) : null });
+            setF((x) => ({ ...x, focus: '', topic_id: '', article_id: '' }));
             onSaved();
         }
         catch (e) {
@@ -236,8 +465,7 @@ function ScheduleDialog({ initial, upcoming, onClose, onSaved }) {
         }
     };
     const ok = f.run_on && (f.action === 'research' ? f.event_key || f.focus.trim() : f.action === 'draft' ? f.topic_id || f.event_key : f.article_id);
-    return (<Dialog wide title="Schedule a task" sub="Flowmerce does it on that day. Claude tasks wait if the daily limit is used up; a publish request is made once the article is approved, and a reviewer still authorizes it." onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} disabled={!ok} onClick={save}>Add to schedule</Button></>}>
+    return (<div className={compact ? 'schedform compact' : 'schedform'}>
       <div className="form-grid">
         <div className="field full"><label>Brand</label>
           <div className="seg">{me.brands.map((b) => <button key={b.id} aria-pressed={f.brand === b.id} onClick={() => setF({ ...f, brand: b.id, topic_id: '', article_id: '' })}><span className={`brand-dot ${b.id}`}/>{b.name}</button>)}</div>
@@ -267,7 +495,11 @@ function ScheduleDialog({ initial, upcoming, onClose, onSaved }) {
           </Field>) : null}
       </div>
       {err ? <div className="callout crit mt-12"><Icon name="alert"/>{err}</div> : null}
-    </Dialog>);
+      <div className="row mt-12" style={{ gap: 8, justifyContent: 'flex-end' }}>
+        {onCancel ? <Button variant="ghost" onClick={onCancel}>Cancel</Button> : null}
+        <Button variant="primary" loading={busy} disabled={!ok} onClick={save}>{submitLabel}</Button>
+      </div>
+    </div>);
 }
 
 function EventDialog({ onClose, onSaved }) {
