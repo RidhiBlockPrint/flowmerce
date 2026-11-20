@@ -19,7 +19,7 @@ import { Gauge } from '../components/motion';
 import { DayStrip, GaugeCard, JourneyCard, OrdersCard, SalesChart, VisitsCard } from '../components/croOverview';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
-import { Button, Card, Field, LoadingBlock, PageHead, Paged, Pill, Tabs } from '../components/ui';
+import { Button, Card, Field, LoadingBlock, PageHead, Paged, Pill, Skeleton, Tabs } from '../components/ui';
 
 const RANGE_TABS = ['overview', 'conversion', 'checkout', 'products', 'sales'];
 
@@ -87,7 +87,7 @@ export default function Cro() {
                             : tab === 'recommendations' ? <RecommendationsTab brand={brand}/>
                                 : tab === 'alarms' ? <AlarmsTab brand={brand}/>
                                     : tab === 'changes' ? <ChangeLogTab brand={brand}/>
-                                        : <OverviewTab rq={rq} today={today} onTab={(t) => update({ tab: t })} onPickDay={(day) => setRange({ r: 'custom', from: day, to: day })}/>}
+                                        : <OverviewTab key={qs(rq)} rq={rq} today={today} onTab={(t) => update({ tab: t })} onPickDay={(day) => setRange({ r: 'custom', from: day, to: day })}/>}
       </div>
     </>);
 }
@@ -108,6 +108,10 @@ const PRIORITY_LANE = { High: 'lane-due', Medium: 'lane-event', Low: 'plain' };
  * sales chart, the shopper journey, the next actions and the monthly goal. The strip always shows the store's latest
  * 14 days; the gauge's bands, the orders blocks and the chart read the 28 days ending on the last chosen day (and the
  * 28 before, for the chart's comparison).
+ *
+ * The page appears all at once: one placeholder until every request has answered (or failed, which then shows in
+ * its own card), rather than cards arriving one by one. It is keyed by the range, so a new range waits the same way;
+ * answers already remembered in this tab show at once.
  */
 function OverviewTab({ rq, today, onTab, onPickDay }) {
     const q = useApi(`/cro/overview${qs(rq)}`);
@@ -134,6 +138,12 @@ function OverviewTab({ rq, today, onTab, onPickDay }) {
     const days = (trend.data?.current ?? []).map((r) => ({ date: r.date, orders: r.orders, cvr: cvrByDate.get(r.date) ?? null }));
     // Calendar events (built-in ones apply to every store) shade the sales chart. No events is fine: the chart just has no bands.
     const events = (cal.data?.events ?? []).filter((e) => !e.brand_id || e.brand_id === rq.brand).map((e) => ({ date: e.date, name: e.name }));
+    const month = presetRange('this_month', today);
+    const mtd = useApi(`/cro/overview${qs({ brand: rq.brand, from: month.from, to: month.to, compare: 'previous' })}`);
+    const goal = useApi(`/cro/goal${qs({ brand: rq.brand })}`, { remember: false });
+    const all = [q, conv, conv28, trend, cal, recs, changes, advice, stripSales, stripConv, mtd, goal];
+    if (!all.every((x) => x.data !== null || x.error || !x.loading))
+        return <OverviewLoading/>;
     return (<div className="col" style={{ gap: 18 }}>
       <CroGate query={q}>
         {(d) => {
@@ -162,15 +172,24 @@ function OverviewTab({ rq, today, onTab, onPickDay }) {
               : <div className="muted small">Nothing stands out in the current figures.</div>}
         </Card>
       </div>
-      {today ? <Card title="Monthly goal" sub="This month's revenue against the goal you set, with today's pace."><GoalBar brand={rq.brand} today={today}/></Card> : null}
+      <Card title="Monthly goal" sub="This month's revenue against the goal you set, with today's pace."><GoalBar brand={rq.brand} today={today} mtd={mtd} g={goal}/></Card>
     </div>);
 }
 
-/** This month's revenue against the store's monthly goal, with a mark where today's pace puts it. Set or change the goal here. */
-function GoalBar({ brand, today }) {
-    const month = presetRange('this_month', today);
-    const mtd = useApi(`/cro/overview${qs({ brand, from: month.from, to: month.to, compare: 'previous' })}`);
-    const g = useApi(`/cro/goal${qs({ brand })}`, { remember: false });
+/** The Overview's one placeholder, shaped like the page: the strip, three cards and the chart. */
+function OverviewLoading() {
+    return (<div className="col" style={{ gap: 18 }} aria-busy="true" aria-label="Loading the overview">
+      <Skeleton h={88} r={12}/>
+      <div className="ov-trio"><Skeleton h={300} r={16}/><Skeleton h={420} r={22}/><Skeleton h={300} r={16}/></div>
+      <Skeleton h={380} r={16}/>
+    </div>);
+}
+
+/**
+ * This month's revenue against the store's monthly goal, with a mark where today's pace puts it. Set or change the
+ * goal here. `mtd` (this month's overview) and `g` (the goal) are loaded by the Overview so the card arrives with it.
+ */
+function GoalBar({ brand, today, mtd, g }) {
     const toast = useToast();
     const [editing, setEditing] = useState(false);
     const [v, setV] = useState('');

@@ -2,6 +2,20 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-20 (Smooth background; CRO Overview appears all at once)
+
+Owner request. Verified: frontend tests (68) and `next build` pass; checked in the browser on a preview server with live
+data, in development and production mode: the background is drawn by the worker (one canvas), the worker file ships in
+the build, no console errors; switching the Overview's range shows one placeholder, then every part at once (1.4 s).
+Not checked: the page fallback in a browser without OffscreenCanvas.
+
+- **Fixed** the moving background stuttered: it drew only 15 frames a second and on the page's own thread, so page
+  work held it up. It now draws every frame, moves by elapsed time, and runs in a Web Worker on an OffscreenCanvas
+  (`components/ambient.worker.js`); browsers without that draw the same thing on the page.
+- **Changed** CRO Overview appears all at once: one placeholder shaped like the page until every request has answered
+  (an error shows in its own card), instead of cards arriving one by one. A new range waits the same way. The monthly
+  goal is loaded with the rest.
+
 ## 2026-11-20 (CRO Overview rebuilt as design A2)
 
 Owner request: build design A2 (the approved "Gauge trio" in the content calendar's colours). Verified: frontend tests

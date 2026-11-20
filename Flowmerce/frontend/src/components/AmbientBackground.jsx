@@ -1,79 +1,63 @@
 'use client';
 import { useEffect, useRef } from 'react';
-
-/* Module colours from the Flowmerce platform overview: SEO, shipping, Meta, creative, landing pages, WPO. */
-const COLOURS = ['#2DBE86', '#F0A020', '#4B8BFF', '#A07BF5', '#FF6B4F', '#27C4D9'];
-const FRAME_MS = 66;
+import { createAmbient } from './ambient.worker';
 
 /**
- * The slow "thread" behind every page: six coloured points drift on wide orbits, joined by soft curves that bend
- * through the middle of the screen. Purely decorative (aria-hidden, no pointer events). The points move slowly, so
- * it draws about 15 frames a second (FRAME_MS) instead of 60: it looks the same and costs a quarter of the work. It
- * draws one still frame when the viewer asks for reduced motion, and stops while the tab is hidden.
+ * The slow "thread" behind every page (drawing in ambient.worker.js). Purely decorative (aria-hidden, no pointer
+ * events). It draws every frame with time-based motion, and where the browser allows it the drawing runs in a Web
+ * Worker on an OffscreenCanvas, so loading a page never makes it stutter; elsewhere the same drawing runs here.
+ * One still frame when the viewer asks for reduced motion; nothing is drawn while the tab is hidden.
+ *
+ * The canvas is created here rather than in JSX: a canvas handed to a worker can never be handed over again, and
+ * React (strict mode) mounts effects twice in development, so each mount gets a fresh canvas.
  */
 export function AmbientBackground() {
     const ref = useRef(null);
     useEffect(() => {
-        const c = ref.current;
-        const x = c?.getContext('2d');
-        if (!x)
+        const box = ref.current;
+        if (!box)
             return undefined;
-        const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-        const pts = COLOURS.map((col) => ({ a: Math.random() * 6.28, r: 0.18 + Math.random() * 0.25, s: 0.003 + Math.random() * 0.004, c: col }));
-        let W = 0, H = 0, raf = 0;
-        const size = () => {
-            const dpr = Math.min(window.devicePixelRatio || 1, 2);
-            W = window.innerWidth;
-            H = window.innerHeight;
-            c.width = W * dpr;
-            c.height = H * dpr;
-            x.setTransform(dpr, 0, 0, dpr, 0, 0);
-        };
-        const draw = (steps = 1) => {
-            x.clearRect(0, 0, W, H);
-            const xy = pts.map((p) => {
-                if (!reduce)
-                    p.a += p.s * 0.3 * steps;
-                return [W * (0.5 + Math.cos(p.a) * p.r * 1.6), H * (0.5 + Math.sin(p.a * 1.3) * p.r * 1.4)];
-            });
-            x.lineWidth = 1.2;
-            for (let i = 0; i < pts.length; i++) {
-                const a = xy[i], b = xy[(i + 1) % pts.length];
-                const g = x.createLinearGradient(a[0], a[1], b[0], b[1]);
-                g.addColorStop(0, `${pts[i].c}44`);
-                g.addColorStop(1, `${pts[(i + 1) % pts.length].c}44`);
-                x.strokeStyle = g;
-                x.beginPath();
-                x.moveTo(a[0], a[1]);
-                x.quadraticCurveTo(W / 2, H / 2, b[0], b[1]);
-                x.stroke();
-                x.fillStyle = `${pts[i].c}77`;
-                x.beginPath();
-                x.arc(a[0], a[1], 4, 0, 6.28);
-                x.fill();
+        const canvas = document.createElement('canvas');
+        canvas.className = 'ambient-bg';
+        box.appendChild(canvas);
+        const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const dims = () => ({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio || 1 });
+        let worker = null;
+        let local = null;
+        if (typeof canvas.transferControlToOffscreen === 'function' && typeof Worker === 'function') {
+            try {
+                worker = new Worker(new URL('./ambient.worker.js', import.meta.url), { type: 'module' });
+                const off = canvas.transferControlToOffscreen();
+                worker.postMessage({ type: 'start', canvas: off, still, ...dims() }, [off]);
+            } catch {
+                worker?.terminate();
+                worker = null;
             }
+        }
+        if (!worker) {
+            const { w, h, dpr } = dims();
+            try { local = createAmbient(canvas, { w, h, dpr, still }); } catch { /* no 2D canvas: leave the background plain */ }
+        }
+        const send = (msg) => (worker ? worker.postMessage(msg) : null);
+        const onResize = () => {
+            const d = dims();
+            if (worker) send({ type: 'resize', ...d });
+            else local?.resize(d.w, d.h, d.dpr);
         };
-        let last = 0;
-        // Same speed as before (the angle step is per 60 fps frame), drawn every FRAME_MS.
-        const loop = (t) => {
-            if (!last || t - last >= FRAME_MS) {
-                draw(last ? Math.min((t - last) / (1000 / 60), 8) : 1);
-                last = t;
-            }
-            raf = requestAnimationFrame(loop);
+        const onVis = () => {
+            const type = document.hidden ? 'pause' : 'resume';
+            if (worker) send({ type });
+            else local?.[type]();
         };
-        const start = () => { cancelAnimationFrame(raf); last = 0; if (reduce) draw(); else raf = requestAnimationFrame(loop); };
-        const onVis = () => { if (document.hidden) cancelAnimationFrame(raf); else start(); };
-        const onResize = () => { size(); if (reduce) draw(); };
-        size();
-        start();
         window.addEventListener('resize', onResize);
         document.addEventListener('visibilitychange', onVis);
         return () => {
-            cancelAnimationFrame(raf);
             window.removeEventListener('resize', onResize);
             document.removeEventListener('visibilitychange', onVis);
+            worker?.terminate();
+            local?.stop();
+            canvas.remove();
         };
     }, []);
-    return <canvas ref={ref} className="ambient-bg" aria-hidden="true"/>;
+    return <div ref={ref} aria-hidden="true"/>;
 }
