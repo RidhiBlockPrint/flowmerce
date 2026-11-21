@@ -80,7 +80,7 @@ flowchart LR
 
 | Layer | Choice | Why |
 |---|---|---|
-| Language / API | Python 3.12, FastAPI, Pydantic v2 | Best fit for data, ads and AI work; matches the earlier Meta Ads plan |
+| Language / API | Python 3.14, FastAPI, Pydantic v2 | Best fit for data, ads and AI work; matches the earlier Meta Ads plan |
 | Database | PostgreSQL 16 (managed, e.g. Supabase, Cloud SQL or RDS) | One master database; schemas per module; JSONB for raw payloads |
 | ORM / migrations | SQLAlchemy 2.0 + Alembic | `db/schema.sql` becomes the first Alembic migration |
 | Jobs and schedules | Celery + Redis (workers + beat), or Dramatiq + APScheduler | Sync jobs, rule runs, executor, outcome checks |

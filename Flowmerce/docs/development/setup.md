@@ -1,6 +1,6 @@
 # Setup
 
-Tested here on Python 3.13 (Linux). The project requires Python 3.12+. Not yet run on Windows.
+The project runs on **Python 3.14** only, the same version on this computer, in CI and in the hosted container ([ADR 0010](../decisions/0010-one-python-version.md)); `.python-version` names it and the launcher stops on any other version.
 
 ## Install (Windows PowerShell, from the repository root)
 
@@ -64,7 +64,7 @@ python scripts\run_flowmerce.py --dev       # frontend in Next.js development mo
 python scripts\run_flowmerce.py --no-browser
 ```
 
-`scripts\run_seo.py` and `scripts\run_seo.bat` still work and forward to the same launcher. The launcher creates `.venv` if needed, installs `".[seo]"`, runs `npm install` in `frontend\` when `node_modules` is missing, builds the web interface when it is missing or older than its sources, starts both services, opens `http://127.0.0.1:3000` and stops both on Ctrl+C. It needs **Python 3.12+** and **Node.js with npm** (Next.js 15 needs Node 18.18+; the project was last built with v26.13.0); it prints a clear message if Node.js/npm is missing, a package install or build fails, or port 8787 or 3000 is already in use.
+`scripts\run_seo.py` and `scripts\run_seo.bat` still work and forward to the same launcher. The launcher creates `.venv` if needed, installs `".[seo]"`, runs `npm install` in `frontend\` when `node_modules` is missing, builds the web interface when it is missing or older than its sources, starts both services, opens `http://127.0.0.1:3000` and stops both on Ctrl+C. It needs **Python 3.14** and **Node.js with npm** (Next.js 15 needs Node 18.18+; the project was last built with v26.13.0); it prints a clear message if Node.js/npm is missing, a package install or build fails, or port 8787 or 3000 is already in use.
 
 Credentials and options are in `.env` (see the SEO section of `.env.example`). The module reads `.env` from the repository root and keeps its SQLite database in `data/` (`data/blog-ops.sqlite`).
 

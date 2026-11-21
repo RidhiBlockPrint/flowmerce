@@ -54,7 +54,7 @@ Full plan and owner decisions: [docs/FLOWMERCE_DATABASE_AND_BUILD_PLAN.md](docs/
 
 ## Technology and approved languages
 
-Python 3.12+ is the primary language. Approved exceptions ([ADR 0002](docs/decisions/0002-approved-language-exceptions.md), [ADR 0006](docs/decisions/0006-nextjs-javascript-frontend.md)): the web UI is **Next.js + React in JavaScript/JSX only (no TypeScript)**, and plain `.sql` files for database schema. Any other language needs explicit approval first.
+Python 3.14 is the primary language (one version everywhere: [ADR 0010](docs/decisions/0010-one-python-version.md)). Approved exceptions ([ADR 0002](docs/decisions/0002-approved-language-exceptions.md), [ADR 0006](docs/decisions/0006-nextjs-javascript-frontend.md)): the web UI is **Next.js + React in JavaScript/JSX only (no TypeScript)**, and plain `.sql` files for database schema. Any other language needs explicit approval first.
 
 | Layer | Technology |
 |---|---|
@@ -92,7 +92,7 @@ Flowmerce/
 
 ## Prerequisites and setup
 
-Python 3.12 or newer, and Node.js with npm. Full steps: [docs/development/setup.md](docs/development/setup.md). Short version (Windows PowerShell):
+Python 3.14 (exactly: the launcher checks), and Node.js with npm. Full steps: [docs/development/setup.md](docs/development/setup.md). Short version (Windows PowerShell):
 
 ```powershell
 python -m venv .venv

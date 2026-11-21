@@ -9,7 +9,7 @@ Services (both listen on 127.0.0.1 only; this launcher never binds to the networ
     Frontend  http://127.0.0.1:3000   Next.js UI; forwards /api/* to the API
 
 On first run it creates .venv and installs the project with the "seo" extra, and runs `npm install` in
-frontend/. Requirements: Python 3.10+ and Node.js with npm. Press Ctrl+C to stop both services.
+frontend/. Requirements: Python 3.14 and Node.js with npm. Press Ctrl+C to stop both services.
 """
 
 from __future__ import annotations
@@ -46,8 +46,9 @@ def fail(message: str) -> None:
 
 def ensure_venv() -> None:
     """Create .venv and install the project when pyproject.toml is new or changed, then re-run inside it."""
-    if sys.version_info < (3, 10):
-        fail("Python 3.10 or newer is required.")
+    # One Python version everywhere (ADR 0010): this computer, CI and the hosted container all run 3.14.
+    if sys.version_info[:2] != (3, 14):
+        fail(f"Python 3.14 is required (this is {sys.version.split()[0]}). Install Python 3.14 and run this again with it.")
     want = hashlib.sha256((ROOT / "pyproject.toml").read_bytes()).hexdigest()
     if not VENV_PY.exists():
         print("Creating the Python environment in .venv ...")

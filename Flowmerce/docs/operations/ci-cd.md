@@ -10,9 +10,9 @@ Workflow: `.github/workflows/ci.yml` at the root of the repository (one level ab
 
 | Job (check name) | What it does | Fails when |
 |---|---|---|
-| `Python 3.12` and `Python 3.14` | `pip install -e ".[dev,seo]"`, then `ruff check .`, `mypy` (strict) and `pytest -q` | any of the three fails on that Python version |
+| `Python 3.14` | `pip install -e ".[dev,seo]"`, then `ruff check .`, `mypy` (strict) and `pytest -q` on the one supported version ([ADR 0010](../decisions/0010-one-python-version.md)) | any of the three fails |
 | `Frontend` | Node 24, `npm ci`, `npm run build` (Next.js build; there is no TypeScript step) | the lockfile is out of sync or the build fails |
-| `Smoke test` | Builds the frontend, then `python scripts/ci_smoke.py --web` on Python 3.12: boots the API and the built Next.js frontend on a throwaway folder and probes both | the app does not start, the operator context or `/api/home` is wrong, login is not disabled, CSRF is not enforced, a working route does not render, or an unbuilt route is not a not-found page |
+| `Smoke test` | Builds the frontend, then `python scripts/ci_smoke.py --web` on Python 3.14: boots the API and the built Next.js frontend on a throwaway folder and probes both | the app does not start, the operator context or `/api/home` is wrong, login is not disabled, CSRF is not enforced, a working route does not render, or an unbuilt route is not a not-found page |
 
 `.github/dependabot.yml` opens weekly update pull requests for the Python packages, the frontend packages and the GitHub Actions themselves. Nothing merges automatically.
 
@@ -37,7 +37,7 @@ cd ..
 Open the repository on GitHub, then **Settings**:
 1. **Actions, General:** make sure Actions are allowed, and under *Workflow permissions* choose **Read repository contents permission**.
 2. Push a commit or open a pull request so CI runs once. The check names above only appear in the settings after the first run.
-3. **Branches, Add branch protection rule** for `main`: tick *Require status checks to pass before merging* and select `Python 3.12`, `Python 3.14`, `Frontend` and `Smoke test`. Decide whether to also require pull requests.
+3. **Branches, Add branch protection rule** for `main`: tick *Require status checks to pass before merging* and select `Python 3.14`, `Frontend` and `Smoke test`. Decide whether to also require pull requests.
 4. **Code security:** turn on *Dependabot alerts* and *Dependabot security updates*.
 
 Without step 3, CI reports problems but does not stop a merge.
@@ -45,7 +45,7 @@ Without step 3, CI reports problems but does not stop a merge.
 ## When a check fails
 
 - Open the **Actions** tab, click the failed run, then the failed job and step. The log shows the exact command and its output.
-- **Only `Python 3.12` fails:** the code has probably used something newer than the declared minimum. It was developed on Python 3.14, so this is a likely first finding, and a real one.
+- **`Python 3.14` fails but it passes locally:** check that the computer runs 3.14 (`.python-version`); since ADR 0010 there is only one supported version.
 - **`npm ci` fails:** `frontend/package.json` and `frontend/package-lock.json` disagree.
 - **`Smoke test` fails to start the app:** the log prints the last server output. Reproduce it with the local command above.
 - Re-run a job from the run page ("Re-run jobs") if you suspect a temporary GitHub problem.

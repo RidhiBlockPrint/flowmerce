@@ -1,6 +1,6 @@
 # Coding standards
 
-- **Language:** Python 3.12+. Other languages only as recorded in ADR 0002; anything else needs explicit owner approval first.
+- **Language:** Python 3.14 (the one version everywhere, ADR 0010). Other languages only as recorded in ADR 0002; anything else needs explicit owner approval first.
 - **Style:** PEP 8 enforced by `ruff` (line length 100, rules E,F,I,B,UP,N,S). Run `ruff format` before committing.
 - **Naming:** `snake_case` modules/functions, `PascalCase` classes, `UPPER_CASE` constants. Names describe responsibility; no `utils2.py` or `misc.py`.
 - **Types:** annotate all public functions and data structures; `mypy --strict` must pass for `src/`.

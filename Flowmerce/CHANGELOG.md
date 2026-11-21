@@ -2,6 +2,18 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-21 (One Python version everywhere: 3.14)
+
+Owner decision ([ADR 0010](docs/decisions/0010-one-python-version.md)). Before: the hosted app ran Python 3.12, this
+computer 3.14.7, CI both, and the docs said 3.10+, 3.12+ or 3.13.
+
+- **Changed** the hosted image (`Dockerfile`) runs `python:3.14-slim-trixie` (was 3.12).
+- **Changed** `pyproject.toml`: `requires-python = ">=3.14,<3.15"`; mypy checks for 3.14 (ruff follows
+  `requires-python`).
+- **Changed** CI runs lint, types, tests and the smoke test on 3.14 only (one Python job instead of two).
+- **Changed** `scripts/run_flowmerce.py` stops with a clear message on any Python other than 3.14 (it accepted 3.10+).
+- **Added** `.python-version` (3.14) and ADR 0010; README, setup, coding standards, architecture and CI/CD docs updated.
+
 ## 2026-11-21 (Every page appears all at once)
 
 Owner request. Verified: frontend tests (74, 6 new in `tests/load-gate.test.mjs`) and `next build` pass; checked in

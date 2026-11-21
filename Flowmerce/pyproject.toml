@@ -7,7 +7,7 @@ name = "flowmerce"
 version = "0.1.0"
 description = "Flowmerce: an e-commerce ERP platform (engineering foundation)."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14,<3.15"   # one version everywhere: ADR 0010
 # Runtime dependencies are intentionally empty: the foundation uses only the standard library.
 # Add a dependency only with a note in docs/development/setup.md explaining why it is needed.
 dependencies = []
@@ -59,7 +59,7 @@ select = ["E", "F", "I", "B", "UP", "N", "S"]
 "scripts/*.py" = ["E501", "UP036"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 files = ["src"]
 
