@@ -7,6 +7,7 @@ a bad value raises InputError with a message the page can show.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -50,8 +51,24 @@ from .shopify import AnalyticsError
 
 log = logging.getLogger(__name__)
 # Reads one answer needs are made at the same time. Tasks here may use data's own pools, never
-# this one, so nothing waits on a task queued behind itself.
-_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="cro-read")
+# this one, so nothing waits on a task queued behind itself. A page asks ~17 answers at once, so the
+# pool is large enough that one answer's reads never queue behind another's.
+_pool = ThreadPoolExecutor(max_workers=24, thread_name_prefix="cro-read")
+# Shopify reads started early so a later call finds them cached or in flight (conversion.run shares
+# one read between callers). Tasks here never use _pool.
+_prefetch_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="cro-prefetch")
+
+
+def _prefetch(fn: Callable[[], Any]) -> None:
+    """Start a Shopify read in the background; its errors surface when the real call repeats it."""
+
+    def quiet() -> None:
+        try:
+            fn()
+        except Exception:  # noqa: BLE001, S110 - the real call raises and explains it
+            pass
+
+    _prefetch_pool.submit(quiet)
 
 
 def _together(*calls: Callable[[], Any]) -> list[Any]:
@@ -291,8 +308,12 @@ def overview(brand: str, rq: RangeQuery) -> dict[str, Any]:
     """KPI cards: orders, revenue, AOV and conversion rate for the chosen range, each against its
     comparison."""
     store, tz, now, p = _plan(brand, rq)
+    today = _today(tz, now)
+    if not (p.is_partial and len(p.current_days) == 1):
+        days = [*p.current_days, *(d for ds in p.baseline_days for d in ds)]
+        _prefetch(lambda: conversion.daily_between(store, min(days), max(days), today))
     snap = _orders_for(store, p)
-    report = _sales_report(store, p, _today(tz, now))
+    report = _sales_report(store, p, today)
     kpis: dict[str, Any] = metrics.order_kpis(snap, p, report)
     cvr_error = None
     if p.is_partial and len(p.current_days) == 1:
@@ -383,6 +404,17 @@ def conversion_trend(brand: str, rq: RangeQuery) -> dict[str, Any]:
     store, tz, now, p = _plan(brand, rq)
     today = _today(tz, now)
     days = p.current_days
+    # The four Shopify reads below go out together (they used to run one after another).
+    complete_last = min(days[-1], today - timedelta(days=1))
+    if p.baseline_days:
+        b0, b1 = p.baseline_days[0][0], p.baseline_days[0][-1]
+        _prefetch(lambda: conversion.daily_between(store, b0, b1, today))
+        if complete_last >= days[0]:
+            _prefetch(
+                lambda: conversion.funnel_by_device(store, b0, min(b1, today - timedelta(days=1)))
+            )
+    if complete_last >= days[0]:
+        _prefetch(lambda: conversion.funnel_by_device(store, days[0], complete_last))
     rows = conversion.daily_between(store, days[0], days[-1], today)
     base_rows = (
         conversion.daily_between(store, p.baseline_days[0][0], p.baseline_days[0][-1], today)
@@ -676,12 +708,6 @@ def recommendation_list(brand: str) -> dict[str, Any]:
     snap = data.snapshot(store)
     skipped: list[str] = []
     cvr = fun = None
-    try:
-        rows = conversion.daily(store, today, 7)
-        cvr = conversion.cvr_comparison(rows, today)
-        fun = rows[-1] if rows else None
-    except AnalyticsError as e:
-        skipped.append(f"conversion rate and funnel ({e.state})")
     last = today - timedelta(days=1)
     cur: Days = (last - timedelta(days=REC_DAYS - 1), last)
     base: Days = (cur[0] - timedelta(days=REC_DAYS), cur[0] - timedelta(days=1))
@@ -694,12 +720,33 @@ def recommendation_list(brand: str) -> dict[str, Any]:
             skipped.append(f"{name} ({e.state})")
             return None
 
-    land, pay, report, leaky = _together(
+    def statuses_read() -> tuple[dict[str, dict[str, Any]], dict[str, Any] | None]:
+        try:
+            return data.recent(("rec_status", store), lambda: data.rec_statuses(store)), None
+        except SupabaseError as e:
+            return {}, {
+                "state": e.state,
+                "message": "Statuses cannot be saved yet: run db/central/114_cro_tracking.sql in "
+                "Supabase."
+                if e.state == "schema_missing"
+                else e.message,
+            }
+
+    # Every read at once: Shopify's figures and the small Supabase reads (they used to run one after
+    # another, about 0.4 s each).
+    rows, land, pay, report, leaky, state, rules, (statuses, status_error) = _together(
+        lambda: read("conversion rate and funnel", lambda: conversion.daily(store, today, 7)),
         lambda: read("landing pages", lambda: landing.landing_pages(store, cur, base)),
         lambda: read("payments", lambda: payments.payments(store, cur, base)),
         lambda: read("sales report", lambda: conversion.sales_daily(store, cur[0], cur[1])),
         lambda: products_mod.leaky_for(store, tz, cur, snap),
+        lambda: _order_data(store),
+        lambda: _rules(store),
+        statuses_read,
     )
+    if rows is not None:
+        cvr = conversion.cvr_comparison(rows, today)
+        fun = rows[-1] if rows else None
     orders = int(sum(d["orders"] for d in report.values())) if report else 0
     aov = (
         round(sum(d["gross"] - d["discounts"] for d in report.values()) / orders, 2)
@@ -712,7 +759,6 @@ def recommendation_list(brand: str) -> dict[str, Any]:
     extra += recommendations.leaky_items(leaky)
     if leaky["state"] != "ready":
         skipped.append(f"leaky products ({leaky['message']})")
-    state = _order_data(store)
     if not state["first_load_complete"]:
         # Partial orders would look like stalled or declining sales: order-based checks wait.
         skipped.append("order-based checks (the first order load has not finished)")
@@ -727,7 +773,7 @@ def recommendation_list(brand: str) -> dict[str, Any]:
         )
     else:
         gap_status = []
-        for r in _rules(store):
+        for r in rules:
             if r["kind"] == "no_product_orders" and r.get("is_active"):
                 fig = alarms.gap_figures(r, snap, now)
                 fig.pop("_last_placed", None)
@@ -747,18 +793,6 @@ def recommendation_list(brand: str) -> dict[str, Any]:
             health=metrics.order_health(snap, now, 30),
             extra=extra,
         )
-    statuses: dict[str, dict[str, Any]] = {}
-    status_error = None
-    try:
-        statuses = data.recent(("rec_status", store), lambda: data.rec_statuses(store))
-    except SupabaseError as e:
-        status_error = {
-            "state": e.state,
-            "message": "Statuses cannot be saved yet: run db/central/114_cro_tracking.sql in "
-            "Supabase."
-            if e.state == "schema_missing"
-            else e.message,
-        }
     for r in recs:
         saved = statuses.get(r["key"]) or {}
         r["status"] = saved.get("status") or "open"
@@ -822,7 +856,7 @@ def experiment_list(brand: str) -> dict[str, Any]:
     items = list(_pool.map(lambda r: _with_result(r, today), rows))
     since = min((str(r["start_date"])[:10] for r in rows), default=today.isoformat())
     first = (date.fromisoformat(since) - timedelta(days=60)).isoformat()
-    log = data.recent(("change_log", store, first), lambda: data.change_log(store, first))
+    log = _change_log_since(store, today, first)
     return {
         "brand": brand,
         "experiments": items,
@@ -961,10 +995,11 @@ def alert_list(brand: str, limit: int) -> dict[str, Any]:
 def settings(brand: str) -> dict[str, Any]:
     """Per-store CRO settings and where the data comes from."""
     store, tz, _ = _ctx(brand)
-    enabled, state, first_day = _together(
+    enabled, state, first_day, free_ship = _together(
         lambda: _alarms_enabled(store),
         lambda: _sync_state(store),
         lambda: data.first_order_day(store),
+        lambda: free_shipping_amount(store)[0],
     )
     return {
         "brand": brand,
@@ -974,7 +1009,7 @@ def settings(brand: str) -> dict[str, Any]:
         "shopify_configured": shopify.configured(store),
         "sync": state,
         "order_data": {**order_data_state(state), "available_from": first_day},
-        "free_shipping_threshold": free_shipping_amount(store)[0],
+        "free_shipping_threshold": free_ship,
         "email_alerts": False,
     }
 
@@ -1024,12 +1059,23 @@ def set_settings(brand: str, body: dict[str, Any], by: str) -> dict[str, Any]:
 
 # ------------------------------------------------------------------------------------------ change
 # log
+CHANGE_LOG_DAYS = 400  # one cached read serves every page's window (60, 63, 90 and 365 days)
+
+
+def _change_log_since(store: str, today: date, since: str) -> list[dict[str, Any]]:
+    """The store's change-log entries on or after `since`, cut from one wide cached read (the pages
+    ask for different windows; each used to be its own Supabase read of about 0.4 s)."""
+    wide = min(since, (today - timedelta(days=CHANGE_LOG_DAYS)).isoformat())
+    rows = data.recent(("change_log", store, wide), lambda: data.change_log(store, wide))
+    return [e for e in rows if str(e.get("entry_date") or "")[:10] >= since]
+
+
 def change_log(brand: str, days: int) -> dict[str, Any]:
     """Change-log entries of the last `days` days."""
     store, tz, now = _ctx(brand)
-    since = (_today(tz, now) - timedelta(days=days)).isoformat()
-    entries = data.recent(("change_log", store, since), lambda: data.change_log(store, since))
-    return {"brand": brand, "areas": list(AREAS), "entries": entries}
+    today = _today(tz, now)
+    since = (today - timedelta(days=days)).isoformat()
+    return {"brand": brand, "areas": list(AREAS), "entries": _change_log_since(store, today, since)}
 
 
 def add_change(brand: str, body: dict[str, Any], by: str) -> dict[str, Any]:
@@ -1060,3 +1106,84 @@ def delete_change(brand: str, entry_id: int) -> bool:
     """Remove a change-log entry of this store."""
     store, _, _ = _ctx(brand)
     return data.delete_change(store, entry_id)
+
+
+# ------------------------------------------------------------------------------------------ warm
+# Shopify allows each store 1,000 report (ShopifyQL) points a minute; a query costs 2-22 (measured
+# 2026-11-21: a 28-day funnel 18, landing pages 22, hourly visits 10). A full warm-up round with
+# nothing cached costs about as much as that, so after each read that went to Shopify the round
+# waits WARM_PAUSE seconds and pages opened meanwhile keep most of the budget. Cached reads do not
+# wait.
+WARM_PAUSE = 2.0
+WARM_CACHED = 0.3  # a read faster than this came from the cache
+
+
+def warm_views(brand: str, pause: float = WARM_PAUSE) -> dict[str, Any]:
+    """Read what the CRO pages show by default, so the first visit (and the first after a sync or a
+    restart) answers from the cache: every tab for the default range (yesterday against the 4-week
+    same-weekday average) and the Overview's other cards. One read at a time, so the background job
+    never sends Shopify a burst; settled days stay cached for 6 hours (conversion.FINAL_TTL), so
+    after the first round only today's and yesterday's figures are read again. Never raises: a read
+    that fails is counted and the page will try again itself."""
+    store, tz, now = _ctx(brand)
+    today = _today(tz, now)
+    y = today - timedelta(days=1)
+
+    def iso(d: date) -> str:
+        return d.isoformat()
+
+    day = RangeQuery(frm=iso(y), to=iso(y), compare="4week_avg")
+    last28 = RangeQuery(frm=iso(y - timedelta(days=27)), to=iso(y), compare="previous")
+    strip = RangeQuery(frm=iso(today - timedelta(days=13)), to=iso(today), compare="none")
+    month = RangeQuery(frm=iso(today.replace(day=1)), to=iso(today), compare="previous")
+    week2 = RangeQuery(frm=iso(y - timedelta(days=13)), to=iso(y), compare="previous")
+    speed = RangeQuery(
+        frm=iso(today - timedelta(days=8)), to=iso(today - timedelta(days=2)), compare="previous"
+    )
+    reads: list[tuple[str, Callable[[], Any]]] = [
+        # the Overview, in the order it matters
+        ("overview", lambda: overview(brand, day)),
+        ("conversion", lambda: conversion_trend(brand, day)),
+        ("conversion 28", lambda: conversion_trend(brand, last28)),
+        ("sales trend 28", lambda: sales_trend(brand, last28)),
+        ("strip sales", lambda: sales_trend(brand, strip)),
+        ("strip conversion", lambda: conversion_trend(brand, strip)),
+        ("month", lambda: overview(brand, month)),
+        ("traffic changes", lambda: traffic_changes(brand, day)),
+        ("trends", lambda: overview_trends(brand, last28)),
+        ("heatmap", lambda: buy_heatmap(brand, 28)),
+        ("sales breakdown", lambda: sales_breakdown(brand, day)),
+        ("site health 7", lambda: site_health(brand, speed)),
+        ("recommendations", lambda: recommendation_list(brand)),
+        # the other tabs on the default range
+        ("segments device", lambda: segments(brand, "device", day)),
+        ("segments channel", lambda: segments(brand, "channel", day)),
+        ("geo", lambda: geo(brand, day)),
+        ("landing pages", lambda: landing_pages(brand, day)),
+        ("landing grids", lambda: landing_grids(brand, day)),
+        ("site health", lambda: site_health(brand, day)),
+        ("checkout trend", lambda: conversion_trend(brand, week2)),
+        ("checkout extras", lambda: checkout_extras(brand, day)),
+        ("products", lambda: product_insights(brand, day)),
+        ("discount codes", lambda: discount_codes(brand, day)),
+        ("customers", lambda: customers(brand, day)),
+    ]
+    started = time.monotonic()
+    failed: list[str] = []
+    fetched = 0
+    for name, read in reads:
+        t0 = time.monotonic()
+        try:
+            read()
+        except Exception as e:  # noqa: BLE001 - a warm-up read must never stop the job
+            failed.append(name)
+            log.info("CRO warm-up %s for %s: %s", name, brand, getattr(e, "message", e))
+        if time.monotonic() - t0 > WARM_CACHED:
+            fetched += 1
+            time.sleep(pause)
+    return {
+        "reads": len(reads),
+        "from_shopify": fetched,
+        "failed": failed,
+        "seconds": round(time.monotonic() - started, 1),
+    }

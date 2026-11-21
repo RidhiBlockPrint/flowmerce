@@ -5,7 +5,10 @@
   never depend on whether Shopify returns a percentage as 2.5 or 0.025.
 * Days are the store's local days (Shopify applies the shop's timezone). Today is left out: it is
   not complete.
-* Answers are cached per store and query for `cache_seconds` (default 10 minutes).
+* Answers are cached per store and query: for `cache_seconds` (default 10 minutes) when the query
+  reaches today or a day that ended less than SETTLING_HOURS ago, and for FINAL_TTL (6 hours) when
+  all its days are over and settled (a past day's figures no longer change: Shopify books a refund
+  on the day it is made). The background job warms the default views, so most pages read from here.
 * Sessions are human sessions only (`human_or_bot_session = 'Human'`), as in Shopify Analytics'
   own reports, so sessions, conversion rate and the funnel match what Shopify shows.
 * Money comes from Shopify's `sales` report, which books a refund on the day it is made (not on
@@ -16,10 +19,12 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from . import shopify
 from .config import cro_config
@@ -72,6 +77,40 @@ _slots: dict[str, threading.BoundedSemaphore] = {}
 _key_locks: dict[tuple[str, str], threading.Lock] = {}
 
 
+_UNTIL = re.compile(r"\bUNTIL\s+(\d{4}-\d{2}-\d{2})\b")
+SETTLING_HOURS = 3  # Shopify's figures for a day can still move for a few hours after it ends
+FINAL_TTL = 6 * 3600.0
+CACHE_MAX = 4000  # answers kept; expired ones are dropped first when there are more
+
+
+def ttl_for(store: str, query: str, now: datetime | None = None) -> float:
+    """How long an answer may be reused: FINAL_TTL when the query's last day (UNTIL) ended more than
+    SETTLING_HOURS ago in the store's time, else `cache_seconds`."""
+    short = float(cro_config().cache_seconds)
+    m = _UNTIL.search(query)
+    if not m:
+        return short  # "UNTIL today" or no end: reaches today
+    try:
+        last = date.fromisoformat(m.group(1))
+        tz = ZoneInfo(shopify.shop_info(store)["timezone"])  # cached for 6 hours
+    except Exception:  # noqa: BLE001 - no timezone: keep the short reuse
+        return short
+    now = (now or datetime.now(tz)).astimezone(tz)
+    ended = datetime(last.year, last.month, last.day, tzinfo=tz) + timedelta(days=1)
+    return FINAL_TTL if now - ended >= timedelta(hours=SETTLING_HOURS) else short
+
+
+def _store_answer(key: tuple[str, str], rows: list[dict[str, Any]], ttl: float) -> None:
+    now = time.monotonic()
+    with _lock:
+        if len(_cache) >= CACHE_MAX:
+            for k in [k for k, v in _cache.items() if v[0] <= now]:
+                del _cache[k]
+            while len(_cache) >= CACHE_MAX:  # still full: drop the oldest answers
+                del _cache[next(iter(_cache))]
+        _cache[key] = (now + ttl, rows)
+
+
 def _cached(key: tuple[str, str]) -> list[dict[str, Any]] | None:
     with _lock:
         hit = _cache.get(key)
@@ -101,8 +140,7 @@ def run(store: str, query: str, gql: shopify.Gql | None = None) -> list[dict[str
             return hit
         with slot:
             rows = shopify.shopifyql(gql or shopify.gql_for(store), query)
-        with _lock:
-            _cache[key] = (time.monotonic() + cro_config().cache_seconds, rows)
+        _store_answer(key, rows, ttl_for(store, query))
     return rows
 
 

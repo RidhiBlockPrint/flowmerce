@@ -237,7 +237,13 @@ def test_recommendations_wait_for_the_first_load(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(service, "store_timezone", lambda _s: ZoneInfo("UTC"))
     monkeypatch.setattr(data, "snapshot", lambda _s: Snapshot("RBP", (), (), NOW, NOW))
     monkeypatch.setattr(data, "sync_state", lambda _s: {"running_since": "x", "cursor": None})
-    monkeypatch.setattr(data, "alarm_rules", lambda _s: pytest.fail("order checks must not run"))
+    # The rules may be read (with every other read, at once), but no order check may be evaluated.
+    rule = {"id": 1, "kind": "no_product_orders", "is_active": True, "product_keyword": "quilt",
+            "threshold": 12}
+    monkeypatch.setattr(data, "alarm_rules", lambda _s: [rule])
+    from flowmerce.modules.cro import alarms
+
+    monkeypatch.setattr(alarms, "gap_figures", lambda *_a: pytest.fail("order checks must not run"))
     monkeypatch.setattr(data, "first_order_day", lambda _s: None)   # no Supabase in tests
 
     def no_reports(*_a: Any, **_k: Any) -> Any:

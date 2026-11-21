@@ -11,6 +11,8 @@ import dataclasses
 import os
 from dataclasses import dataclass
 
+import httpx
+
 from ..shipping.config import shipping_config
 from ..shipping.supabase import SupabaseClient
 
@@ -82,13 +84,28 @@ def store_for(brand: str) -> str:
 
 
 _cro: SupabaseClient | None = None
+# Supabase is far away: a request takes about 0.4 s on an open connection and about 1 s when a new
+# secure connection must be opened first (measured 2026-11-21). httpx closes idle connections after
+# 5 s by default, so every CRO page opened after a short pause paid that again for each of its
+# reads. Idle connections are kept for SUPABASE_KEEPALIVE seconds instead: below the usual 60 s idle
+# limit on the server side, so a write (which is not retried) never meets a connection the server
+# has already closed.
+SUPABASE_KEEPALIVE = 55.0
 
 
 def cro_client() -> SupabaseClient:
-    """One shared Supabase client for schema `cro` (Shipping's client class, Shipping's keys)."""
+    """One shared Supabase client for schema `cro` (Shipping's client class, Shipping's keys), its
+    connections kept open between page loads."""
     global _cro
     if _cro is None:
-        _cro = SupabaseClient(dataclasses.replace(shipping_config(), schema="cro"))
+        transport = httpx.HTTPTransport(
+            limits=httpx.Limits(
+                max_connections=40,
+                max_keepalive_connections=20,
+                keepalive_expiry=SUPABASE_KEEPALIVE,
+            )
+        )
+        _cro = SupabaseClient(dataclasses.replace(shipping_config(), schema="cro"), transport)
     return _cro
 
 

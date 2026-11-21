@@ -28,7 +28,7 @@ ORDER_COLUMNS = (
 LINE_COLUMNS = "order_id,placed_at,product_id,title,product_type,tags,quantity,unit_price"
 PAGE = 1000
 MAX_STALE_SECONDS = 1800  # a copy older than this is reloaded before answering
-READ_CACHE_SECONDS = 30.0
+READ_CACHE_SECONDS = 120.0  # every write in this app forgets them at once
 
 log = logging.getLogger(__name__)
 # Separate pools so a task never waits on a task queued in its own pool: tables (orders, lines)

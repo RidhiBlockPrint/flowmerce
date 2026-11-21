@@ -9,7 +9,7 @@ import { useBrandParam } from '../lib/app';
 import { useSearchParams } from '../lib/nav';
 import { fmtDate, fmtDateTime, fmtDay, fmtInt, isoDay, timeAgo } from '../lib/format';
 import {
-    ADVICE_AREA, AREAS, EFFORT_TONE, IMPACT_TONE, PRIORITY_TONE, RANGE_PRESETS, RULE_KIND, STORES, TABS,
+    ADVICE_AREA, AREAS, EFFORT_TONE, IMPACT_TONE, PRIORITY_TONE, RANGE_PRESETS, RULE_KIND, STORES, TABS, storeTimezone,
     RATING, VITALS, areaLabel, conversionScale, effectiveCompare, fmtVital, heatLevel, money, pct, presetRange, rangeDays, readable, seriesOf, shiftDay, signedPct,
     signedPts, todayIn,
 } from '../lib/cro';
@@ -17,7 +17,7 @@ import { LineChart } from '../components/charts';
 import { CroEmpty, CroGate, ExplainedError, KpiTile, RangeBar, Seg } from '../components/cro';
 import { RingBody } from '../components/dash';
 import { Gauge } from '../components/motion';
-import { DayStrip, GaugeCard, HeatmapCard, JourneyCard, MoversCard, OrdersCard, SalesChart, TrendsRow, VisitsCard } from '../components/croOverview';
+import { DayStrip, GaugeCard, HealthTile, HeatmapCard, JourneyCard, MoversCard, OrdersCard, SalesChart, SalesTile, TrendsRow, VisitsCard } from '../components/croOverview';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
 import { Button, Card, Field, LoadingBlock, PageHead, Paged, Pill, Skeleton, Tabs } from '../components/ui';
@@ -33,9 +33,10 @@ export default function Cro() {
     const [syncing, setSyncing] = useState(false);
     const [draft, setDraft] = useState(null);   // an experiment started from a recommendation
     const toast = useToast();
-    // The store's own "today" (Shopify's timezone for the store) decides what "Yesterday" or "This month" means.
+    // The store's own "today" (Shopify's timezone for the store) decides what "Yesterday" or "This month" means. The
+    // store's known zone is used until settings answers, so the page's requests start straight away.
     const settings = useApi(`/cro/settings${qs({ brand })}`);
-    const today = settings.data ? todayIn(settings.data.timezone) : null;
+    const today = todayIn(storeTimezone(brand, settings.data?.timezone));
     const update = (patch) => {
         const next = new URLSearchParams(sp);
         for (const [k, v] of Object.entries(patch)) {
@@ -92,7 +93,7 @@ export default function Cro() {
                             : tab === 'experiments' ? (today ? <ExperimentsTab brand={brand} today={today} draft={draft} onDraftUsed={() => setDraft(null)}/> : <LoadingBlock rows={3}/>)
                                 : tab === 'alarms' ? <AlarmsTab brand={brand}/>
                                     : tab === 'changes' ? <ChangeLogTab brand={brand}/>
-                                        : <OverviewTab key={qs(rq)} rq={rq} today={today} onTab={(t) => update({ tab: t })} onPickDay={(day) => setRange({ r: 'custom', from: day, to: day })}/>}
+                                        : <OverviewTab rq={rq} today={today} onTab={(t) => update({ tab: t })} onPickDay={(day) => setRange({ r: 'custom', from: day, to: day })}/>}
       </div>
     </>);
 }
@@ -115,44 +116,51 @@ const PRIORITY_LANE = { High: 'lane-due', Medium: 'lane-event', Low: 'plain' };
  * 28 before, for the chart's comparison).
  *
  * The page appears all at once: one placeholder until every request has answered (or failed, which then shows in
- * its own card), rather than cards arriving one by one. It is keyed by the range, so a new range waits the same way;
- * answers already remembered in this tab show at once.
+ * its own card), rather than cards arriving one by one. A new range keeps the current page on screen (dimmed) until
+ * all of its answers are in and then changes at once; requests that do not depend on the range are not sent again.
+ * Answers already remembered in this tab show at once.
  */
-function OverviewTab({ rq, today, onTab, onPickDay }) {
-    const q = useApi(`/cro/overview${qs(rq)}`);
-    const conv = useApi(`/cro/conversion${qs(rq)}`);
-    const from28 = shiftDay(rq.to, -27);
-    const conv28 = useApi(`/cro/conversion${qs({ brand: rq.brand, from: from28, to: rq.to, compare: 'previous' })}`);
-    const trend = useApi(`/cro/sales-trend${qs({ brand: rq.brand, from: from28, to: rq.to, compare: 'previous' })}`);
-    const cal = useApi(`/calendar${qs({ brand: rq.brand, from: shiftDay(rq.to, -55), to: rq.to })}`);
-    const recs = useApi(`/cro/recommendations${qs({ brand: rq.brand })}`);
-    const changes = useApi(`/cro/change-log${qs({ brand: rq.brand, days: 63 })}`);
-    const advice = useApi(`/cro/ai-advice${qs({ brand: rq.brand })}`);
+function OverviewTab({ rq: wanted, today, onTab, onPickDay }) {
+    const wFrom28 = shiftDay(wanted.to, -27);
+    const wStrip = { brand: wanted.brand, from: shiftDay(today, -13), to: today, compare: 'none' };
+    const wMonth = presetRange('this_month', today);
+    // Every request first, in a fixed order; the page is drawn from the last complete set (useSettled).
+    const [{ q, conv, conv28, trend, cal, recs, changes, advice, stripSales, stripConv, mtd, goal, movers, heat, trends, breakdown, health }, rq, updating] = useSettled({
+        q: useApi(`/cro/overview${qs(wanted)}`),
+        conv: useApi(`/cro/conversion${qs(wanted)}`),
+        conv28: useApi(`/cro/conversion${qs({ brand: wanted.brand, from: wFrom28, to: wanted.to, compare: 'previous' })}`),
+        trend: useApi(`/cro/sales-trend${qs({ brand: wanted.brand, from: wFrom28, to: wanted.to, compare: 'previous' })}`),
+        cal: useApi(`/calendar${qs({ brand: wanted.brand, from: shiftDay(wanted.to, -55), to: wanted.to })}`),
+        recs: useApi(`/cro/recommendations${qs({ brand: wanted.brand })}`),
+        changes: useApi(`/cro/change-log${qs({ brand: wanted.brand, days: 63 })}`),
+        advice: useApi(`/cro/ai-advice${qs({ brand: wanted.brand })}`),
+        // The strip always shows the store's latest 14 days (today included), so it stays put when a day is picked from it.
+        stripSales: useApi(`/cro/sales-trend${qs(wStrip)}`),
+        stripConv: useApi(`/cro/conversion${qs(wStrip)}`),
+        mtd: useApi(`/cro/overview${qs({ brand: wanted.brand, from: wMonth.from, to: wMonth.to, compare: 'previous' })}`),
+        goal: useApi(`/cro/goal${qs({ brand: wanted.brand })}`, { remember: false }),
+        movers: useApi(`/cro/traffic-changes${qs(wanted)}`),
+        heat: useApi(`/cro/buy-heatmap${qs({ brand: wanted.brand, days: 28 })}`),
+        trends: useApi(`/cro/overview-trends${qs({ brand: wanted.brand, from: wFrom28, to: wanted.to, compare: 'previous' })}`),
+        // The side tiles: the range's sales breakdown, and page speed for the latest 7 days Shopify has published (2 days late).
+        breakdown: useApi(`/cro/sales-breakdown${qs(wanted)}`),
+        health: useApi(`/cro/site-health${qs({ brand: wanted.brand, from: shiftDay(today, -8), to: shiftDay(today, -2), compare: 'previous' })}`),
+    }, wanted);
     const actions = advice.data?.advice?.actions?.length
         ? advice.data.advice.actions.slice(0, 3).map((a) => ({ title: a.title, why: a.evidence ? factsOf(a.evidence)[0] : firstSentence(a.why),
             tags: [{ label: `${a.impact} impact`, lane: IMPACT_LANE[a.impact] ?? 'plain' }, ...(ADVICE_AREA[a.area] ? [{ label: ADVICE_AREA[a.area], lane: 'lane-research' }] : [])] }))
         : (recs.data?.recommendations ?? []).filter((r) => !['done', 'ignored'].includes(r.status)).slice(0, 3).map((r) => ({ title: r.title, why: r.evidence, tags: [{ label: r.priority, lane: PRIORITY_LANE[r.priority] ?? 'plain' }] }));
     const planKey = advice.data?.advice?.actions?.length ? `ai-${advice.data.generated_at}` : `rules-${rq.brand}-${actions.map((a) => a.title).join('|').length}`;
-    // The strip always shows the store's latest 14 days (today included), so it stays put when a day is picked from it.
-    const stripRq = { brand: rq.brand, from: shiftDay(today, -13), to: today, compare: 'none' };
-    const stripSales = useApi(`/cro/sales-trend${qs(stripRq)}`);
-    const stripConv = useApi(`/cro/conversion${qs(stripRq)}`);
     const history = conv28.data?.trend ?? [];
     const cvrByDate = new Map([...(stripConv.data?.trend ?? []), ...history].map((r) => [r.date, r.conversion_rate]));
     const stripDays = (stripSales.data?.current ?? []).map((r) => ({ date: r.date, orders: r.orders, cvr: cvrByDate.get(r.date) ?? null }));
     const days = (trend.data?.current ?? []).map((r) => ({ date: r.date, orders: r.orders, cvr: cvrByDate.get(r.date) ?? null }));
     // Calendar events (built-in ones apply to every store) shade the sales chart. No events is fine: the chart just has no bands.
     const events = (cal.data?.events ?? []).filter((e) => !e.brand_id || e.brand_id === rq.brand).map((e) => ({ date: e.date, name: e.name }));
-    const month = presetRange('this_month', today);
-    const mtd = useApi(`/cro/overview${qs({ brand: rq.brand, from: month.from, to: month.to, compare: 'previous' })}`);
-    const goal = useApi(`/cro/goal${qs({ brand: rq.brand })}`, { remember: false });
-    const movers = useApi(`/cro/traffic-changes${qs(rq)}`);
-    const heat = useApi(`/cro/buy-heatmap${qs({ brand: rq.brand, days: 28 })}`);
-    const trends = useApi(`/cro/overview-trends${qs({ brand: rq.brand, from: from28, to: rq.to, compare: 'previous' })}`);
-    const all = [q, conv, conv28, trend, cal, recs, changes, advice, stripSales, stripConv, mtd, goal, movers, heat, trends];
+    const all = [q, conv, conv28, trend, cal, recs, changes, advice, stripSales, stripConv, mtd, goal, movers, heat, trends, breakdown, health];
     if (!all.every((x) => x.data !== null || x.error || !x.loading))
         return <OverviewLoading/>;
-    return (<div className="col" style={{ gap: 18 }}>
+    return (<div className={`col cro-page${updating ? ' cro-stale' : ''}`} style={{ gap: 18 }} aria-busy={updating || undefined}>
       <CroGate query={q}>
         {(d) => {
             const value = d.metrics.conversion_rate?.value ?? null;
@@ -161,9 +169,9 @@ function OverviewTab({ rq, today, onTab, onPickDay }) {
               <DayStrip days={stripDays} from={rq.from} to={rq.to} scale={scale} onPick={onPickDay}/>
               <div className="muted small">{d.period_label} · {d.timezone} time{d.health.last_order_at ? ` · last order ${timeAgo(d.health.last_order_at)}` : ''}</div>
               <div className="ov-trio">
-                <OrdersCard block={d.metrics.orders} days={days}/>
+                <div className="ov-side"><SalesTile q={breakdown} onOpen={() => onTab('sales')}/><OrdersCard block={d.metrics.orders} days={days}/></div>
                 <GaugeCard value={value} scale={scale} single={rq.from === rq.to} revenue={d.metrics.revenue} aov={d.metrics.aov} perVisit={d.metrics.revenue_per_session}/>
-                <VisitsCard trend={history} total={conv.data?.total} baseTotal={conv.data?.baseline_total} scale={scale}/>
+                <div className="ov-side"><HealthTile q={health} onOpen={() => onTab('site')}/><VisitsCard trend={history} total={conv.data?.total} baseTotal={conv.data?.baseline_total} scale={scale}/></div>
               </div>
               {d.cvr_error ? <ExplainedError error={{ code: d.cvr_error.state, message: d.cvr_error.message }}/> : null}
             </>);
@@ -189,11 +197,33 @@ function OverviewTab({ rq, today, onTab, onPickDay }) {
     </div>);
 }
 
+/**
+ * A page's requests as they were when all of them had last answered, with the range they belong to, and whether a newer
+ * range is still loading. While it loads, the page keeps the previous answers so it changes all at once instead of
+ * card by card; after UPDATE_WAIT it shows whatever has arrived. A background refresh of answers already shown (same
+ * range) never holds anything back.
+ */
+const UPDATE_WAIT = 8000;
+function useSettled(queries, rq) {
+    const list = Object.values(queries);
+    const ready = list.every((x) => !x.loading || x.error);
+    const key = qs(rq);
+    const kept = useRef(null);
+    const [late, setLate] = useState('');
+    useEffect(() => {
+        if (ready) return undefined;
+        const t = setTimeout(() => setLate(key), UPDATE_WAIT);
+        return () => clearTimeout(t);
+    }, [key, ready]);
+    if (!kept.current || ready || late === key || qs(kept.current.rq) === key) kept.current = { queries, rq };
+    return [kept.current.queries, kept.current.rq, qs(kept.current.rq) !== key];
+}
+
 /** The Overview's one placeholder, shaped like the page: the strip, three cards and the chart. */
 function OverviewLoading() {
     return (<div className="col" style={{ gap: 18 }} aria-busy="true" aria-label="Loading the overview">
       <Skeleton h={88} r={12}/>
-      <div className="ov-trio"><Skeleton h={300} r={16}/><Skeleton h={420} r={22}/><Skeleton h={300} r={16}/></div>
+      <div className="ov-trio"><div className="ov-side"><Skeleton h={250} r={16}/><Skeleton h={260} r={16}/></div><Skeleton h={530} r={22}/><div className="ov-side"><Skeleton h={220} r={16}/><Skeleton h={290} r={16}/></div></div>
       <Skeleton h={380} r={16}/>
     </div>);
 }

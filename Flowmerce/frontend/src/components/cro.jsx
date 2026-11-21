@@ -14,10 +14,11 @@ import { fmtDate, fmtInt, timeAgo } from '../lib/format';
 
 /** Loading, explained errors, then `children(data)` with the order-data note on top when the copy is incomplete. */
 export function CroGate({ query, children, rows = 5 }) {
-    const { data, error, reload } = query;
+    const { data, error, reload, loading } = query;
     if (error) return <ExplainedError error={error} onRetry={reload}/>;
     if (!data) return <LoadingBlock rows={rows}/>;
-    return (<div className="col" style={{ gap: 16 }}>
+    // Still showing the previous answer while a new one loads (another range): dim it, after a short delay.
+    return (<div className={`col cro-page${loading ? ' cro-stale' : ''}`} style={{ gap: 16 }} aria-busy={loading || undefined}>
       <OrderDataNote state={data.order_data} from={data.from}/>
       {children(data)}
     </div>);

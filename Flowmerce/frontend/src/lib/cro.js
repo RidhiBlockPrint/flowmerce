@@ -24,9 +24,18 @@ export const TABS = [
 
 /** CRO works on one store at a time: conversion rates of two stores cannot be added together. */
 export const STORES = [
-    { key: 'ridhi', label: 'Ridhi' },
-    { key: 'cpc', label: 'CPC' },
+    { key: 'ridhi', label: 'Ridhi', tz: 'America/New_York' },
+    { key: 'cpc', label: 'CPC', tz: 'America/Phoenix' },
 ];
+
+/**
+ * The store's timezone before /cro/settings has answered: the one Shopify reports for each store (21 Nov 2026), so a
+ * CRO page can work out "yesterday" and start its requests at once instead of waiting about 2 s for settings. When
+ * settings answers with a different zone, the page simply asks again for the right days.
+ */
+export function storeTimezone(brand, reported) {
+    return reported || STORES.find((s) => s.key === brand)?.tz || 'UTC';
+}
 
 export const AREAS = [
     { key: 'theme', label: 'Theme' },

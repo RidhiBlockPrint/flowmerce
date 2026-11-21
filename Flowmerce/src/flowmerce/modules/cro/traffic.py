@@ -68,7 +68,7 @@ def run_many(
 
     rows: dict[str, list[dict[str, Any]] | None] = {}
     errors: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=8) as pool:
         for name, result, err in pool.map(one, queries.items()):
             rows[name] = result
             if err:

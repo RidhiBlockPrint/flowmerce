@@ -2,6 +2,65 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-21 (CRO: faster pages and filter changes)
+
+Owner request 2026-11-21: data showing, page loading and filter changes were too slow; check desktop and mobile and
+make it faster locally before pushing. Pushed to main together with the Overview tiles below, after the owner's
+go-ahead. Measured on the local app (production build, live Ridhi data) before and after, the same way (browser timings
+of the page and its requests):
+
+| | Before | After |
+|---|---|---|
+| Overview, normal visit | 2.9 s (4.3 s on a fresh load) | 0.9 s (0.3 s when its answers are cached) |
+| Overview, range not seen yet | 2.5 s behind the loading placeholder | 0.6-0.8 s, the page stays and changes at once |
+| Overview, range seen before | 2.5 s (all 17 requests sent again) | 0.1 s (only the range's own requests) |
+| First visit: Landing pages / Products / Sales | 2.1 / 1.5 / 1.4 s | 0.13 / 0.11 / 0.13 s |
+| First visit: Cart & checkout / Conversion | 2.4 / 0.3 s | 0.8 / 0.15 s |
+
+Why it was slow: every CRO page waited about 2 s for /cro/settings before asking for any figures; a range change
+rebuilt the Overview; Shopify answers were kept only 10 minutes and several reads ran one after another; Supabase
+(about 0.4 s a request from here) reopened its secure connections after 5 s idle (about 1 s a request then); and Shopify
+allows each store 1,000 report (ShopifyQL) points a minute (a query costs 2-22), so bursts of uncached queries were
+throttled (reads then waited 25-45 s). Verified: CRO tests (128, 7 new), the whole Python suite (one failure that
+predates this: `test_unfinished_pages_are_not_mounted`), ruff and mypy --strict on the CRO module, frontend tests (91),
+`next build`, demo mode on desktop and phone width (no sideways scroll), and the local app as above. A first view of
+a range that is neither the default nor seen in the last 6 hours still reads Shopify (about 0.6-2 s).
+
+- **Changed** CRO pages no longer wait for /cro/settings: each store's timezone is known up front
+  (`storeTimezone` in `lib/cro.js`; the one settings reports wins when it answers), so the figures are asked at once.
+- **Changed** the Overview keeps its page on screen (dimmed after 350 ms) while a new range loads and then changes all
+  at once, without the loading placeholder; requests that do not depend on the range are not sent again (it was
+  rebuilt for every range). Other tabs dim a card that is loading a new answer instead of showing old figures as new.
+- **Changed** Shopify answers for days that are over and settled (3 hours after the store's midnight) are kept 6 hours
+  instead of 10 minutes; answers that reach today keep 10 minutes. GA4 answers likewise once GA4 has finished a day
+  (2 days). At most 4,000 answers are kept.
+- **Added** a background warm-up (`service.warm_views`, in every 15-minute round after all stores' order sync and
+  alarms, so it never delays them; the first round runs 30 s after start-up): every CRO tab's default view (yesterday
+  against the 4-week average) and the Overview's other cards are read one at a time, pausing 2 s after each read that
+  went to Shopify so pages opened meanwhile keep most of the per-minute budget (measured: about 65 s a store with
+  nothing cached, a few seconds afterwards).
+- **Changed** Supabase connections for CRO are kept open 55 s between requests (httpx closed them after 5 s), and the
+  small page reads (sync state, settings, statuses, change log) are reused for 2 minutes instead of 30 s; any change
+  made in the app still forgets them at once. Every change-log window (60, 63, 90, 365 days) is cut from one read.
+- **Changed** reads that ran one after another now run together: the conversion trend's four Shopify queries, the KPI
+  overview's sales report and conversion read, /cro/settings' Supabase reads, and the recommendation list's Shopify and
+  Supabase reads. A query group runs up to 8 queries at once (was 4); the shared read pool has 24 threads (was 6).
+- **Fixed** the Net sales chart's controls on phones (they pushed the page up to 18 px wider).
+
+## 2026-11-21 (CRO Overview: Sales and Site health tiles)
+
+Owner approval 2026-11-21 (design canvas "CRO Overview Drafts", artboard 12). Pushed to main together with the speed
+work above. Verified: frontend tests (91), `next build`, the Overview in demo mode on desktop (the three top columns now
+end level) and phone width (no sideways scroll).
+
+- **Added** two tiles above Orders and Visits on the CRO Overview (`SalesTile`, `HealthTile` in
+  `components/croOverview.jsx`), so the space beside Store conversion is no longer empty: Sales (total sales for the
+  chosen days against the comparison, and a ring of where the gross sales went: net sales, returns, discounts) and
+  Site health (mobile LCP / INP / CLS as rings of good page loads, coloured by Google's rating, and how site searchers
+  convert, for the 7 days ending two days ago, because Shopify publishes page speed 1-2 days late). The Overview reads
+  two more answers it already had routes for (`/cro/sales-breakdown`, `/cro/site-health`) and still appears all at once.
+- **Fixed** the Net sales chart's controls on phones: they wrap instead of pushing the page 18 px wider.
+
 ## 2026-11-21 (CRO: batch 5, new vs returning customers; page loading)
 
 Owner approvals 2026-11-21: batch 5 plan with the recommended answers and its sample screens (design canvas "CRO Overview

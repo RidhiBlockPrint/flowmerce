@@ -320,3 +320,12 @@ def test_the_product_list_is_refreshed_before_it_runs_out(monkeypatch: pytest.Mo
     assert shopify.warm_catalog("RBP", gql) is False and len(reads) == 1  # fresh: kept
     clock[0] += shopify.SHOP_CACHE_SECONDS - shopify.CATALOG_REFRESH_LEFT + 1
     assert shopify.warm_catalog("RBP", gql) is True and len(reads) == 2  # under an hour left
+
+
+def test_ga4_answers_for_settled_days_are_kept_longer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shopify, "shop_info", lambda store: {"timezone": "America/New_York"})
+    now = datetime(2026, 11, 21, 15, 0, tzinfo=NY)
+    assert products.ga4_ttl("RBP", date(2026, 11, 19), now) == conversion.FINAL_TTL
+    assert products.ga4_ttl("RBP", date(2026, 11, 20), now) == float(
+        conversion.cro_config().cache_seconds
+    )

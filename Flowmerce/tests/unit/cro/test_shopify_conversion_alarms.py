@@ -343,3 +343,126 @@ def test_a_burst_of_report_queries_is_capped_and_shared() -> None:
     assert peak[0] <= conversion.MAX_PARALLEL
     assert sorted(calls) == sorted(queries)  # a query being read is not asked again
     conversion.clear_cache()
+
+
+def test_settled_days_are_kept_longer_than_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setattr(shopify, "shop_info", lambda store: {"timezone": "America/New_York"})
+    ny = ZoneInfo("America/New_York")
+    short = float(conversion.cro_config().cache_seconds)
+    q = "FROM sessions SHOW sessions SINCE 2026-11-14 UNTIL 2026-11-20"
+    # 20 Nov ended at local midnight; at 01:00 it is still settling, at 04:00 it is final
+    assert conversion.ttl_for("RBP", q, datetime(2026, 11, 21, 1, 0, tzinfo=ny)) == short
+    assert (
+        conversion.ttl_for("RBP", q, datetime(2026, 11, 21, 4, 0, tzinfo=ny))
+        == conversion.FINAL_TTL
+    )
+    today_q = "FROM sessions SHOW sessions SINCE 2026-11-14 UNTIL 2026-11-21"
+    assert conversion.ttl_for("RBP", today_q, datetime(2026, 11, 21, 15, 0, tzinfo=ny)) == short
+    assert conversion.ttl_for("RBP", "FROM sessions SHOW sessions SINCE -8d UNTIL today") == short
+
+
+def test_the_cache_never_grows_past_its_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    conversion.clear_cache()
+    monkeypatch.setattr(conversion, "CACHE_MAX", 5)
+    for i in range(12):
+        conversion._store_answer(("RBP", f"q{i}"), [], 60.0)
+    assert len(conversion._cache) <= 5 and ("RBP", "q11") in conversion._cache
+    conversion.clear_cache()
+
+
+def test_the_warm_up_reads_each_default_view_once_and_keeps_going(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from zoneinfo import ZoneInfo
+
+    from flowmerce.modules.cro import service
+
+    monkeypatch.setattr(
+        service,
+        "_ctx",
+        lambda brand: ("RBP", ZoneInfo("America/New_York"), datetime(2026, 11, 21, 15, tzinfo=UTC)),
+    )
+    seen: list[tuple[str, Any]] = []
+
+    def fake(name: str, fail: bool = False) -> Any:
+        def call(*args: Any) -> dict[str, Any]:
+            seen.append((name, args[-1] if args else None))
+            if fail:
+                raise RuntimeError("Shopify said no")
+            return {}
+
+        return call
+
+    for name in (
+        "overview",
+        "conversion_trend",
+        "sales_trend",
+        "traffic_changes",
+        "overview_trends",
+        "buy_heatmap",
+        "sales_breakdown",
+        "site_health",
+        "segments",
+        "geo",
+        "landing_pages",
+        "landing_grids",
+        "checkout_extras",
+        "product_insights",
+        "discount_codes",
+        "customers",
+    ):
+        monkeypatch.setattr(service, name, fake(name))
+    monkeypatch.setattr(service, "recommendation_list", fake("recommendation_list", fail=True))
+    out = service.warm_views("ridhi", pause=0)
+    assert out["failed"] == ["recommendations"] and out["reads"] == len(seen)
+    day = next(rq for name, rq in seen if name == "overview")
+    assert (day.frm, day.to, day.compare) == (
+        "2026-11-20",
+        "2026-11-20",
+        "4week_avg",
+    )  # the page's default
+    assert sum(1 for name, _ in seen if name == "product_insights") == 1
+
+
+def test_a_round_syncs_every_store_before_warming_any_views(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from flowmerce.modules.cro import scheduler, service, sync
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        sync, "sync_store", lambda store: calls.append(f"sync {store}") or {"state": "ok"}
+    )
+    monkeypatch.setattr(scheduler.data, "snapshot", lambda store, force=False: None)
+    monkeypatch.setattr(service, "today_for", lambda store: date(2026, 11, 21))
+    monkeypatch.setattr(
+        alarms, "check_store", lambda store, today: calls.append(f"alarms {store}") or {}
+    )
+    monkeypatch.setattr(scheduler, "_warm_catalog", lambda store: "cached")
+    monkeypatch.setattr(
+        service, "warm_views", lambda brand: calls.append(f"warm {brand}") or {"reads": 0}
+    )
+    out = scheduler.run_once()
+    assert calls == ["sync RBP", "alarms RBP", "sync CPC", "alarms CPC", "warm ridhi", "warm cpc"]
+    assert out["stores"]["RBP"]["warm"] == {"reads": 0}
+
+
+def test_every_change_log_window_comes_from_one_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    from zoneinfo import ZoneInfo
+
+    from flowmerce.modules.cro import data, service
+
+    data.forget_reads()
+    utc = ZoneInfo("UTC")
+    monkeypatch.setattr(
+        service, "_ctx", lambda brand: ("RBP", utc, datetime(2026, 11, 21, 12, tzinfo=UTC))
+    )
+    reads: list[str] = []
+    rows = [{"id": 2, "entry_date": "2026-11-01"}, {"id": 1, "entry_date": "2026-06-01"}]
+    monkeypatch.setattr(data, "change_log", lambda store, since: reads.append(since) or rows)
+    assert [e["id"] for e in service.change_log("ridhi", 63)["entries"]] == [2]
+    assert [e["id"] for e in service.change_log("ridhi", 365)["entries"]] == [2, 1]
+    assert len(reads) == 1  # the 63-day and the 365-day windows share one Supabase read
+    data.forget_reads()

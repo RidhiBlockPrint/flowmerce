@@ -42,7 +42,7 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime, timedelta
 from itertools import combinations
 from typing import Any
 from urllib.parse import quote
@@ -50,7 +50,7 @@ from zoneinfo import ZoneInfo
 
 from . import shopify
 from .config import STORE_BRAND, cro_config
-from .conversion import run
+from .conversion import FINAL_TTL, run
 from .data import Snapshot
 from .metrics import live, product_sales
 from .periods import Window, days_window
@@ -78,6 +78,7 @@ PAIR_LIMIT = 20
 MIN_PAIR_ORDERS = 2  # a pair bought together only once is chance
 CODE_LIMIT = 15
 GA4_PAGE = 100_000
+GA4_SETTLED_DAYS = 2  # GA4 finishes processing a day within about 48 hours
 GROUPS = ("star", "hidden_gem", "leaky", "dead_weight")
 
 # Product families by a word in the title, checked before Shopify's product type: many products
@@ -224,8 +225,21 @@ def ga4_views(store: str, w: Days, post: Post | None = None) -> dict[str, Any]:
     )
     out = {"by_product": by, "days": days, "unmatched_views": unmatched}
     with _ga4_lock:
-        _ga4_cache[key] = (time.monotonic() + cro_config().cache_seconds, out)
+        _ga4_cache[key] = (time.monotonic() + ga4_ttl(store, w[1]), out)
     return out
+
+
+def ga4_ttl(store: str, last: date, now: datetime | None = None) -> float:
+    """How long a GA4 answer is reused: FINAL_TTL when its last day is GA4_SETTLED_DAYS or more
+    before the store's today (GA4 has finished processing it), else `cache_seconds`."""
+    short = float(cro_config().cache_seconds)
+    try:
+        from zoneinfo import ZoneInfo
+
+        today = (now or datetime.now(ZoneInfo(shopify.shop_info(store)["timezone"]))).date()
+    except Exception:  # noqa: BLE001 - no timezone: keep the short reuse
+        return short
+    return FINAL_TTL if last <= today - timedelta(days=GA4_SETTLED_DAYS) else short
 
 
 def clear_cache() -> None:

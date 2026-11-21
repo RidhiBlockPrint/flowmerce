@@ -2,14 +2,16 @@
 /* The CRO Overview's pieces (views/Cro.jsx, Overview tab), design A2: the 14-day strip, the orders blocks, the
  * conversion gauge, visits by day, the sales chart and the shopper journey. Colours are the content calendar's
  * lanes (.lane-* in globals.css), so a colour means the same here as on the calendar: green good, saffron usual or
- * an event, red a drop, blue this period. Every figure comes from /api/cro/...; these components only draw it. */
+ * an event, red a drop, blue this period. Every figure comes from /api/cro/...; these components only draw it.
+ * Above Orders and Visits sit the Sales and Site health tiles (approved 2026-11-21), so the three columns end level
+ * with the conversion card. */
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { CountUp } from './motion';
 import { ExplainedError, Seg } from './cro';
 import { BarList, LineChart } from './charts';
 import { fmtDay, fmtInt } from '../lib/format';
-import { bestHours, conversionBand, fmtHour, heatLevel, money, niceAxis, pct, readable, salesWindow, seriesOf, toCsv } from '../lib/cro';
+import { RATING, VITALS, bestHours, conversionBand, fmtHour, fmtVital, heatLevel, money, niceAxis, pct, readable, salesWindow, seriesOf, toCsv } from '../lib/cro';
 
 /** Width of an element, kept current as the window resizes (charts draw at 1:1 so text keeps its size). */
 function useWidth(initial = 800) {
@@ -191,6 +193,97 @@ export function VisitsCard({ trend, total, baseTotal, scale }) {
     </section>);
 }
 
+/* ------------------------------------------------------------------ side tiles (above Orders and Visits) */
+const MONEY_PARTS = [
+    { key: 'net', name: 'Net sales', color: 'var(--info)' },
+    { key: 'returns', name: 'Returns', color: '#eaa39a' },
+    { key: 'discounts', name: 'Discounts', color: 'var(--saffron)' },
+];
+
+/** Total sales for the chosen days against the comparison, and a ring of where the gross sales went (net sales,
+ * returns, discounts), from the Sales tab's breakdown. */
+export function SalesTile({ q, onOpen }) {
+    const d = q.data;
+    const row = (k) => d?.rows?.find((r) => r.key === k);
+    const total = row('total');
+    const gross = row('gross')?.value || 0;
+    const parts = MONEY_PARTS.map((m) => ({ ...m, value: Math.max(0, row(m.key)?.value || 0) }));
+    const C = 2 * Math.PI * 46;
+    let at = 0;
+    const arcs = gross ? parts.filter((x) => x.value).map((x) => {
+        const len = (x.value / gross) * C;
+        const a = { ...x, dash: `${Math.max(len - 2, 0.5)} ${C}`, off: -at };
+        at += len;
+        return a;
+    }) : [];
+    const tax = row('tax')?.value || 0;
+    return (<section className="card ov-card ov-tile" aria-labelledby="ov-sales-tile">
+      <div className="ov-card-head"><h2 id="ov-sales-tile" className="serif ov-serif">Sales</h2>{d ? <span className="muted xs">{d.baseline_label}</span> : null}</div>
+      {q.error ? <ExplainedError error={q.error} onRetry={q.reload}/> : !total ? <div className="muted small">No sales figures for these days.</div> : (<>
+        <div className="row" style={{ gap: 8 }}>
+          <span className="ov-big num" style={{ fontSize: 34 }}><CountUp value={money(total.value, 'USD', 0)}/></span>
+          {total.too_early ? <span className="muted xs">too early to compare</span> : <ChangeChip v={total.change_pct ?? null}/>}
+        </div>
+        <div className="muted xs">total sales · net {money(row('net')?.value ?? 0, 'USD', 0)}{tax ? ` + tax ${money(tax, 'USD', 0)}` : ''}{row('shipping')?.value ? ` + shipping ${money(row('shipping').value, 'USD', 0)}` : ''}</div>
+        {gross ? (<div className="ov-money">
+          <svg viewBox="0 0 120 120" role="img" aria-label={`Of ${money(gross, 'USD', 0)} gross sales: ${parts.map((x) => `${x.name.toLowerCase()} ${pct((x.value / gross) * 100, 0)}`).join(', ')}`}>
+            <circle cx="60" cy="60" r="46" fill="none" stroke="var(--line-2)" strokeWidth="16"/>
+            {arcs.map((a, i) => <circle key={a.key} className="ring-arc" style={{ animationDelay: `${i * 70}ms` }} cx="60" cy="60" r="46" fill="none" stroke={a.color} strokeWidth="16"
+              strokeDasharray={a.dash} strokeDashoffset={a.off} transform="rotate(-90 60 60)"><title>{`${a.name}: ${money(a.value, 'USD', 0)}`}</title></circle>)}
+            <text x="60" y="56" textAnchor="middle" className="ov-money-sub">gross</text>
+            <text x="60" y="73" textAnchor="middle" className="ov-money-num">{money(gross, 'USD', 0)}</text>
+          </svg>
+          <div className="ov-money-lg">{parts.map((x) => (<div key={x.key}><i style={{ background: x.color }}/><span>{x.name}</span><b className="num">{pct((x.value / gross) * 100, 1)}</b></div>))}</div>
+        </div>) : null}
+        <button type="button" className="link-btn ov-tile-link" onClick={onOpen}>Where the gross sales went · Sales tab →</button>
+      </>)}
+    </section>);
+}
+
+/** Mobile page speed (LCP, INP, CLS at the 75th percentile, each with its share of good page loads as a ring) and
+ * site search, for the latest days Shopify has published: it publishes them 1-2 days late, so this tile always reads
+ * the 7 days ending two days ago, whatever range the page shows. */
+export function HealthTile({ q, onOpen }) {
+    const d = q.data;
+    const devices = d?.devices ?? {};
+    const name = devices.Mobile ? 'Mobile' : Object.keys(devices)[0];
+    const dev = name ? devices[name] : null;
+    const ratings = dev ? VITALS.map((v) => dev[v.key]?.rating).filter(Boolean) : [];
+    const worst = ratings.includes('poor') ? 'poor' : ratings.includes('needs_improvement') ? 'needs_improvement' : ratings.length ? 'good' : null;
+    const R = 2 * Math.PI * 26;
+    const sr = d?.search;
+    return (<section className="card ov-card ov-tile" aria-labelledby="ov-health-tile">
+      <div className="ov-card-head"><h2 id="ov-health-tile" className="serif ov-serif">Site health <InfoMark text="Page speed at the 75th percentile: LCP (main content shows), INP (reacts to a tap), CLS (layout stays put). Each ring is the share of page loads Google rates good; its colour is the rating. Shopify publishes these 1-2 days late, so the tile shows the 7 days ending two days ago."/></h2>
+        {worst ? <span className={`lane-chip ${RATING[worst].lane}`}>{worst === 'good' ? 'All good' : RATING[worst].label}</span> : null}</div>
+      {q.error ? <ExplainedError error={q.error} onRetry={q.reload}/> : !d ? null : !dev || !d.speed_available ? (
+        <div className="muted small">{d.late_note || 'Shopify has no page speed figures for these days yet.'}</div>
+      ) : (<>
+        <div className="muted xs">{name} page speed · {fmtDay(d.from)} – {fmtDay(d.to)}</div>
+        <div className="ov-vitals">
+          {VITALS.map((v) => {
+              const m = dev[v.key] ?? {};
+              const share = m.good_share ?? 0;
+              const r = RATING[m.rating];
+              const tone = m.rating === 'good' ? 'var(--z-high)' : m.rating === 'poor' ? 'var(--z-low)' : 'var(--z-mid)';
+              return (<div key={v.key} title={v.help}>
+                <svg viewBox="0 0 64 64" role="img" aria-label={`${v.label}: ${fmtVital(v.key, m.p75)}, ${pct(share, 0)} of page loads good`}>
+                  <circle cx="32" cy="32" r="26" fill="none" stroke="var(--line-2)" strokeWidth="7"/>
+                  <circle className="ring-arc" cx="32" cy="32" r="26" fill="none" stroke={tone} strokeWidth="7" strokeLinecap="round"
+                    strokeDasharray={`${(R * share) / 100} ${R}`} transform="rotate(-90 32 32)"/>
+                  <text x="32" y="36" textAnchor="middle" className="ov-vital-pct">{pct(share, 0)}</text>
+                </svg>
+                <span className="k">{v.key.toUpperCase()} <span className="v num">{fmtVital(v.key, m.p75)}</span></span>
+                {r ? <span className="sr-only">{r.label}</span> : null}
+              </div>);
+          })}
+        </div>
+        {sr && sr.share_of_sessions ? (<div className="ov-search" title={`${pct(sr.share_of_sessions, 1)} of visits used site search`}>
+          Searchers {sr.searcher_conversion_rate !== null ? <>convert <b className="num">{pct(sr.searcher_conversion_rate)}</b> vs {pct(sr.non_searcher_conversion_rate)}</> : 'made no order yet'}</div>) : null}
+      </>)}
+      <button type="button" className="link-btn ov-tile-link" onClick={onOpen}>Site health →</button>
+    </section>);
+}
+
 /* ------------------------------------------------------------------ sales chart */
 const FIELDS = [{ key: 'net', label: 'Net sales' }, { key: 'revenue', label: 'Total sales' }, { key: 'orders', label: 'Orders' }];
 const MODES = [{ key: 'area', label: 'Area' }, { key: 'bars', label: 'Bars' }, { key: 'table', label: 'Table' }];
@@ -282,7 +375,7 @@ export function SalesChart({ current, previous, events, changes, lastDay }) {
           <h2 id="ov-sales" style={{ fontSize: 15 }}>{FIELDS.find((x) => x.key === field).label} by day</h2>
           <div className="muted small">The {m} days ending {lastDay ? fmtDay(lastDay) : 'on the last chosen day'}, against the {m} days before. Point at a day for its figures.</div>
         </div>
-        <div className="row" style={{ gap: 8 }}>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
           <span className="lane-chip lane-research"><span className="ov-swatch"/>This period</span>
           <button type="button" className={`lane-chip ov-toggle plain${showPrev ? '' : ' off'}`} aria-pressed={showPrev} onClick={() => setShowPrev(!showPrev)}><span className="ov-swatch dash"/>Previous</button>
           <button type="button" className={`lane-chip lane-event ov-toggle${showEv ? '' : ' off'}`} aria-pressed={showEv} onClick={() => setShowEv(!showEv)}><Icon name="star" size="sm"/>Events</button>
@@ -290,7 +383,7 @@ export function SalesChart({ current, previous, events, changes, lastDay }) {
           <button type="button" className="ov-ibtn" onClick={download} aria-label="Download these days as CSV" title="Download these days as CSV"><Icon name="download" size="sm"/></button>
         </div>
       </div>
-      <div className="row" style={{ justifyContent: 'space-between', gap: 10, margin: '0 0 8px' }}>
+      <div className="row" style={{ justifyContent: 'space-between', gap: 10, margin: '0 0 8px', flexWrap: 'wrap' }}>
         <div className="row" style={{ gap: 10 }}>
           <span className="ov-big num" style={{ fontSize: 28 }}>{fmt(total)}</span>
           {tch !== null ? <span className={`lane-chip ${tch >= 0 ? 'lane-live' : 'lane-due'}`}>{arrow(tch)}</span> : null}
