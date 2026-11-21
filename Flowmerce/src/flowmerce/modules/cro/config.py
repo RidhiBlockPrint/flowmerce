@@ -58,6 +58,17 @@ def cro_config() -> CroConfig:
     )
 
 
+def free_shipping_threshold(store: str) -> float | None:
+    """The store's free-shipping amount (CRO_FREE_SHIPPING_RBP / CRO_FREE_SHIPPING_CPC in .env),
+    used to mark orders just under it on the order-value chart. None when not set."""
+    raw = (os.environ.get(f"CRO_FREE_SHIPPING_{store}") or "").strip()
+    try:
+        value = float(raw) if raw else 0.0
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def store_for(brand: str) -> str:
     """The ops.stores id for a brand id ('ridhi' -> 'RBP'). Raises ValueError for an unknown
     brand.

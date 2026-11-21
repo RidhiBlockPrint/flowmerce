@@ -43,7 +43,7 @@ Each connector lives in `flowmerce/connectors/<provider>/` and does only five th
 - **Auth**: custom app installed on the store; Admin API access token kept in the secret manager.
 - **Version**: quarterly versions (for example `2026-10`). Pin one in config and upgrade quarterly.
 - **Limits**: cost-based throttling. Read the `extensions.cost` block on every response and let the rate limiter wait when the bucket is low. Use **bulk operations** (`bulkOperationRunQuery`) for backfills of orders and products.
-- **Scopes (least privilege)**: `read_products`, `read_orders`, `read_fulfillments`, `read_inventory`, `read_locations`, `read_content`, `write_content`, `read_themes`, `read_reports`. `shopifyqlQuery` needs `read_reports` **and** Level 2 protected customer data access. Add `write_themes` only if Shopify grants the theme-file exemption (see 2.3).
+- **Scopes (least privilege)**: `read_products`, `read_orders`, `read_fulfillments`, `read_inventory`, `read_locations`, `read_content`, `write_content`, `read_themes`, `read_reports`. `shopifyqlQuery` needs `read_reports` **and** Level 2 protected customer data access. CRO reads new vs returning customers from ShopifyQL `new_or_returning_customer`; `read_customers` is deliberately not requested (owner decision 2026-11-21). Add `write_themes` only if Shopify grants the theme-file exemption (see 2.3).
 
 | Data | GraphQL resources | Lands in | Module |
 |---|---|---|---|
@@ -125,6 +125,7 @@ Shopify's `themeFilesUpsert` mutation needs `write_themes` **and an exemption gr
 - **Auth**: service account with Viewer on the GA4 property.
 - **Reads**: `runReport` by `date`, `landingPagePlusQueryString`, `sessionDefaultChannelGroup`, `deviceCategory`; metrics such as `sessions`, `engagedSessions`, `addToCarts`, `checkouts`, `ecommercePurchases`, `purchaseRevenue`.
 - **Use**: cross-check of ShopifyQL and pixel funnels, plus channel grouping. Not the primary source.
+- **In use (CRO, 2026-11-21)**: product views and add-to-carts per product (`itemsViewed`, `itemsAddedToCart` by `itemId`, read live and cached 10 minutes) for the Products tab's groups; GA4's item id `shopify_<country>_<product id>_<variant id>` matches Shopify products by id. Shopify itself has no per-product page views. Money and orders stay on Shopify.
 - **Lands in**: `cro.page_metric_daily (source='ga4')`.
 
 ### 4.3 PageSpeed Insights API and Chrome UX Report API  (Verify)
@@ -138,6 +139,7 @@ Shopify's `themeFilesUpsert` mutation needs `write_themes` **and an exemption gr
 - **Auth**: project API token.
 - **Reads**: aggregated behaviour metrics (for example dead clicks, rage clicks, scroll depth) by URL. The export has a small daily request quota and a short lookback, so pull once a day and store.
 - **Lands in**: `cro.page_attribute_snapshot.extra`.
+- **Not used yet (owner decision 2026-11-21)**: product views come from GA4 instead; Clarity may later add rage clicks, dead clicks and scroll depth to Site health.
 
 ---
 

@@ -64,12 +64,33 @@ def average(stats: Sequence[dict[str, float]], keys: Iterable[str]) -> dict[str,
     return {k: round(sum(s.get(k, 0.0) for s in stats) / len(stats), 2) for k in keys}
 
 
-def order_kpis(snap: Snapshot, p: Plan) -> dict[str, dict[str, object]]:
-    """Orders, revenue and AOV for a plan, each with its baseline and the too-early rule."""
+SalesReport = dict[str, dict[str, float]]  # conversion.sales_daily(): local day -> figures
+
+
+def report_stats(report: SalesReport, days: Iterable[date]) -> dict[str, float]:
+    """Shopify's sales figures (conversion.sales_daily) added up over some local days."""
+    picked = [report[d.isoformat()] for d in days if d.isoformat() in report]
+    return {k: round(sum(r.get(k, 0.0) for r in picked), 2) for k in SALES_KEYS}
+
+
+def with_report(stats: dict[str, float], report: dict[str, float]) -> dict[str, float]:
+    """Order-copy figures with the money taken from Shopify's sales report (orders stay ours)."""
+    return {**stats, **{k: report[k] for k in SALES_KEYS if k != "orders"}}
+
+
+def order_kpis(
+    snap: Snapshot, p: Plan, report: SalesReport | None = None
+) -> dict[str, dict[str, object]]:
+    """Orders, revenue and AOV for a plan, each with its baseline and the too-early rule. With
+    Shopify's sales `report`, revenue is Shopify's total sales (refunds on the day they were
+    made); orders and AOV stay from the order copy."""
     current = order_stats(snap.orders, p.current)
-    baseline = average(
-        [order_stats(snap.orders, w) for w in p.baselines], ("orders", "revenue", "aov")
-    )
+    bases = [order_stats(snap.orders, w) for w in p.baselines]
+    if report is not None:
+        current["revenue"] = report_stats(report, p.current_days)["total"]
+        for b, days in zip(bases, p.baseline_days, strict=True):
+            b["revenue"] = report_stats(report, days)["total"]
+    baseline = average(bases, ("orders", "revenue", "aov"))
     too_early = current["orders"] < MIN_ORDERS_FOR_COMPARISON
     return {
         "orders": metric_block(
@@ -93,12 +114,22 @@ BREAKDOWN_ROWS = (
 )
 
 
-def sales_breakdown(snap: Snapshot, p: Plan) -> dict[str, object]:
+def sales_breakdown(
+    snap: Snapshot, p: Plan, report: SalesReport | None = None
+) -> dict[str, object]:
     """Gross -> discounts -> returns -> net -> shipping -> taxes -> total, each with its
-    baseline.
+    baseline. With Shopify's sales `report` the money is Shopify's own (refunds on the day they
+    were made); the order count and the too-early rule stay from the order copy.
     """
     current = sales_stats(snap.orders, p.current)
-    baseline = average([sales_stats(snap.orders, w) for w in p.baselines], SALES_KEYS)
+    bases = [sales_stats(snap.orders, w) for w in p.baselines]
+    if report is not None:
+        current = with_report(current, report_stats(report, p.current_days))
+        bases = [
+            with_report(b, report_stats(report, days))
+            for b, days in zip(bases, p.baseline_days, strict=True)
+        ]
+    baseline = average(bases, SALES_KEYS)
     too_early = current["orders"] < MIN_ORDERS_FOR_COMPARISON
     return {
         "period": p.period,
@@ -113,9 +144,13 @@ def sales_breakdown(snap: Snapshot, p: Plan) -> dict[str, object]:
             }
             for k, label in BREAKDOWN_ROWS
         ],
+        "source": "shopify_sales" if report is not None else "orders",
         "note": (
-            "Returns is Shopify's total refunded amount for the order, which can include refunded "
-            "shipping or tax, not only products."
+            "From Shopify's sales report: returns count on the day the refund was made, as in "
+            "Shopify's own reports."
+            if report is not None
+            else "Returns is Shopify's total refunded amount for the order, which can include "
+            "refunded shipping or tax, not only products."
         ),
     }
 
@@ -138,11 +173,16 @@ def sales_trend(snap: Snapshot, tz: ZoneInfo, today: date, days: int) -> dict[st
     return {"days": days, "current": current, "previous": previous}
 
 
-def daily_series(snap: Snapshot, tz: ZoneInfo, days: Sequence[date]) -> list[dict[str, object]]:
-    """Orders, total sales and net sales for each local day (cancelled orders left out)."""
+def daily_series(
+    snap: Snapshot, tz: ZoneInfo, days: Sequence[date], report: SalesReport | None = None
+) -> list[dict[str, object]]:
+    """Orders, total sales and net sales for each local day (cancelled orders left out). With
+    Shopify's sales `report`, total and net sales are Shopify's own for the day."""
     out: list[dict[str, object]] = []
     for d in days:
         st = sales_stats(snap.orders, day_window(d, tz))
+        if report is not None and d.isoformat() in report:
+            st = with_report(st, report[d.isoformat()])
         out.append(
             {
                 "date": d.isoformat(),
@@ -154,14 +194,17 @@ def daily_series(snap: Snapshot, tz: ZoneInfo, days: Sequence[date]) -> list[dic
     return out
 
 
-def range_trend(snap: Snapshot, tz: ZoneInfo, p: Plan) -> dict[str, object]:
+def range_trend(
+    snap: Snapshot, tz: ZoneInfo, p: Plan, report: SalesReport | None = None
+) -> dict[str, object]:
     """Daily figures for a plan's days and, when it has one, its first comparison period's days
     (lined up by position)."""
     return {
         "days": len(p.current_days),
-        "current": daily_series(snap, tz, p.current_days),
-        "previous": daily_series(snap, tz, p.baseline_days[0]) if p.baseline_days else [],
+        "current": daily_series(snap, tz, p.current_days, report),
+        "previous": (daily_series(snap, tz, p.baseline_days[0], report) if p.baseline_days else []),
         "baseline_label": p.baseline_label,
+        "source": "shopify_sales" if report is not None else "orders",
     }
 
 
@@ -317,3 +360,94 @@ def last_order_with(snap: Snapshot, keyword: str) -> Order | None:
 def last_order_at(snap: Snapshot) -> datetime | None:
     """When the newest order in the snapshot was placed."""
     return max((o.placed_at for o in snap.orders), default=None)
+
+
+ORDER_VALUE_STEP = 25.0  # bar width of the order-value chart
+ORDER_VALUE_TOP = 300.0  # everything from here up is one "$300+" bar
+NEAR_THRESHOLD = 0.20  # "just under free shipping" = within 20% below the amount
+
+
+def order_values(snap: Snapshot, w: Window, threshold: float | None) -> dict[str, object]:
+    """How much orders were worth (subtotal after discounts, before shipping and tax) in $25 bars,
+    and, with a free-shipping `threshold`, the share of orders just under it and at or above it.
+    Also items per order (1, 2, 3, 4, 5+). Cancelled orders left out."""
+    rows = live(snap.orders, w)
+    values = [o.subtotal for o in rows]
+    n = len(values)
+    counts: dict[float, int] = {}
+    for v in values:
+        b = ORDER_VALUE_TOP if v >= ORDER_VALUE_TOP else (v // ORDER_VALUE_STEP) * ORDER_VALUE_STEP
+        counts[b] = counts.get(b, 0) + 1
+    near_from = threshold * (1 - NEAR_THRESHOLD) if threshold else None
+    bars = []
+    b = 0.0
+    while b <= ORDER_VALUE_TOP:
+        top = b + ORDER_VALUE_STEP
+        bars.append(
+            {
+                "from": b,
+                "label": f"${int(b)}+" if b == ORDER_VALUE_TOP else f"${int(b)}-{int(top - 1)}",
+                "orders": counts.get(b, 0),
+                "share": round(counts.get(b, 0) / n * 100, 1) if n else 0.0,
+                "near_threshold": bool(
+                    threshold and near_from is not None and b < threshold and top > near_from
+                ),
+            }
+        )
+        b = top
+    ordered = sorted(values)
+    median = (
+        (ordered[n // 2] if n % 2 else (ordered[n // 2 - 1] + ordered[n // 2]) / 2) if n else None
+    )
+    near = len([v for v in values if threshold and near_from and near_from <= v < threshold])
+    above = sum(1 for v in values if threshold and v >= threshold)
+    keep = {o.id for o in rows}
+    qty: dict[int, int] = {}
+    for ln in snap.lines:
+        if ln.order_id in keep:
+            qty[ln.order_id] = qty.get(ln.order_id, 0) + ln.quantity
+    pieces = [qty.get(o.id, 0) for o in rows]
+    per_order = {k: sum(1 for q in pieces if min(q, 5) == k) for k in range(1, 6)}
+    return {
+        "orders": n,
+        "average": round(sum(values) / n, 2) if n else None,
+        "median": round(median, 2) if median is not None else None,
+        "bars": bars,
+        "threshold": threshold,
+        "near_threshold_from": round(near_from, 2) if near_from is not None else None,
+        "near_threshold_orders": near if threshold else None,
+        "near_threshold_share": round(near / n * 100, 1) if threshold and n else None,
+        "at_or_above_threshold_share": round(above / n * 100, 1) if threshold and n else None,
+        "items": {
+            "average": round(sum(pieces) / n, 2) if n else None,
+            "single_item_share": round(per_order[1] / n * 100, 1) if n else None,
+            "bars": [
+                {
+                    "label": "5+" if k == 5 else str(k),
+                    "orders": per_order[k],
+                    "share": round(per_order[k] / n * 100, 1) if n else 0.0,
+                }
+                for k in range(1, 6)
+            ],
+        },
+    }
+
+
+def orders_by_hour(snap: Snapshot, tz: ZoneInfo, w: Window) -> dict[str, object]:
+    """Orders by weekday x hour in the store's time (the heatmap when Shopify's hourly visits
+    cannot be read). Cancelled orders left out."""
+    grid = {(d, h): 0 for d in range(7) for h in range(24)}
+    for o in live(snap.orders, w):
+        t = o.placed_at.astimezone(tz)
+        grid[(t.weekday(), t.hour)] += 1
+    return {
+        "metric": "orders",
+        "weekdays": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "cells": [
+            {"weekday": d, "hour": h, "sessions": 0, "orders": n, "cvr": None}
+            for (d, h), n in sorted(grid.items())
+        ],
+        "hours_with_data": sum(1 for n in grid.values() if n),
+        "average_cvr": None,
+        "total_orders": sum(grid.values()),
+    }

@@ -15,9 +15,37 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..shipping.supabase import SupabaseError
-from . import alarms, conversion, data, metrics, recommendations, shopify
-from .config import MIN_ORDERS_FOR_COMPARISON, MIN_SESSIONS_FOR_COMPARISON, store_for
-from .periods import Plan, RangeError, metric_block, parse_day, plan, range_plan
+from . import (
+    alarms,
+    conversion,
+    data,
+    experiments,
+    landing,
+    metrics,
+    payments,
+    recommendations,
+    shopify,
+    traffic,
+)
+from . import customers as customers_mod
+from . import products as products_mod
+from . import site_health as site_health_mod
+from .config import (
+    MIN_ORDERS_FOR_COMPARISON,
+    MIN_SESSIONS_FOR_COMPARISON,
+    free_shipping_threshold,
+    store_for,
+)
+from .metrics import SalesReport
+from .periods import (
+    Plan,
+    RangeError,
+    days_window,
+    metric_block,
+    parse_day,
+    plan,
+    range_plan,
+)
 from .shopify import AnalyticsError
 
 log = logging.getLogger(__name__)
@@ -73,7 +101,7 @@ def store_timezone(store: str) -> ZoneInfo:
             client().select("stores", [("select", "timezone"), ("id", f"eq.{store}")], limit=1).rows
         )
         return ZoneInfo(str(rows[0]["timezone"]))
-    except (SupabaseError, IndexError, KeyError, ZoneInfoNotFoundError):
+    except SupabaseError, IndexError, KeyError, ZoneInfoNotFoundError:
         log.warning("CRO: no timezone for %s in ops.stores either; using UTC", store)
         return ZoneInfo("UTC")
 
@@ -183,6 +211,28 @@ def _range_info(p: Plan) -> dict[str, Any]:
     }
 
 
+def _sales_report(store: str, p: Plan, today: date, *, trend: bool = False) -> SalesReport | None:
+    """Shopify's own sales figures (ShopifyQL `sales`) for the plan's days, or None when the order
+    copy must be used instead: Shopify did not answer, or (for KPI cards and the breakdown) the
+    plan reaches today, whose comparison stops at the same time of day, which a daily report
+    cannot do. For the trend (`trend=True`) the complete days still use the report: today and the
+    comparison days lined up with it stay on the order copy."""
+    if p.is_partial and not trend:
+        return None
+    days = [d for d in (*p.current_days, *(d for ds in p.baseline_days for d in ds)) if d < today]
+    if not days:
+        return None
+    try:
+        report = conversion.sales_daily(store, min(days), max(days))
+    except Exception as e:  # noqa: BLE001 - any failure: the order copy is shown instead
+        log.warning("CRO sales report unavailable for %s: %s", store, getattr(e, "message", e))
+        return None
+    if p.is_partial:
+        for ds in p.baseline_days:
+            report.pop(ds[-1].isoformat(), None)  # cut at today's time of day: keep the order copy
+    return report
+
+
 # ------------------------------------------------------------------------------------------
 # overview
 def _cvr_block(store: str, p: Plan, orders: float, today: date) -> dict[str, Any]:
@@ -199,19 +249,42 @@ def _cvr_block(store: str, p: Plan, orders: float, today: date) -> dict[str, Any
         return (round(done / sessions * 100, 2) if sessions else None), sessions
 
     value, sessions = period_cvr(p.current_days)
-    base_values = [
-        v for v, s in (period_cvr(days) for days in p.baseline_days) if v is not None and s
-    ]
+    bases = [(v, s) for v, s in map(period_cvr, p.baseline_days) if v is not None and s]
+    base_values = [v for v, _ in bases]
     baseline = round(sum(base_values) / len(base_values), 2) if base_values else None
+    base_sessions = round(sum(s for _, s in bases) / len(bases), 1) if bases else None
     block = metric_block(value, baseline, sessions < MIN_SESSIONS_FOR_COMPARISON, p.baseline_label)
     note = " (today left out)" if p.is_partial and len(p.current_days) > 1 else ""
     return {
         **block,
         "sessions": sessions or None,
+        "baseline_sessions": base_sessions,
         "base_label": f"{int(orders)} orders from {sessions:,} sessions{note}"
         if sessions
         else "sessions pending",
     }
+
+
+def _visit_blocks(kpis: dict[str, Any], p: Plan) -> None:
+    """Add visits and revenue per visit to the KPI cards when Shopify reported sessions. Revenue per
+    visit is only given for complete days: a range that reaches today has today's revenue but not
+    today's visits."""
+    cvr = kpis.get("conversion_rate") or {}
+    sessions, base = cvr.get("sessions"), cvr.get("baseline_sessions")
+    if not sessions:
+        return
+    early = sessions < MIN_SESSIONS_FOR_COMPARISON
+    kpis["sessions"] = metric_block(sessions, base, early, p.baseline_label, 1)
+    if p.is_partial:
+        return
+    rev = kpis["revenue"]
+    value = round(float(rev["value"] or 0) / sessions, 2)
+    before = (
+        round(float(rev["baseline_value"]) / base, 2)
+        if base and rev.get("baseline_value") is not None
+        else None
+    )
+    kpis["revenue_per_session"] = metric_block(value, before, early, p.baseline_label)
 
 
 def overview(brand: str, rq: RangeQuery) -> dict[str, Any]:
@@ -219,7 +292,8 @@ def overview(brand: str, rq: RangeQuery) -> dict[str, Any]:
     comparison."""
     store, tz, now, p = _plan(brand, rq)
     snap = _orders_for(store, p)
-    kpis: dict[str, Any] = metrics.order_kpis(snap, p)
+    report = _sales_report(store, p, _today(tz, now))
+    kpis: dict[str, Any] = metrics.order_kpis(snap, p, report)
     cvr_error = None
     if p.is_partial and len(p.current_days) == 1:
         kpis["conversion_rate"] = {
@@ -239,6 +313,7 @@ def overview(brand: str, rq: RangeQuery) -> dict[str, Any]:
                 "sessions": None,
                 "base_label": "not available",
             }
+    _visit_blocks(kpis, p)
     last = metrics.last_order_at(snap)
     return {
         "brand": brand,
@@ -247,6 +322,7 @@ def overview(brand: str, rq: RangeQuery) -> dict[str, Any]:
         "as_of": now.astimezone(tz).isoformat(),
         "metrics": kpis,
         "health": {"last_order_at": last.isoformat() if last else None},
+        "revenue_source": "shopify_sales" if report is not None else "orders",
         "cvr_error": cvr_error,
         "data_since": snap.since.isoformat(),
         "order_data": _order_data(store),
@@ -255,10 +331,11 @@ def overview(brand: str, rq: RangeQuery) -> dict[str, Any]:
 
 def sales_breakdown(brand: str, rq: RangeQuery) -> dict[str, Any]:
     """Gross to total sales for the chosen range."""
-    store, _, _, p = _plan(brand, rq)
+    store, tz, now, p = _plan(brand, rq)
+    report = _sales_report(store, p, _today(tz, now))
     return {
         "brand": brand,
-        **metrics.sales_breakdown(_orders_for(store, p), p),
+        **metrics.sales_breakdown(_orders_for(store, p), p, report),
         **_range_info(p),
         "order_data": _order_data(store),
     }
@@ -266,10 +343,11 @@ def sales_breakdown(brand: str, rq: RangeQuery) -> dict[str, Any]:
 
 def sales_trend(brand: str, rq: RangeQuery) -> dict[str, Any]:
     """Daily orders, total and net sales of the range and of its comparison period."""
-    store, tz, _, p = _plan(brand, rq)
+    store, tz, now, p = _plan(brand, rq)
+    report = _sales_report(store, p, _today(tz, now), trend=True)
     return {
         "brand": brand,
-        **metrics.range_trend(_orders_for(store, p), tz, p),
+        **metrics.range_trend(_orders_for(store, p), tz, p, report),
         **_range_info(p),
         "order_data": _order_data(store),
     }
@@ -313,6 +391,15 @@ def conversion_trend(brand: str, rq: RangeQuery) -> dict[str, Any]:
     )
     total = conversion.totals(rows)
     base = conversion.totals(base_rows) if base_rows else None
+
+    def device_split(r: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not r:
+            return None
+        first, last = date.fromisoformat(r[0]["date"]), date.fromisoformat(r[-1]["date"])
+        return conversion.funnel_by_device(store, first, last)
+
+    by_device = device_split(rows)
+    base_by_device = device_split(base_rows) if rows else None
     change = None
     if base and base["conversion_rate"] and total["conversion_rate"] is not None:
         change = round(
@@ -323,9 +410,12 @@ def conversion_trend(brand: str, rq: RangeQuery) -> dict[str, Any]:
         **_range_info(p),
         "days": len(rows),
         "trend": rows,
+        "baseline_trend": base_rows,
         "total": total,
         "baseline_total": base,
         "conversion_change_pct": change,
+        "funnel": by_device,
+        "baseline_funnel": base_by_device,
         "today_left_out": p.is_partial,
     }
 
@@ -340,7 +430,26 @@ def funnel(brand: str) -> dict[str, Any]:
 def segments(brand: str, dimension: str, rq: RangeQuery) -> dict[str, Any]:
     """Device or channel split of the range against its comparison (complete days only)."""
     store, tz, now, p = _plan(brand, rq)
-    today = _today(tz, now)
+    cur, base = _windows(p, _today(tz, now))
+    try:
+        return {
+            "brand": brand,
+            **_range_info(p),
+            **conversion.segments_between(store, dimension, cur, base),
+        }
+    except ValueError as e:
+        raise InputError(str(e)) from None
+
+
+# ------------------------------------------------------------------------------------------
+# traffic, landing pages, site health, checkout extras
+Days = tuple[date, date]
+REC_DAYS = 28  # recommendations read the last 28 complete days
+
+
+def _windows(p: Plan, today: date) -> tuple[Days, Days | None]:
+    """The plan's days for Shopify session reports and its first comparison's, lined up. Today is
+    left out (Shopify's figures for it are not complete) unless the range is only today."""
     last = min(p.current_days[-1], today - timedelta(days=1))
     if last < p.current_days[0]:
         last = p.current_days[0]  # a range of only today: Shopify's partial figures
@@ -348,14 +457,141 @@ def segments(brand: str, dimension: str, rq: RangeQuery) -> dict[str, Any]:
     if p.baseline_days:
         shift = p.current_days[0] - p.baseline_days[0][0]
         base = (p.baseline_days[0][0], last - shift)
-    try:
-        return {
-            "brand": brand,
-            **_range_info(p),
-            **conversion.segments_between(store, dimension, (p.current_days[0], last), base),
+    return (p.current_days[0], last), base
+
+
+def _window_info(cur: Days, base: Days | None) -> dict[str, Any]:
+    return {
+        "window": {
+            "from": cur[0].isoformat(),
+            "to": cur[1].isoformat(),
+            "base_from": base[0].isoformat() if base else None,
+            "base_to": base[1].isoformat() if base else None,
         }
-    except ValueError as e:
-        raise InputError(str(e)) from None
+    }
+
+
+def _session_report(
+    brand: str, rq: RangeQuery, read: Callable[[str, Days, Days | None], dict[str, Any]]
+) -> dict[str, Any]:
+    store, tz, now, p = _plan(brand, rq)
+    cur, base = _windows(p, _today(tz, now))
+    return {"brand": brand, **_range_info(p), **_window_info(cur, base), **read(store, cur, base)}
+
+
+def product_insights(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """The Products tab: Shopify's sales and refunds per product, GA4 product views and the product
+    groups, price bands and products bought together, for the range's complete days."""
+    store, tz, now, p = _plan(brand, rq)
+    cur, base = _windows(p, _today(tz, now))
+    snap = _orders_for(store, p)
+    return {
+        "brand": brand,
+        **_range_info(p),
+        **_window_info(cur, base),
+        **products_mod.insights(store, tz, cur, snap),
+        "order_data": _order_data(store),
+    }
+
+
+def discount_codes(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """Orders with vs without a discount code, and per code (Shopify), for the range."""
+    return _session_report(brand, rq, products_mod.discount_codes)
+
+
+def landing_pages(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """Landing pages, page types and bounce by source and device for the range."""
+    return _session_report(brand, rq, landing.landing_pages)
+
+
+def landing_grids(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """Top landing pages x traffic source and page types x device."""
+    return _session_report(brand, rq, lambda store, cur, _base: landing.grids(store, cur))
+
+
+def traffic_changes(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """Device and channel changes against the comparison (the period just before when the range
+    has none), with revenue per visit by channel and the top movers."""
+
+    def read(store: str, cur: Days, base: Days | None) -> dict[str, Any]:
+        n = cur[1] - cur[0] + timedelta(days=1)
+        return traffic.where_changed(store, cur, base or (cur[0] - n, cur[1] - n))
+
+    return _session_report(brand, rq, read)
+
+
+def geo(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """Conversion by country and US state."""
+    return _session_report(brand, rq, traffic.geo)
+
+
+def site_health(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """Page speed and site search."""
+    return _session_report(brand, rq, site_health_mod.site_health)
+
+
+def overview_trends(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """Average order value by day and sales by sales channel."""
+    return _session_report(brand, rq, traffic.trends)
+
+
+def free_shipping_amount(store: str) -> tuple[float | None, str | None]:
+    """(amount, where it came from): the amount saved in CRO settings, else
+    CRO_FREE_SHIPPING_<store> in .env, else (None, None)."""
+    saved = data.recent(("free_shipping", store), lambda: data.free_shipping(store))
+    if saved:
+        return saved, "settings"
+    env = free_shipping_threshold(store)
+    return (env, "env") if env else (None, None)
+
+
+def checkout_extras(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """Payment methods and success rate (Shopify), and order values and items per order (order
+    copy). A Shopify failure leaves `payments` None with its reason; the order figures still
+    show."""
+    store, tz, now, p = _plan(brand, rq)
+    cur, base = _windows(p, _today(tz, now))
+    pay: dict[str, Any] | None = None
+    pay_error = None
+    try:
+        pay = payments.payments(store, cur, base)
+    except AnalyticsError as e:
+        pay_error = {"state": e.state, "message": e.message}
+    snap = _orders_for(store, p)
+    threshold, source = free_shipping_amount(store)
+    return {
+        "brand": brand,
+        **_range_info(p),
+        **_window_info(cur, base),
+        "payments": pay,
+        "payments_error": pay_error,
+        "order_values": metrics.order_values(snap, p.current, threshold),
+        "previous_order_values": (
+            metrics.order_values(snap, p.baselines[0], threshold) if p.baselines else None
+        ),
+        "free_shipping_source": source,
+        "order_data": _order_data(store),
+    }
+
+
+def buy_heatmap(brand: str, days: int) -> dict[str, Any]:
+    """Conversion by weekday x hour over the last `days` complete days. When Shopify's hourly
+    visits cannot be read, the order copy's orders by hour are shown instead (and say so)."""
+    store, tz, now = _ctx(brand)
+    last = _today(tz, now) - timedelta(days=1)
+    first = last - timedelta(days=days - 1)
+    info = {"brand": brand, "days": days, "from": first.isoformat(), "to": last.isoformat()}
+    try:
+        return {**info, **traffic.heatmap(store, first, last, tz), "source": "shopify_sessions"}
+    except AnalyticsError as e:
+        snap = data.snapshot(store)
+        return {
+            **info,
+            **metrics.orders_by_hour(snap, tz, days_window(first, last, tz)),
+            "source": "orders",
+            "note": "Shopify's hourly visits could not be read, so this shows when orders were "
+            f"placed instead of conversion rate ({e.state}).",
+        }
 
 
 # ------------------------------------------------------------------------------------------
@@ -431,9 +667,10 @@ def home(brand: str | None) -> dict[str, Any]:
 # ------------------------------------------------------------------------------------------
 # recommendations
 def recommendation_list(brand: str) -> dict[str, Any]:
-    """Recommendations the current figures support. Sources that cannot be read are listed in
-    `skipped`.
-    """
+    """Recommendations the current figures support, ranked by estimated impact, with the team's
+    status. The impact-ranked checks read the last 28 complete days (landing pages, devices, traffic
+    sources, payments) against the 28 before; the order-based checks read the order copy. Sources
+    that cannot be read are listed in `skipped`."""
     store, tz, now = _ctx(brand)
     today = _today(tz, now)
     snap = data.snapshot(store)
@@ -445,32 +682,179 @@ def recommendation_list(brand: str) -> dict[str, Any]:
         fun = rows[-1] if rows else None
     except AnalyticsError as e:
         skipped.append(f"conversion rate and funnel ({e.state})")
+    last = today - timedelta(days=1)
+    cur: Days = (last - timedelta(days=REC_DAYS - 1), last)
+    base: Days = (cur[0] - timedelta(days=REC_DAYS), cur[0] - timedelta(days=1))
+    compare_label = f"{base[0]:%d %b} - {base[1]:%d %b}"
+
+    def read(name: str, fn: Callable[[], Any]) -> Any:
+        try:
+            return fn()
+        except AnalyticsError as e:
+            skipped.append(f"{name} ({e.state})")
+            return None
+
+    land, pay, report, leaky = _together(
+        lambda: read("landing pages", lambda: landing.landing_pages(store, cur, base)),
+        lambda: read("payments", lambda: payments.payments(store, cur, base)),
+        lambda: read("sales report", lambda: conversion.sales_daily(store, cur[0], cur[1])),
+        lambda: products_mod.leaky_for(store, tz, cur, snap),
+    )
+    orders = int(sum(d["orders"] for d in report.values())) if report else 0
+    aov = (
+        round(sum(d["gross"] - d["discounts"] for d in report.values()) / orders, 2)
+        if report and orders
+        else None
+    )
+    extra, store_cvr, visits = recommendations.impact_items(
+        landing=land, payments=pay, aov=aov, compare_label=compare_label
+    )
+    extra += recommendations.leaky_items(leaky)
+    if leaky["state"] != "ready":
+        skipped.append(f"leaky products ({leaky['message']})")
     state = _order_data(store)
     if not state["first_load_complete"]:
         # Partial orders would look like stalled or declining sales: order-based checks wait.
         skipped.append("order-based checks (the first order load has not finished)")
         recs = recommendations.build(
-            product_alarms=[], cvr=cvr, funnel=fun, today_revenue=None, declines=[], health=None
+            product_alarms=[],
+            cvr=cvr,
+            funnel=fun,
+            today_revenue=None,
+            declines=[],
+            health=None,
+            extra=extra,
         )
-        return {"brand": brand, "recommendations": recs, "skipped": skipped, "order_data": state}
-    gap_status = []
-    for r in _rules(store):
-        if r["kind"] == "no_product_orders" and r.get("is_active"):
-            fig = alarms.gap_figures(r, snap, now)
-            fig.pop("_last_placed", None)
-            gap_status.append(
-                {**fig, "status": "alarm_active" if fig["status"] == "triggered" else fig["status"]}
-            )
-    pacing = metrics.order_kpis(snap, plan("today", "last_week", tz, now))["revenue"]
-    recs = recommendations.build(
-        product_alarms=gap_status,
-        cvr=cvr,
-        funnel=fun,
-        today_revenue=pacing,
-        declines=metrics.declining_products(snap, tz, now),
-        health=metrics.order_health(snap, now, 30),
-    )
-    return {"brand": brand, "recommendations": recs, "skipped": skipped, "order_data": state}
+    else:
+        gap_status = []
+        for r in _rules(store):
+            if r["kind"] == "no_product_orders" and r.get("is_active"):
+                fig = alarms.gap_figures(r, snap, now)
+                fig.pop("_last_placed", None)
+                gap_status.append(
+                    {
+                        **fig,
+                        "status": "alarm_active" if fig["status"] == "triggered" else fig["status"],
+                    }
+                )
+        pacing = metrics.order_kpis(snap, plan("today", "last_week", tz, now))["revenue"]
+        recs = recommendations.build(
+            product_alarms=gap_status,
+            cvr=cvr,
+            funnel=fun,
+            today_revenue=pacing,
+            declines=metrics.declining_products(snap, tz, now),
+            health=metrics.order_health(snap, now, 30),
+            extra=extra,
+        )
+    statuses: dict[str, dict[str, Any]] = {}
+    status_error = None
+    try:
+        statuses = data.recent(("rec_status", store), lambda: data.rec_statuses(store))
+    except SupabaseError as e:
+        status_error = {
+            "state": e.state,
+            "message": "Statuses cannot be saved yet: run db/central/114_cro_tracking.sql in "
+            "Supabase."
+            if e.state == "schema_missing"
+            else e.message,
+        }
+    for r in recs:
+        saved = statuses.get(r["key"]) or {}
+        r["status"] = saved.get("status") or "open"
+        r["status_updated_at"] = saved.get("updated_at")
+    open_recs = [r for r in recs if r["status"] not in ("done", "ignored")]
+    return {
+        "brand": brand,
+        "window": {
+            "from": cur[0].isoformat(),
+            "to": cur[1].isoformat(),
+            "base_from": base[0].isoformat(),
+            "base_to": base[1].isoformat(),
+        },
+        "store_conversion_rate": store_cvr,
+        "sessions": visits,
+        "aov": aov,
+        "orders": orders,
+        "total_open_impact": round(sum(r["impact"] or 0 for r in open_recs), 2),
+        "recommendations": recs,
+        "statuses_available": status_error is None,
+        "status_error": status_error,
+        "skipped": skipped,
+        "order_data": state,
+    }
+
+
+def set_rec_status(brand: str, body: dict[str, Any], by: str) -> dict[str, Any]:
+    """Save the team's status for one recommendation key."""
+    store, _, _ = _ctx(brand)
+    key = str(body.get("key") or "").strip()
+    status = str(body.get("status") or "")
+    if not 1 <= len(key) <= 300:
+        raise InputError("Give the recommendation's key.")
+    if status not in recommendations.STATUSES:
+        raise InputError(f"status must be one of: {', '.join(recommendations.STATUSES)}.")
+    data.set_rec_status(store, key, status, by)
+    return {"key": key, "status": status}
+
+
+# ------------------------------------------------------------------------------------------
+# experiments
+def _with_result(row: dict[str, Any], today: date) -> dict[str, Any]:
+    out = {
+        **row,
+        "metric_label": experiments.METRICS[row["metric"]]["label"],
+        "better": experiments.METRICS[row["metric"]]["better"],
+    }
+    try:
+        out["result"] = experiments.result(row, today)
+    except AnalyticsError as e:
+        out["result"] = {"state": "error", "verdict": "error", "error": e.message}
+    return out
+
+
+def experiment_list(brand: str) -> dict[str, Any]:
+    """Every experiment of the store with its result, the tile counts and the change log of the
+    days the experiments cover."""
+    store, tz, now = _ctx(brand)
+    today = _today(tz, now)
+    rows = data.recent(("experiments", store), lambda: data.experiments(store))
+    items = list(_pool.map(lambda r: _with_result(r, today), rows))
+    since = min((str(r["start_date"])[:10] for r in rows), default=today.isoformat())
+    first = (date.fromisoformat(since) - timedelta(days=60)).isoformat()
+    log = data.recent(("change_log", store, first), lambda: data.change_log(store, first))
+    return {
+        "brand": brand,
+        "experiments": items,
+        "summary": experiments.summary(items),
+        "metrics": [{"key": k, **v} for k, v in experiments.METRICS.items()],
+        "change_log": log,
+    }
+
+
+def save_experiment(
+    brand: str, body: dict[str, Any], by: str, exp_id: int | None = None
+) -> dict[str, Any]:
+    """Create an experiment, or change one of this store's."""
+    store, tz, now = _ctx(brand)
+    try:
+        fields = experiments.clean(body)
+    except ValueError as e:
+        raise InputError(str(e)) from None
+    if exp_id is None:
+        row = data.add_experiment({**fields, "store": store, "created_by": by[:200]})
+    else:
+        if data.experiment(store, exp_id) is None:
+            raise InputError("No such experiment for this store.")
+        data.update_experiment(store, exp_id, fields)
+        row = data.experiment(store, exp_id) or {**fields, "id": exp_id, "store": store}
+    return _with_result(row, _today(tz, now))
+
+
+def delete_experiment(brand: str, exp_id: int) -> bool:
+    """Remove one of this store's experiments."""
+    store, _, _ = _ctx(brand)
+    return data.delete_experiment(store, exp_id)
 
 
 # ------------------------------------------------------------------------------------------ alarms
@@ -496,7 +880,7 @@ def alarm_list(brand: str) -> dict[str, Any]:
 def _threshold(kind: str, value: Any) -> float:
     try:
         t = float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         raise InputError("The threshold must be a number.") from None
     if t <= 0 or (kind == "cvr_drop" and t > 100) or t > 10_000:
         raise InputError(
@@ -590,16 +974,51 @@ def settings(brand: str) -> dict[str, Any]:
         "shopify_configured": shopify.configured(store),
         "sync": state,
         "order_data": {**order_data_state(state), "available_from": first_day},
+        "free_shipping_threshold": free_shipping_amount(store)[0],
         "email_alerts": False,
     }
 
 
+def customers(brand: str, rq: RangeQuery) -> dict[str, Any]:
+    """New vs returning customers (Shopify) for the range's complete days, with the comparison."""
+    store, tz, now, p = _plan(brand, rq)
+    cur, base = _windows(p, _today(tz, now))
+    nr: dict[str, Any] | None = None
+    nr_error = None
+    try:
+        nr = customers_mod.new_vs_returning(store, cur, base)
+    except AnalyticsError as e:
+        nr_error = {"state": e.state, "message": e.message}
+    return {
+        "brand": brand,
+        **_range_info(p),
+        **_window_info(cur, base),
+        "new_vs_returning": nr,
+        "new_vs_returning_error": nr_error,
+        "order_data": _order_data(store),
+    }
+
+
 def set_settings(brand: str, body: dict[str, Any], by: str) -> dict[str, Any]:
-    """Switch alarms on or off for the store."""
+    """Switch alarms on or off, and/or save the free-shipping amount (null clears it)."""
     store, _, _ = _ctx(brand)
-    if not isinstance(body.get("alarms_enabled"), bool):
-        raise InputError("alarms_enabled must be true or false.")
-    data.set_alarms_enabled(store, body["alarms_enabled"], by)
+    if "alarms_enabled" not in body and "free_shipping_threshold" not in body:
+        raise InputError("Send alarms_enabled and/or free_shipping_threshold.")
+    if "alarms_enabled" in body:
+        if not isinstance(body["alarms_enabled"], bool):
+            raise InputError("alarms_enabled must be true or false.")
+        data.set_alarms_enabled(store, body["alarms_enabled"], by)
+    if "free_shipping_threshold" in body:
+        raw = body["free_shipping_threshold"]
+        amount: float | None = None
+        if raw not in (None, ""):
+            try:
+                amount = round(float(raw), 2)
+            except TypeError, ValueError:
+                raise InputError("The free-shipping amount must be a number.") from None
+            if not 0 < amount < 100_000:
+                raise InputError("The free-shipping amount must be above 0 and below 100,000.")
+        data.set_free_shipping(store, amount, by)
     return settings(brand)
 
 

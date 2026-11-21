@@ -53,8 +53,8 @@ def _call[T](fn: Callable[[], T]) -> T:
         if e.state == "schema_missing":
             message = (
                 "The CRO tables are missing, or the `cro` schema is not exposed in Supabase "
-                "(Project Settings -> Data API -> Exposed schemas). Run db/central/112 and 113 "
-                "first."
+                "(Project Settings -> Data API -> Exposed schemas). Run db/central/112, 113 "
+                "and 114 first."
             )
         raise HttpError(_SUPABASE_STATUS.get(e.state, 502), message, e.state) from None
 
@@ -62,7 +62,7 @@ def _call[T](fn: Callable[[], T]) -> T:
 def _int(v: str, default: int, low: int, high: int) -> int:
     try:
         return max(low, min(high, int(v)))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
 
 
@@ -121,6 +121,29 @@ def products(request: Request, brand: str = "ridhi") -> dict[str, Any]:
     return _call(lambda: service.products(brand, _rq(request, 30)))
 
 
+@cro.get("/product-insights")
+def product_insights(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Products tab: sales, refunds, GA4 views, groups, price bands, bought together (default: last
+    28 complete days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.product_insights(brand, _rq(request, 28, today=False)))
+
+
+@cro.get("/discount-codes")
+def discount_codes(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Orders with vs without a discount code, and per code (default: last 28 complete days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.discount_codes(brand, _rq(request, 28, today=False)))
+
+
+@cro.get("/customers")
+def customers(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """New vs returning customers and the path to a first purchase (default: last 28 complete
+    days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.customers(brand, _rq(request, 28, today=False)))
+
+
 @cro.get("/conversion")
 def conversion_trend(request: Request, brand: str = "ridhi") -> dict[str, Any]:
     """Daily sessions, funnel and conversion rate (default: last 7 complete days)."""
@@ -140,6 +163,62 @@ def segments(request: Request, brand: str = "ridhi", dimension: str = "device") 
     """Device or channel split (default: last 7 complete days)."""
     require_perm(request, "view")
     return _call(lambda: service.segments(brand, dimension[:20], _rq(request, 7, today=False)))
+
+
+@cro.get("/landing-pages")
+def landing_pages(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Landing pages, page types and bounce (default: last 28 complete days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.landing_pages(brand, _rq(request, 28, today=False)))
+
+
+@cro.get("/landing-grids")
+def landing_grids(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Top landing pages x traffic source and page types x device (default: last 28 days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.landing_grids(brand, _rq(request, 28, today=False)))
+
+
+@cro.get("/traffic-changes")
+def traffic_changes(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Device and channel changes with the top movers (default: last 7 complete days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.traffic_changes(brand, _rq(request, 7, today=False)))
+
+
+@cro.get("/geo")
+def geo(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Conversion by country and US state (default: last 28 complete days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.geo(brand, _rq(request, 28, today=False)))
+
+
+@cro.get("/site-health")
+def site_health(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Page speed and site search (default: last 28 complete days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.site_health(brand, _rq(request, 28, today=False)))
+
+
+@cro.get("/overview-trends")
+def overview_trends(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Average order value by day and sales by channel (default: last 28 complete days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.overview_trends(brand, _rq(request, 28, today=False)))
+
+
+@cro.get("/checkout-extras")
+def checkout_extras(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Payment methods, order values and items per order (default: last 28 days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.checkout_extras(brand, _rq(request, 28)))
+
+
+@cro.get("/buy-heatmap")
+def buy_heatmap(request: Request, brand: str = "ridhi", days: str = "28") -> dict[str, Any]:
+    """Conversion by weekday x hour over the last `days` (7-56) complete days."""
+    require_perm(request, "view")
+    return _call(lambda: service.buy_heatmap(brand, _int(days, 28, 7, 56)))
 
 
 @cro.get("/home")
@@ -279,16 +358,21 @@ def get_settings(request: Request, brand: str = "ridhi") -> dict[str, Any]:
 def set_settings(
     request: Request, brand: str = "ridhi", body: dict[str, Any] = _BODY
 ) -> dict[str, Any]:  # noqa: B008
-    """Switch alarms on or off."""
+    """Switch alarms on or off, and/or save the free-shipping amount."""
     user = require_perm(request, "view")
     result = _call(lambda: service.set_settings(brand, body, _who(user)))
+    parts = []
+    if "alarms_enabled" in body:
+        parts.append(f"alarms {'on' if result['alarms_enabled'] else 'off'}")
+    if "free_shipping_threshold" in body:
+        parts.append(f"free shipping from {result['free_shipping_threshold'] or 'not set'}")
     audit(
         user,
         "cro.settings",
         "cro_store_settings",
         result["store"],
         brand,
-        summary=f"CRO: alarms {'on' if result['alarms_enabled'] else 'off'}",
+        summary="CRO: " + ", ".join(parts),
     )
     return result
 
@@ -366,3 +450,83 @@ def delete_change(request: Request, entry_id: int, brand: str = "ridhi") -> dict
         summary="CRO: removed a change-log entry",
     )
     return {"deleted": entry_id}
+
+
+# ------------------------------------------------------------------------------------------
+# recommendation status and experiments (db/central/114)
+@cro.post("/recommendations/status")
+def set_rec_status(
+    request: Request, brand: str = "ridhi", body: dict[str, Any] = _BODY
+) -> dict[str, Any]:  # noqa: B008
+    """Save the team's status (open / in_progress / done / ignored) for one recommendation."""
+    user = require_perm(request, "view")
+    result = _call(lambda: service.set_rec_status(brand, body, _who(user)))
+    audit(
+        user,
+        "cro.recommendation_status",
+        "cro_recommendation",
+        result["key"],
+        brand,
+        summary=f"CRO: marked '{result['key']}' {result['status'].replace('_', ' ')}",
+    )
+    return result
+
+
+@cro.get("/experiments")
+def experiment_list(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Every experiment with its result from Shopify."""
+    require_perm(request, "view")
+    return _call(lambda: service.experiment_list(brand))
+
+
+@cro.post("/experiments")
+def add_experiment(
+    request: Request, brand: str = "ridhi", body: dict[str, Any] = _BODY
+) -> dict[str, Any]:  # noqa: B008
+    """Log a new experiment."""
+    user = require_perm(request, "view")
+    exp = _call(lambda: service.save_experiment(brand, body, _who(user)))
+    audit(
+        user,
+        "cro.experiment_add",
+        "cro_experiment",
+        exp.get("id"),
+        brand,
+        summary=f"CRO: logged experiment '{exp.get('name')}'",
+    )
+    return exp
+
+
+@cro.patch("/experiments/{exp_id}")
+def update_experiment(
+    request: Request, exp_id: int, brand: str = "ridhi", body: dict[str, Any] = _BODY
+) -> dict[str, Any]:  # noqa: B008
+    """Change an experiment."""
+    user = require_perm(request, "view")
+    exp = _call(lambda: service.save_experiment(brand, body, _who(user), exp_id))
+    audit(
+        user,
+        "cro.experiment_update",
+        "cro_experiment",
+        exp_id,
+        brand,
+        summary=f"CRO: changed experiment '{exp.get('name')}'",
+    )
+    return exp
+
+
+@cro.delete("/experiments/{exp_id}")
+def delete_experiment(request: Request, exp_id: int, brand: str = "ridhi") -> dict[str, Any]:
+    """Remove an experiment."""
+    user = require_perm(request, "view")
+    if not _call(lambda: service.delete_experiment(brand, exp_id)):
+        raise HttpError(404, "No such experiment for this store.", "not_found")
+    audit(
+        user,
+        "cro.experiment_delete",
+        "cro_experiment",
+        exp_id,
+        brand,
+        summary="CRO: removed an experiment",
+    )
+    return {"deleted": exp_id}

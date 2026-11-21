@@ -249,3 +249,42 @@ def test_sales_trend_aligns_previous_period() -> None:
     assert t["current"][-1] == {"date": "2026-11-18", "revenue": 10.0, "orders": 1}
     assert t["previous"][-1] == {"date": "2026-11-11", "revenue": 7.0, "orders": 1}
     assert len(t["current"]) == len(t["previous"]) == 7
+
+
+def _report_day(total: float, net: float, orders: int = 1) -> dict[str, float]:
+    return {
+        "orders": orders, "gross": net, "discounts": 0.0, "returns": 0.0, "net": net,
+        "shipping": 0.0, "tax": total - net, "total": total,
+    }  # fmt: skip
+
+
+def test_sales_report_replaces_money_but_not_orders() -> None:
+    d = date(2026, 11, 18)
+    orders = [order(i, local(d), 100) for i in range(30)]
+    for w in range(1, 5):
+        orders += [order(1000 * w + i, local(d - timedelta(days=7 * w)), 50) for i in range(20)]
+    p = plan("yesterday", "4week_avg", LA, NOW)
+    # Shopify books a 300 refund on the day it is made: the day's total is lower than the orders'.
+    report = {d.isoformat(): _report_day(2700, 2600, orders=31)}
+    for w in range(1, 5):
+        report[(d - timedelta(days=7 * w)).isoformat()] = _report_day(1000, 950, orders=20)
+    kpis = metrics.order_kpis(snap(orders), p, report)
+    assert kpis["revenue"]["value"] == 2700 and kpis["revenue"]["baseline_value"] == 1000
+    assert kpis["orders"]["value"] == 30  # orders stay from the order copy
+    assert kpis["aov"]["value"] == 100.0
+    b = metrics.sales_breakdown(snap(orders), p, report)
+    rows = {r["key"]: r for r in b["rows"]}  # type: ignore[union-attr]
+    assert b["source"] == "shopify_sales"
+    assert (rows["total"]["value"], rows["net"]["value"], rows["tax"]["value"]) == (2700, 2600, 100)
+    assert metrics.sales_breakdown(snap(orders), p)["source"] == "orders"
+
+
+def test_trend_uses_the_report_only_for_days_it_has() -> None:
+    d = date(2026, 11, 18)
+    orders = [order(1, local(d), 100), order(2, local(d - timedelta(days=1)), 80)]
+    p = plan("last7", "", LA, NOW)
+    t = metrics.range_trend(snap(orders), LA, p, {d.isoformat(): _report_day(70, 60)})
+    by_day = {r["date"]: r for r in t["current"]}  # type: ignore[attr-defined]
+    assert by_day[d.isoformat()]["revenue"] == 70 and by_day[d.isoformat()]["net"] == 60
+    assert by_day[(d - timedelta(days=1)).isoformat()]["revenue"] == 80  # not in the report
+    assert t["source"] == "shopify_sales"

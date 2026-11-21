@@ -1,4 +1,5 @@
-"""Shopify access for CRO: orders with money fields and line items, ShopifyQL, the shop's timezone.
+"""Shopify access for CRO: orders with money fields and line items, ShopifyQL, the shop's timezone,
+the product list (price and type per product).
 
 Uses the brand's existing Admin API client (`seo.integrations.shopify`), so the keys stay in
 Flowmerce's .env and every module talks to Shopify through one app per store. Nothing about the
@@ -92,14 +93,14 @@ def gql_for(store: str) -> Gql:
 def _money(node: dict[str, Any], key: str) -> float:
     try:
         return round(float(((node.get(key) or {}).get("shopMoney") or {}).get("amount") or 0), 2)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0.0
 
 
 def _int_id(value: Any) -> int | None:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -217,3 +218,68 @@ def shop_info(store: str, gql: Gql | None = None) -> dict[str, str]:
     }
     _shop_cache[store] = (time.monotonic() + SHOP_CACHE_SECONDS, info)
     return info
+
+
+# --------------------------------------------------------------------------------------- products
+PRODUCTS_QUERY = """
+query CroProducts($after: String) {
+  products(first: 250, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      legacyResourceId title handle productType
+      priceRangeV2 { minVariantPrice { amount } }
+    }
+  }
+}
+"""
+_catalog_cache: dict[str, tuple[float, dict[int, dict[str, Any]]]] = {}
+CATALOG_PAGES = 80  # 20,000 products at most
+
+
+def product_catalog(store: str, gql: Gql | None = None) -> dict[int, dict[str, Any]]:
+    """Every product's title, handle, type and lowest variant price ("from $X"), by product id
+    (cached for 6 hours)."""
+    cached = _catalog_cache.get(store)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+    call = gql or gql_for(store)
+    out: dict[int, dict[str, Any]] = {}
+    after = None
+    for _ in range(CATALOG_PAGES):
+        page = call(PRODUCTS_QUERY, {"after": after})["products"]
+        for n in page.get("nodes") or []:
+            pid = _int_id(n.get("legacyResourceId"))
+            if pid is None:
+                continue
+            price = ((n.get("priceRangeV2") or {}).get("minVariantPrice") or {}).get("amount")
+            try:
+                value: float | None = round(float(price), 2) if price is not None else None
+            except TypeError, ValueError:
+                value = None
+            out[pid] = {
+                "title": str(n.get("title") or ""),
+                "handle": n.get("handle"),
+                "product_type": str(n.get("productType") or ""),
+                "price": value,
+            }
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            break
+        after = info.get("endCursor")
+    _catalog_cache[store] = (time.monotonic() + SHOP_CACHE_SECONDS, out)
+    return out
+
+
+CATALOG_REFRESH_LEFT = 3600  # the background job reads the list again when less than this is left
+
+
+def warm_catalog(store: str, gql: Gql | None = None) -> bool:
+    """Keep the product list cached (called by the background job), so no page waits the ~2 s
+    it takes to read: read again when the cached copy has less than an hour left. True when it
+    was read now."""
+    cached = _catalog_cache.get(store)
+    if cached and cached[0] - time.monotonic() > CATALOG_REFRESH_LEFT:
+        return False
+    _catalog_cache.pop(store, None)
+    product_catalog(store, gql)
+    return True

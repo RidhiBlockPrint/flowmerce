@@ -6,9 +6,10 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { CountUp } from './motion';
-import { Seg } from './cro';
+import { ExplainedError, Seg } from './cro';
+import { BarList, LineChart } from './charts';
 import { fmtDay, fmtInt } from '../lib/format';
-import { conversionBand, money, niceAxis, pct, salesWindow, toCsv } from '../lib/cro';
+import { bestHours, conversionBand, fmtHour, heatLevel, money, niceAxis, pct, readable, salesWindow, seriesOf, toCsv } from '../lib/cro';
 
 /** Width of an element, kept current as the window resizes (charts draw at 1:1 so text keeps its size). */
 function useWidth(initial = 800) {
@@ -102,9 +103,10 @@ export function OrdersCard({ block, days }) {
 /* ------------------------------------------------------------------ conversion gauge */
 /**
  * Conversion on a half-circle: the outer arc shows the store's own bands over recent weeks (below usual, usual,
- * strong), the inner arc the chosen days' rate, and a tick the average. Below: revenue and average order.
+ * strong), the inner arc the chosen days' rate, and a tick the average. Below: revenue, average order and, for
+ * complete days, revenue per visit.
  */
-export function GaugeCard({ value, scale, single, revenue, aov }) {
+export function GaugeCard({ value, scale, single, revenue, aov, perVisit }) {
     const cx = 160, cy = 170, R = 136, r = 112;
     const t = (v) => (scale ? Math.max(0, Math.min(1, (v - scale.lo) / (scale.hi - scale.lo || 1))) : 0);
     const pt = (rad, tt) => { const a = Math.PI * (1 - tt); return [cx + rad * Math.cos(a), cy - rad * Math.sin(a)]; };
@@ -147,6 +149,8 @@ export function GaugeCard({ value, scale, single, revenue, aov }) {
         <div className="ov-wells">
           <div className="ov-well"><span className="lbl">Revenue</span><b className="num">{revenue?.value === null || revenue?.value === undefined ? '—' : <CountUp value={money(revenue.value, 'USD', 0)}/>}</b><ChangeChip block={revenue}/></div>
           <div className="ov-well"><span className="lbl">Average order</span><b className="num">{aov?.value === null || aov?.value === undefined ? '—' : <CountUp value={money(aov.value)}/>}</b><ChangeChip block={aov}/></div>
+          {perVisit?.value !== null && perVisit?.value !== undefined ? (<div className="ov-well wide" title="Revenue ÷ visits, complete days only">
+            <span className="lbl">Revenue per visit</span><b className="num"><CountUp value={money(perVisit.value)}/></b><ChangeChip block={perVisit}/></div>) : null}
         </div>
       </section>
     </div>);
@@ -382,5 +386,80 @@ export function JourneyCard({ t }) {
             </div>);
         })}
       </div>
+    </section>);
+}
+
+/* ------------------------------------------------------------------ what changed */
+/**
+ * The biggest reasons orders moved against the comparison, as sentences: more or fewer visits from a device or source
+ * (traffic) or the same visitors buying more or less often (conversion). From /api/cro/traffic-changes.
+ */
+export function MoversCard({ q }) {
+    if (q.error) return <ExplainedError error={q.error} onRetry={q.reload}/>;
+    const d = q.data;
+    if (!d) return null;
+    return (<section className="card ov-card" aria-labelledby="ov-movers">
+      <div className="ov-card-head"><h2 id="ov-movers">What moved orders <InfoMark text="Each change in purchases is split into a visits part (more or fewer visitors) and a conversion part (the same visitors buying more or less often). Bots left out."/></h2></div>
+      {d.too_early ? <div className="muted small">Fewer than 500 visits in these days: too early to say what moved orders.</div>
+          : d.movers.length ? (<div className="ov-movers">
+            {d.movers.map((m) => (<div key={`${m.dimension}-${m.segment}-${m.kind}`} className="ov-mover">
+              <span className={`lane-chip ${m.good ? 'lane-live' : 'lane-due'}`}>{m.good ? '▲' : '▼'} {Math.abs(Math.round(m.effect))}</span>
+              <span>{m.text}</span>
+              <span className="muted xs">{m.kind === 'traffic' ? 'visits' : 'conversion'} · {m.dimension}</span>
+            </div>))}
+          </div>) : <div className="muted small">No device or source changed purchases by one or more against the comparison.</div>}
+    </section>);
+}
+
+/* ------------------------------------------------------------------ best hours */
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Conversion by weekday and hour (store time) over the last 28 complete days, shaded against the average. */
+export function HeatmapCard({ q }) {
+    if (q.error) return <ExplainedError error={q.error} onRetry={q.reload}/>;
+    const d = q.data;
+    if (!d) return null;
+    const byOrders = d.metric === 'orders';
+    const maxOrders = Math.max(1, ...d.cells.map((c) => c.orders));
+    const level = (c) => (byOrders ? (c.orders ? Math.min(4, Math.floor((c.orders / maxOrders) * 5)) : null) : heatLevel(c.cvr, d.average_cvr));
+    const best = byOrders ? [] : bestHours(d.cells, 3);
+    const at = (w, h) => d.cells[w * 24 + h];
+    const info = `Last ${d.days} complete days, store time. ${byOrders ? 'Orders placed per hour.' : 'Conversion per weekday-hour against the average; hours with under 20 visits are left blank.'}`;
+    return (<section className="card ov-card" aria-labelledby="ov-heat">
+      <div className="ov-card-head"><h2 id="ov-heat">Best hours to sell <InfoMark text={info}/></h2></div>
+      {d.note ? <div className="muted xs" style={{ marginBottom: 8 }}>{d.note}</div> : null}
+      {best.length ? <div className="small" style={{ marginBottom: 8 }}>Best: {best.map((c) => `${DAY_NAMES[c.weekday]} ${fmtHour(c.hour)} (${pct(c.cvr, 1)})`).join(' · ')}{d.average_cvr !== null ? <span className="muted"> · average {pct(d.average_cvr)}</span> : null}</div> : null}
+      <div className="heatmap-wrap">
+        <div className="heatmap" role="img" aria-label={byOrders ? 'Orders by weekday and hour' : 'Conversion by weekday and hour'}>
+          <div className="hm-row"><span className="hm-d"/>{Array.from({ length: 24 }, (_, h) => <span key={h} className="hm-h">{h % 3 === 0 ? h : ''}</span>)}</div>
+          {DAY_NAMES.map((day, w) => (<div key={day} className="hm-row">
+            <span className="hm-d">{day}</span>
+            {Array.from({ length: 24 }, (_, h) => {
+                const c = at(w, h);
+                const lvl = c ? level(c) : null;
+                const tip = c ? `${day} ${fmtHour(h)}: ${byOrders ? `${c.orders} orders` : `${fmtInt(c.sessions)} visits, ${c.cvr === null ? 'too few for a rate' : `${pct(c.cvr)} converted`}`}` : '';
+                return <span key={h} className={`hm-c${lvl === null ? '' : ` h${lvl}`}`} title={tip}/>;
+            })}
+          </div>))}
+        </div>
+      </div>
+      <div className="hm-legend muted xs"><span className="hm-c h0"/>{byOrders ? 'fewest' : 'well below'}<span className="hm-c h2"/>{byOrders ? '' : 'average'}<span className="hm-c h4"/>{byOrders ? 'most orders' : 'well above'}</div>
+    </section>);
+}
+
+/* ------------------------------------------------------------------ order value and channels */
+/** Average order value by day (against the days before) and sales by sales channel, from Shopify's sales report. */
+export function TrendsRow({ q }) {
+    if (q.error) return <ExplainedError error={q.error} onRetry={q.reload}/>;
+    const d = q.data;
+    if (!d) return null;
+    const prev = d.previous_aov.map((r, i) => ({ ...r, date: d.aov[i]?.date ?? r.date }));
+    return (<section className="card ov-card" aria-labelledby="ov-aov">
+      <div className="ov-card-head"><h2 id="ov-aov">Average order and channels <InfoMark text="Shopify's average order value per day (gross sales less discounts, per order), and total sales by sales channel."/></h2></div>
+      {d.aov.length > 1 ? <LineChart ariaLabel="Average order value by day" height={170} yFormat={(v) => money(v, 'USD', 0)}
+        series={[seriesOf(d.aov, 'aov', 'aov', 'Average order', 'var(--info)'), ...(prev.length ? [seriesOf(prev, 'aov', 'prev', 'Days before', 'var(--line)')] : [])]}/>
+        : <div className="muted small">Needs at least two days.</div>}
+      <div className="small strong mt-8">Sales by channel</div>
+      <BarList format={(v) => money(v, 'USD', 0)} rows={d.channels.map((c) => ({ key: c.label, label: readable(c.label), value: c.total_sales, extra: `${pct(c.share_pct, 0)} · ${fmtInt(c.orders)} orders` }))}/>
     </section>);
 }

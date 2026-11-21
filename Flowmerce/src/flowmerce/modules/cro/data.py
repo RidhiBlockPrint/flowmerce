@@ -48,7 +48,7 @@ def parse_ts(value: Any) -> datetime | None:
 def _num(value: Any) -> float:
     try:
         return float(value or 0)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0.0
 
 
@@ -511,3 +511,126 @@ def delete_change(store: str, entry_id: int, c: SupabaseClient | None = None) ->
     """Remove one entry of this store (via cro.delete_change_log). True when a row was deleted."""
     forget_reads(store)
     return bool((c or cro_client()).rpc("delete_change_log", {"p_store": store, "p_id": entry_id}))
+
+
+# ------------------------------------------------------------------------------------------ 114:
+# free-shipping amount, recommendation status, experiments
+def free_shipping(store: str, c: SupabaseClient | None = None) -> float | None:
+    """The store's free-shipping amount (cro.store_settings), or None: not set, or 114 not run."""
+    try:
+        rows = (
+            (c or cro_client())
+            .select(
+                "store_settings",
+                [("select", "free_shipping_threshold"), ("store", f"eq.{store}")],
+                limit=1,
+            )
+            .rows
+        )
+    except SupabaseError:
+        return None
+    value = rows[0].get("free_shipping_threshold") if rows else None
+    return float(value) if value is not None else None
+
+
+def set_free_shipping(
+    store: str, amount: float | None, by: str, c: SupabaseClient | None = None
+) -> None:
+    """Save (or clear, with None) the store's free-shipping amount."""
+    forget_reads(store)
+    (c or cro_client()).upsert(
+        "store_settings",
+        [{"store": store, "free_shipping_threshold": amount, "updated_by": by[:200]}],
+        on_conflict="store",
+    )
+
+
+def rec_statuses(store: str, c: SupabaseClient | None = None) -> dict[str, dict[str, Any]]:
+    """The team's status per recommendation key for a store (keys without a row are open)."""
+    rows = (
+        (c or cro_client())
+        .select(
+            "recommendation_status",
+            [("select", "rec_key,status,updated_by,updated_at"), ("store", f"eq.{store}")],
+        )
+        .rows
+    )
+    return {str(r["rec_key"]): r for r in rows}
+
+
+def set_rec_status(
+    store: str, key: str, status: str, by: str, c: SupabaseClient | None = None
+) -> None:
+    """Save the status of one recommendation."""
+    forget_reads(store)
+    (c or cro_client()).upsert(
+        "recommendation_status",
+        [
+            {
+                "store": store,
+                "rec_key": key[:300],
+                "status": status,
+                "updated_by": by[:200],
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        ],
+        on_conflict="store,rec_key",
+    )
+
+
+EXPERIMENT_COLUMNS = (
+    "id,store,name,hypothesis,metric,page_path,start_date,end_date,owner,rec_key,created_by,"
+    "created_at,updated_at"
+)
+
+
+def experiments(store: str, c: SupabaseClient | None = None) -> list[dict[str, Any]]:
+    """A store's experiments, newest start first."""
+    return (
+        (c or cro_client())
+        .select(
+            "experiments",
+            [
+                ("select", EXPERIMENT_COLUMNS),
+                ("store", f"eq.{store}"),
+                ("order", "start_date.desc,id.desc"),
+            ],
+        )
+        .rows
+    )
+
+
+def experiment(store: str, exp_id: int, c: SupabaseClient | None = None) -> dict[str, Any] | None:
+    """One experiment of this store, or None."""
+    rows = (
+        (c or cro_client())
+        .select(
+            "experiments",
+            [("select", EXPERIMENT_COLUMNS), ("id", f"eq.{exp_id}"), ("store", f"eq.{store}")],
+            limit=1,
+        )
+        .rows
+    )
+    return rows[0] if rows else None
+
+
+def add_experiment(row: dict[str, Any], c: SupabaseClient | None = None) -> dict[str, Any]:
+    """Insert an experiment; returns the stored row."""
+    forget_reads(str(row.get("store")))
+    return (c or cro_client()).insert_returning("experiments", row)
+
+
+def update_experiment(
+    store: str, exp_id: int, values: dict[str, Any], c: SupabaseClient | None = None
+) -> None:
+    """Change an experiment of this store."""
+    forget_reads(store)
+    (c or cro_client()).update(
+        "experiments", [("id", f"eq.{exp_id}"), ("store", f"eq.{store}")], values
+    )
+
+
+def delete_experiment(store: str, exp_id: int, c: SupabaseClient | None = None) -> bool:
+    """Remove one experiment of this store (cro.delete_experiment). True when one was deleted."""
+    forget_reads(store)
+    return bool((c or cro_client()).rpc("delete_experiment", {"p_store": store, "p_id": exp_id}))

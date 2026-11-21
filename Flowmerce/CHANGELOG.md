@@ -2,6 +2,162 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-21 (CRO: batch 5, new vs returning customers; page loading)
+
+Owner approvals 2026-11-21: batch 5 plan with the recommended answers and its sample screens (design canvas "CRO Overview
+Drafts", artboards 10 and 11); then, for this push, the CRO emails (alarm and daily numbers emails, the Alarms tab's
+email setup) and the path to the first purchase (it needs the same migration) are held back for more work on Monday
+and are not in this commit. No `read_customers` scope and no customer identity. Pushed together with batches 1-4 after
+testing: CRO tests (122), the whole Python unit suite (one failure that predates this:
+`test_unfinished_pages_are_not_mounted`), ruff and mypy --strict on the CRO module, frontend tests (91) and `next build`;
+the reads were run against both live stores (read-only).
+
+- **Added** `src/flowmerce/modules/cro/customers.py` and `GET /api/cro/customers` (default: last 28 complete days):
+  new vs returning customers from Shopify's sales report (`new_or_returning_customer`: orders, share, net sales,
+  average order) and its returning customer rate, against the comparison. Shopify decides who is new or returning.
+- **Changed** the Sales tab: a New vs returning customers card below Discount codes.
+- **Changed** page loading: the background job keeps each store's Shopify product list cached (read at start-up and
+  again when under an hour of its 6 hours is left, `shopify.warm_catalog`), so the Products tab and the
+  recommendations (which the Overview waits for) no longer pay the ~2 s it takes to read.
+- **Changed** `conversion.run`: a ShopifyQL query already being read is not asked again (a second caller waits for that
+  answer; the Overview asks some figures twice), and at most 10 run at once per store.
+- Measured on both live stores (read-only): every CRO read answers in about 0.1 s warm; with nothing cached the
+  Overview took 3.6-3.8 s (its slowest read is the recommendations) and other tabs 0.6-2.8 s. Firing every tab at once
+  with nothing cached, right after many test runs, made Shopify throttle report queries (reads waited 25-45 s, a few
+  failed with an explained error); a cap of 6 parallel queries did not prevent it and slowed the Overview to 5.8 s, so
+  the cap is kept at 10. Answers stay cached 10 minutes (`CRO_CACHE_SECONDS`).
+
+## 2026-11-21 (CRO: batch 4, deeper product analysis from Shopify and GA4)
+
+Owner approvals 2026-11-21: batch 4 plan; product views from GA4 instead of Microsoft Clarity (money and orders from
+Shopify, GA4 only for what Shopify cannot see: views and add-to-carts per product); the sample screens (design canvas
+"CRO Overview Drafts", artboards 8 Products and 9 Sales). Built together with batches 1-3, to be committed together
+after testing. Verified: CRO tests (119, 13 new in `tests/unit/cro/test_products_deeper.py`), ruff and mypy --strict on
+the CRO module, frontend tests (90, 4 new in `tests/cro-batch4.test.mjs`) and `next build`. Product insights, discount
+codes and the recommendations were run read-only against both live stores; both tabs were checked in the browser in
+demo mode on desktop and phone width (no sideways page scroll). Not yet seen with live data in the full app. No new
+table or setting: GA4 uses the SEO module's existing Google service account and GA4 property ids.
+
+- **Added** `src/flowmerce/modules/cro/products.py`: Shopify's sales per product id (gross, discounts, refunds, net,
+  items, orders), refunds per product, discount codes (with vs without a code; an order with two codes is under both
+  codes, so "with a code" = all orders - orders without one), products bought together (pairs in the same order, share
+  of the first product's orders, how many times more often than chance), price bands by each product's "from" price,
+  and GA4 product views and add-to-carts (GA4's item id holds the Shopify product id, so products match by id).
+- **Added** product groups (Stars, Hidden gems, Leaky, Dead weight): each product's conversion (orders / GA4 views over
+  the same days) against its own category, with the small-sample adjustment (orders + 200 x category rate) / (views +
+  200); a category with fewer than 3 viewed products is compared with all products, and a category where nothing sold
+  makes no Star. The leaky pages are ranked by money left on the table (views x conversion gap x price). Groups wait
+  until GA4 has 7 days of views in the range (CPC's GA4 only started on 19 Nov) and say so; everything else shows.
+- **Added** leaky products to Recommendations (the top five with $50+ left on the table), ranked with the other
+  impact-ranked checks.
+- **Added** routes `GET /api/cro/product-insights` and `GET /api/cro/discount-codes` (default: last 28 complete
+  days); `shopify.product_catalog()` reads each product's title, type and lowest variant price (cached 6 hours).
+- **Changed** the Products tab to the approved design: the four groups (clicking one filters the table), fix first,
+  refunds per product (highest rate / most refunded), price bands, bought together, and every product with net sales,
+  refund %, views, add to cart, conversion and group. Removed: the top / middle / low thirds ring and the best-sellers
+  list (the groups and the table, sorted by net sales, replace them).
+- **Added** a Discount codes card on the Sales tab: orders with vs without a code against the comparison, and the top
+  codes (sortable by orders or average order) with their average order against orders without a code.
+- Note: CPC's GA4 property is on Pacific time while the store is on Arizona time (a one-hour shift at each day's edge);
+  Ridhi's matches. Napkins convert far above other categories (often added from a tablecloth page without a napkin
+  page view), which can make an ordinary napkin look leaky.
+
+## 2026-11-21 (CRO: batch 3, and the approved screen designs for batches 1-3)
+
+Owner approvals 2026-11-21: batch 3 plan; the sample screens (design canvas "CRO Overview Drafts", row "Batches 1-3")
+for Conversion, Landing pages, Cart & checkout (with four extra improvements), Site health, Recommendations and
+Experiments; Site health, Recommendations and Experiments go under Advanced; the Overview's design stays as it is (only
+new content is added). Built together with batches 1 and 2, to be committed together after testing. Verified: CRO tests
+(106, 10 new in `tests/unit/cro/test_recommendations_experiments.py`), the whole Python unit suite (one failure that
+predates this: `test_unfinished_pages_are_not_mounted`), ruff and mypy --strict on the CRO module, frontend tests (86,
+5 new in `tests/cro-batch3.test.mjs`) and `next build`. The recommendation list and experiment results were run
+read-only against the live Ridhi store. Every changed screen was checked in the browser in demo mode, on desktop and
+phone width (no sideways page scroll). Not yet seen with live data in the full app, and `db/central/114` has not been
+run in Supabase yet: until it is, statuses, experiments and the saved free-shipping amount explain that it is missing.
+
+- **Added** `db/central/114_cro_tracking.sql`: `cro.recommendation_status` (the team's status per recommendation
+  key), `cro.experiments` (the experiment log) with `cro.delete_experiment()`, and
+  `cro.store_settings.free_shipping_threshold`. Run it in Supabase after 112 and 113.
+- **Changed** Recommendations (now under Advanced): Claude's plan stays on top; below it every check is ranked by an
+  estimated money impact over the last 28 days (visits x conversion gap x average order), with fix / promote / test,
+  effort, the evidence and the formula. New checks from the prototype: landing pages converting well below the store,
+  bounce jumps with falling conversion, pages and sources worth more traffic, weak devices and sources, the store
+  converting less than before, and payment methods failing more than the rest. Each item has Open / In progress /
+  Done / Ignore, saved for the whole team; done and ignored items leave the Overview's "What to do next".
+- **Added** an Experiments tab (under Advanced): the team logs a test (name, expectation, metric, dates, optional
+  landing page, owner), or starts one from a recommendation; the result comes from Shopify, comparing the test days with
+  the same number of days just before, with a two-proportion confidence (a win or loss only at 95% and 200+ visits a
+  side) and the change-log entries of those days.
+- **Changed** Conversion, Landing pages, Cart & checkout and Site health to the approved designs: the full funnel with
+  the comparison as grey bars, sortable device and channel tables with the change against the comparison, places side
+  by side; landing-page tiles (the bounce tile filters the table), search / type filter / sort, and a grid with
+  conversion, add to cart or bounce against the grid's own "All" row and column; Site health as rating-coloured tiles.
+- **Changed** Cart & checkout (owner's improvements): an abandonment chart with a tooltip per day, change-log markers
+  and the earlier days dashed (replacing the two abandonment charts); payments as share bars with a success chip each and
+  the change against the comparison; order values and items per order side by side as compact rows; a line at the
+  free-shipping amount, which is now typed on the card and saved per store for everyone (`.env` stays a fallback).
+- **Changed** the CRO menu: Landing pages joins the everyday tabs; Site health, Recommendations and Experiments are under
+  Advanced, on the page and in the sidebar.
+- **Added** routes `POST /api/cro/recommendations/status`, `GET/POST /api/cro/experiments`,
+  `PATCH/DELETE /api/cro/experiments/{id}`; `PATCH /api/cro/settings` also takes `free_shipping_threshold`. Demo mode
+  answers all of them.
+
+## 2026-11-21 (CRO: new views from the new CRO prototype, batch 2)
+
+Owner request, batch 2 of 5 (built together with batch 1; both to be committed together after testing). Verified: CRO
+tests (96, 22 new in `tests/unit/cro/test_traffic.py` and `test_landing_site.py`), the whole Python unit suite (one
+failure that predates this: `test_unfinished_pages_are_not_mounted`), ruff and mypy --strict on the CRO module, frontend
+tests (81, 7 new in `tests/cro-batch2.test.mjs`) and `next build`. Every new report was run read-only against the live
+Ridhi store (each answers in under 2 s; every ShopifyQL dataset used also answers for CPC). The new tabs and cards were
+checked in the browser in demo mode, on desktop and phone width (no sideways page scroll). Not yet seen in the full app
+with live data (the local API was not running) and not yet on the hosted app.
+
+- **Added** a Landing pages tab: per landing page its visits, bounce rate, add-to-cart and conversion rate, revenue and
+  revenue per visit (ShopifyQL `sales` by the order's landing page), top traffic source, and a warning when a page's
+  bounce rate is 5+ points above the comparison; bounce and conversion by page type, traffic source or device; and a
+  pages x traffic source (or page type x device) grid shaded against its average.
+- **Added** a Site health tab: page speed (Google's Core Web Vitals at the 75th percentile, with Google's ratings) by
+  device against the comparison, by page type and for the busiest mobile pages, with a daily mobile trend; and site
+  search (share of visits that search, how searchers convert against everyone else, top searches, searches that found
+  nothing). Shopify publishes both about 1-2 days late; the tab says so when nothing is out yet.
+- **Added** to the Conversion tab: traffic sources with revenue per visit, and conversion by country and US state.
+- **Added** to Cart & checkout: payment methods and wallets with the payment success rate, items per order, and order
+  values in $25 bars. With a free-shipping amount set (`CRO_FREE_SHIPPING_RBP` / `CRO_FREE_SHIPPING_CPC` in `.env`), the
+  bars just under it are marked and the share of orders just short of it is shown; not set yet.
+- **Added** to the Overview: revenue per visit (complete days only), "What moved orders" (each change in purchases split
+  into a visits part and a conversion part, by device and source, as the three biggest sentences), the best hours to
+  sell (conversion by weekday and hour over the last 28 days, store time; orders by hour when Shopify's hourly visits
+  cannot be read), and average order value by day with sales by channel.
+- **Added** routes `/api/cro/landing-pages`, `/landing-grids`, `/traffic-changes`, `/geo`, `/site-health`,
+  `/overview-trends`, `/checkout-extras`, `/buy-heatmap`; `/api/cro/overview` also returns `sessions` and
+  `revenue_per_session`. Demo mode answers all of them (and batch 1's device funnel).
+- Not done: the two new tabs are not yet in the sidebar's CRO list (`frontend/src/lib/routes.mjs` was outside the
+  approved files); they are on the CRO page's tab bar.
+
+## 2026-11-21 (CRO: figures that match Shopify, from the new CRO prototype, batch 1)
+
+Owner request: bring the new features of the updated CRO prototype (cro-automation-main) into the CRO module, batch 1
+of 5 (still to come: new views, recommendation status and experiments, deeper product analysis, and email or
+customer-data features that need an owner decision). Verified: CRO tests (74, 7 new), the whole Python
+unit suite (one failure that predates this: `test_unfinished_pages_are_not_mounted`), ruff and mypy --strict on the
+CRO module, frontend tests (74) and `next build`. Run read-only against the live Ridhi store: every new ShopifyQL query
+answers, bots were about 9-10% of the sessions counted before, and for 14-20 Nov the device funnel's sessions equal
+the daily totals. The Conversion tab's funnel was checked in the browser (desktop and phone) with those live figures.
+Not run in the full app (the local API was not running) and not yet on the hosted app.
+
+- **Fixed** sessions, conversion rate, the funnel and the device/channel split leave bots out
+  (`human_or_bot_session = 'Human'`), as Shopify Analytics does, so they match Shopify's own reports.
+- **Changed** revenue on the Overview, the sales breakdown and the sales chart come from Shopify's sales report
+  (ShopifyQL `sales`), which counts a refund on the day it was made, not on the day of the order. Orders and average
+  order value stay from the order copy. Ranges that reach today keep the order copy for today (and for the comparison
+  day lined up with it), because that comparison stops at the same time of day. If Shopify does not answer, the order
+  copy is used as before; the answers say which was used (`revenue_source` / `source`).
+- **Changed** the conversion-rate alarm compares yesterday with the average of the same weekday over the 4 weeks before
+  (was: the day before). Days with fewer than 30 sessions are not judged, and it needs at least 3 usable past weeks.
+  The recommendations and Home still compare with the day before.
+- **Added** the Conversion tab's funnel has a "Viewed a product" step and an All / Mobile / Desktop / Tablet switch,
+  with each step's change in points against the comparison (`funnel` and `baseline_funnel` in `/api/cro/conversion`).
+
 ## 2026-11-21 (One Python version everywhere: 3.14)
 
 Owner decision ([ADR 0010](docs/decisions/0010-one-python-version.md)). Before: the hosted app ran Python 3.12, this

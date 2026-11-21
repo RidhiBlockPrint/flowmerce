@@ -34,11 +34,14 @@ export const NAV = [
     { id: 'cro', kind: 'module', label: 'Conversion (CRO)', to: '/cro', icon: 'target', items: [
         { to: '/cro', tab: 'overview', label: 'Overview', icon: 'overview' },
         { to: '/cro', tab: 'conversion', label: 'Conversion', icon: 'target' },
+        { to: '/cro', tab: 'landing', label: 'Landing pages', icon: 'link' },
         { to: '/cro', tab: 'checkout', label: 'Cart & checkout', icon: 'store' },
         { to: '/cro', tab: 'products', label: 'Products', icon: 'library' },
         { to: '/cro', tab: 'sales', label: 'Sales', icon: 'trend' },
-        { to: '/cro', tab: 'recommendations', label: 'Recommendations', icon: 'sparkle' },
     ], advanced: [
+        { to: '/cro', tab: 'site', label: 'Site health', icon: 'monitor' },
+        { to: '/cro', tab: 'recommendations', label: 'Recommendations', icon: 'sparkle' },
+        { to: '/cro', tab: 'experiments', label: 'Experiments', icon: 'flag' },
         { to: '/cro', tab: 'alarms', label: 'Alarms', icon: 'clock' },
         { to: '/cro', tab: 'changes', label: 'Change log', icon: 'history' },
     ] },

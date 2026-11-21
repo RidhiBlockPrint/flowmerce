@@ -1,9 +1,10 @@
 """CRO alarms: evaluate each active rule of a store and open or resolve its alert.
 
 Kinds (cro.alarm_rules.kind):
-  * cvr_drop: yesterday's conversion rate fell by `threshold` % or more against the day before. One
-    alert per store-local day; the open alert is resolved by the next day that is back under the
-    threshold.
+  * cvr_drop: yesterday's conversion rate fell by `threshold` % or more against the average of the
+    same weekday in the 4 weeks before (a Tuesday against the last 4 Tuesdays). Not judged when
+    yesterday had fewer than 30 sessions or fewer than 3 of those weekdays had 30. One alert per
+    store-local day; the open alert is resolved by the next day that is back under the threshold.
   * no_product_orders: no non-cancelled order with a product matching `product_keyword` for
     `threshold` hours. Resolved as soon as such an order arrives. Not checked while the order copy
     is stale (a failed or late sync would otherwise look like "no orders").
@@ -27,7 +28,7 @@ STALE_AFTER = timedelta(minutes=45)  # order copy older than this: product alarm
 
 
 def evaluate_cvr(comparison: dict[str, Any], threshold: float) -> str:
-    """'insufficient_data' | 'normal' | 'triggered' for a cvr_comparison() result."""
+    """'insufficient_data' | 'normal' | 'triggered' for a cvr_vs_weekday_average() result."""
     drop = comparison.get("drop_percent")
     if drop is None:
         return "insufficient_data"
@@ -54,7 +55,7 @@ def _fresh(state: dict[str, Any] | None, now: datetime) -> bool:
 def _check_cvr(rule: dict[str, Any], store: str, today: date, now: datetime) -> dict[str, Any]:
     threshold = float(rule["threshold"])
     try:
-        cmp = conversion.cvr_comparison(conversion.daily(store, today, 7), today)
+        cmp = conversion.cvr_vs_weekday_average(conversion.daily(store, today, 29), today)
     except AnalyticsError as e:
         return {"status": "unavailable", "reason": e.state}
     status = evaluate_cvr(cmp, threshold)
@@ -70,9 +71,10 @@ def _check_cvr(rule: dict[str, Any], store: str, today: date, now: datetime) -> 
     if opened:  # an older day's alert: this is a new drop
         data.resolve_alert(int(opened["id"]), now)
     message = (
-        f"Conversion rate fell {cmp['drop_percent']}%: {cmp['previous_cvr']}% on "
-        f"{cmp['previous_date']} "
-        f"-> {cmp['yesterday_cvr']}% on {cmp['yesterday_date']} (alarm at {threshold:g}%)."
+        f"Conversion rate on {cmp['yesterday_weekday']} {cmp['yesterday_date']} was "
+        f"{cmp['yesterday_cvr']}% ({cmp['yesterday_sessions']:,} sessions), {cmp['drop_percent']}% "
+        f"below the {cmp['yesterday_weekday']} average of the last {len(cmp['baseline_days'])} "
+        f"weeks ({cmp['baseline_cvr']}%; alarm at {threshold:g}%)."
     )
     alert = data.insert_alert(
         {

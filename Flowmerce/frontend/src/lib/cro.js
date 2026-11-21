@@ -9,11 +9,15 @@
 export const TABS = [
     { key: 'overview', label: 'Overview' },
     { key: 'conversion', label: 'Conversion' },
+    { key: 'landing', label: 'Landing pages' },
     { key: 'checkout', label: 'Cart & checkout' },
     { key: 'products', label: 'Products' },
     { key: 'sales', label: 'Sales' },
-    { key: 'recommendations', label: 'Recommendations' },
-    // Set up once and rarely opened: kept under the tab bar's "Advanced" menu and the sidebar's Advanced group.
+    // Opened now and then: kept under the tab bar's "Advanced" menu and the sidebar's Advanced group (owner decision
+    // 2026-11-21 for Site health, Recommendations and Experiments).
+    { key: 'site', label: 'Site health', advanced: true },
+    { key: 'recommendations', label: 'Recommendations', advanced: true },
+    { key: 'experiments', label: 'Experiments', advanced: true },
     { key: 'alarms', label: 'Alarms', advanced: true },
     { key: 'changes', label: 'Change log', advanced: true },
 ];
@@ -51,7 +55,7 @@ export const ADVICE_AREA = {
 };
 
 export const RULE_KIND = {
-    cvr_drop: { label: 'Conversion-rate drop', unit: '%', help: 'Alert when yesterday\'s conversion rate is this many percent lower than the day before.' },
+    cvr_drop: { label: 'Conversion-rate drop', unit: '%', help: 'Alert when yesterday\'s conversion rate is this many percent below the average of the same weekday over the last 4 weeks. Days with fewer than 30 sessions are not judged.' },
     no_product_orders: { label: 'No orders for a product', unit: 'hours', help: 'Alert when no order with a matching product (title, type or tag) arrives for this many hours.' },
 };
 
@@ -224,3 +228,53 @@ export function toCsv(rows) {
     };
     return rows.map((r) => r.map(cell).join(',')).join('\n');
 }
+
+/* ------------------------------------------------------------------ landing pages, site health, payments */
+/** Google's Core Web Vitals as the Site health tab names them. */
+export const VITALS = [
+    { key: 'lcp', label: 'Main content shows (LCP)', help: 'Largest Contentful Paint: how long until the biggest image or text block is on screen. Good: 2.5 s or less.' },
+    { key: 'inp', label: 'Reacts to a tap (INP)', help: 'Interaction to Next Paint: how long the page takes to respond to a tap or click. Good: 200 ms or less.' },
+    { key: 'cls', label: 'Layout stays put (CLS)', help: 'Cumulative Layout Shift: how much the page jumps while loading. Good: 0.1 or less.' },
+];
+/** Google's rating of a vital, as a calendar-lane chip. */
+export const RATING = {
+    good: { label: 'Good', lane: 'lane-live' },
+    needs_improvement: { label: 'Needs work', lane: 'lane-event' },
+    poor: { label: 'Poor', lane: 'lane-due' },
+};
+
+/** A vital's p75 for display: LCP in seconds, INP in milliseconds, CLS as a plain number. */
+export function fmtVital(metric, v) {
+    if (v === null || v === undefined || Number.isNaN(v)) return '—';
+    if (metric === 'cls') return Number(v).toFixed(2);
+    if (metric === 'lcp') return `${(v / 1000).toFixed(2)} s`;
+    return `${Math.round(v)} ms`;
+}
+
+/** Shopify's machine labels made readable: 'credit_card' -> 'Credit card', 'shopify_pay' -> 'Shop Pay'. */
+const LABELS = { shopify_pay: 'Shop Pay', apple_pay: 'Apple Pay', google_pay: 'Google Pay', paypal: 'PayPal', cardserver_token: 'Saved card', meta_pay: 'Meta Pay' };
+export function readable(label) {
+    const s = String(label ?? '').trim();
+    if (!s) return 'Other';
+    if (LABELS[s]) return LABELS[s];
+    const t = s.replace(/_/g, ' ');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/**
+ * How a weekday-hour cell compares with the period's average conversion: 0 (well below) to 4 (well above), or null
+ * when the cell has too few visits for a rate. Used to shade the heatmap.
+ */
+export function heatLevel(cvr, avg) {
+    if (cvr === null || cvr === undefined || !avg) return null;
+    const r = cvr / avg;
+    return r < 0.5 ? 0 : r < 0.85 ? 1 : r < 1.15 ? 2 : r < 1.5 ? 3 : 4;
+}
+
+/** The best weekday-hours by conversion (cells with a rate only), best first. */
+export function bestHours(cells, n = 3) {
+    return (cells ?? []).filter((c) => c.cvr !== null && c.cvr !== undefined).sort((a, b) => b.cvr - a.cvr || b.sessions - a.sessions).slice(0, n);
+}
+
+/** '14:00' for an hour of the day. */
+export const fmtHour = (h) => `${String(h).padStart(2, '0')}:00`;

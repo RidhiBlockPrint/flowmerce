@@ -197,3 +197,149 @@ def test_recommendations_need_evidence() -> None:
     )
     assert [r["priority"] for r in recs] == ["High", "Medium"]
     assert recs[0]["title"].startswith("Orders for 'quilt'")
+
+
+def _fake(rows_for: Any) -> Any:
+    seen: list[str] = []
+
+    def gql(_q: str, v: dict[str, Any] | None = None) -> dict[str, Any]:
+        q = str((v or {}).get("q"))
+        seen.append(q)
+        out = rows_for(q)
+        if isinstance(out, Exception):
+            return {"shopifyqlQuery": {"parseErrors": [str(out)], "tableData": None}}
+        return {"shopifyqlQuery": {"parseErrors": None, "tableData": {"columns": [], "rows": out}}}
+
+    gql.seen = seen  # type: ignore[attr-defined]
+    return gql
+
+
+def test_session_queries_leave_bots_out() -> None:
+    conversion.clear_cache()
+    gql = _fake(lambda _q: [])
+    conversion.daily("TEST", date(2026, 11, 19), 7, gql)
+    conversion.daily_between("TEST", date(2026, 11, 1), date(2026, 11, 7), date(2026, 11, 19), gql)
+    conversion.segments("TEST", "device", 7, gql)
+    assert gql.seen and all("human_or_bot_session = 'Human'" in q for q in gql.seen)
+    conversion.clear_cache()
+
+
+def test_cvr_against_the_4_week_weekday_average() -> None:
+    today = date(2026, 11, 21)  # yesterday: Friday 20 Nov
+
+    def row(day: date, sessions: int, cvr: float) -> dict[str, Any]:
+        return {"date": day.isoformat(), "sessions": sessions, "conversion_rate": cvr}
+
+    y = date(2026, 11, 20)
+    rows = [row(y, 1000, 1.5), row(y - timedelta(days=1), 1000, 9.0)]  # the day before is ignored
+    rows += [row(y - timedelta(days=7 * w), 1000, 2.0 + w * 0.5) for w in range(1, 5)]
+    cmp = conversion.cvr_vs_weekday_average(rows, today)
+    assert cmp["yesterday_weekday"] == "Friday" and cmp["baseline_cvr"] == 3.25
+    assert cmp["drop_percent"] == round((3.25 - 1.5) / 3.25 * 100, 2)
+    assert alarms.evaluate_cvr(cmp, 20) == "triggered"
+    # Too few sessions yesterday, or too few usable past weeks: not judged.
+    quiet = [row(y, 20, 0.0), *rows[2:]]
+    assert conversion.cvr_vs_weekday_average(quiet, today)["reason"] == "too_few_sessions_yesterday"
+    thin = [rows[0], row(y - timedelta(days=7), 1000, 3.0), row(y - timedelta(days=14), 10, 3.0)]
+    cmp = conversion.cvr_vs_weekday_average(thin, today)
+    assert cmp["drop_percent"] is None and cmp["reason"] == "not_enough_past_weeks"
+    assert alarms.evaluate_cvr(cmp, 20) == "insufficient_data"
+
+
+def test_sales_daily_keeps_returns_positive_and_fills_empty_days() -> None:
+    conversion.clear_cache()
+    gql = _fake(
+        lambda _q: [
+            {
+                "day": "2026-11-18", "orders": "70", "gross_sales": "7631.09",
+                "discounts": "-499.62", "returns": "-238.74", "net_sales": "6892.73",
+                "shipping_charges": "0", "taxes": "108.79", "total_sales": "7001.52",
+            }
+        ]
+    )  # fmt: skip
+    out = conversion.sales_daily("TEST", date(2026, 11, 17), date(2026, 11, 18), gql)
+    assert "FROM sales" in gql.seen[0]
+    assert out["2026-11-17"]["total"] == 0 and out["2026-11-17"]["orders"] == 0
+    day = out["2026-11-18"]
+    assert (day["orders"], day["discounts"], day["returns"], day["total"]) == (
+        70, 499.62, 238.74, 7001.52,
+    )  # fmt: skip
+    conversion.clear_cache()
+
+
+def _device_rows(q: str) -> Any:
+    if "session_viewed_product" not in q:
+        return [{"session_device_type": "mobile", "sessions": "100",
+                 "sessions_with_cart_additions": "10", "sessions_that_reached_checkout": "5",
+                 "sessions_that_completed_checkout": "2"}]  # fmt: skip
+    return [
+        {"session_device_type": "mobile", "session_viewed_product": True, "sessions": "60",
+         "sessions_with_cart_additions": "9", "sessions_that_reached_checkout": "5",
+         "sessions_that_completed_checkout": "2"},
+        {"session_device_type": "mobile", "session_viewed_product": False, "sessions": "40",
+         "sessions_with_cart_additions": "1", "sessions_that_reached_checkout": "0",
+         "sessions_that_completed_checkout": "0"},
+        {"session_device_type": "desktop", "session_viewed_product": "true", "sessions": "30",
+         "sessions_with_cart_additions": "6", "sessions_that_reached_checkout": "4",
+         "sessions_that_completed_checkout": "3"},
+    ]  # fmt: skip
+
+
+def test_funnel_by_device_adds_the_product_view_step() -> None:
+    conversion.clear_cache()
+    week = (date(2026, 11, 14), date(2026, 11, 20))
+    f = conversion.funnel_by_device("TEST", *week, _fake(_device_rows))
+    assert f["product_views_available"] is True
+    assert [d["label"] for d in f["devices"]] == ["Mobile", "Desktop"]
+    steps = {s["key"]: s for s in f["all"]["steps"]}
+    assert f["all"]["sessions"] == 130 and steps["viewed_product"]["count"] == 90
+    assert steps["added_to_cart"]["count"] == 16
+    assert steps["added_to_cart"]["pct_of_previous"] == 17.8
+    assert steps["completed_checkout"]["pct_of_sessions"] == 3.8
+    assert f["all"]["conversion_rate"] == 3.85
+    conversion.clear_cache()
+
+
+def test_funnel_by_device_without_product_views() -> None:
+    conversion.clear_cache()
+
+    def rows(q: str) -> Any:
+        return ValueError("unknown dimension") if "session_viewed_product" in q else _device_rows(q)
+
+    f = conversion.funnel_by_device("TEST", date(2026, 11, 14), date(2026, 11, 20), _fake(rows))
+    assert f["product_views_available"] is False
+    first = f["all"]["steps"][0]
+    assert first["key"] == "viewed_product" and first["count"] is None
+    assert f["all"]["steps"][1]["pct_of_previous"] == 10.0  # cart against sessions
+    conversion.clear_cache()
+
+
+def test_a_burst_of_report_queries_is_capped_and_shared() -> None:
+    import threading
+    import time as _time
+    from concurrent.futures import ThreadPoolExecutor
+
+    conversion.clear_cache()
+    running = [0]
+    peak = [0]
+    calls: list[str] = []
+    guard = threading.Lock()
+
+    def gql(_q: str, v: dict[str, Any] | None = None) -> dict[str, Any]:
+        with guard:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+            calls.append(str((v or {}).get("q")))
+        _time.sleep(0.05)
+        with guard:
+            running[0] -= 1
+        return {"shopifyqlQuery": {"parseErrors": None, "tableData": {"columns": [], "rows": []}}}
+
+    queries = [f"FROM sales SHOW orders SINCE -{i}d" for i in range(1, 16)]
+    with ThreadPoolExecutor(max_workers=30) as pool:
+        list(
+            pool.map(lambda q: conversion.run("RBP", q, gql), queries + queries)
+        )  # each asked twice
+    assert peak[0] <= conversion.MAX_PARALLEL
+    assert sorted(calls) == sorted(queries)  # a query being read is not asked again
+    conversion.clear_cache()
