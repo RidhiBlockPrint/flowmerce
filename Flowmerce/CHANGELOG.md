@@ -2,6 +2,21 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-21 (Every page appears all at once)
+
+Owner request. Verified: frontend tests (74, 6 new in `tests/load-gate.test.mjs`) and `next build` pass; checked in
+the browser in demo mode (each request answers after 90-250 ms) by moving between Home, Shipping, CRO and its tabs,
+Blog, Articles, Topics, Calendar, Publishing, Analytics, Automation, Brands and Write: each showed one placeholder,
+then the whole page, with nothing arriving afterwards; revisits and tabs needing no new data showed at once; the
+article editor kept unsaved text across its tabs; a brand switch on an open page did not bring the placeholder back.
+Not checked with live data (the local app was not running).
+
+- **Changed** every page (and every `?tab=`) appears all at once: one placeholder until the data it asked for on
+  opening has answered, then the whole page, with entrance animations playing on show. Built into the shared loader
+  (`useApi` reports first loads to `components/LoadGate.jsx`, bookkeeping in `lib/loadGate.js`), so no page was edited.
+  Remembered answers show at once; filter changes keep the page up; after 10 s a page shows whatever is still loading.
+  Data fetched outside `useApi` (Audit page, a few widgets) still fills in on its own.
+
 ## 2026-11-20 (Smooth background; CRO Overview appears all at once)
 
 Owner request. Verified: frontend tests (68) and `next build` pass; checked in the browser on a preview server with live

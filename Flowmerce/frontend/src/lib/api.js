@@ -1,6 +1,12 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { IS_DEMO, demoDownload, demoRequest } from '../demo';
+
+/**
+ * The page load gate (components/LoadGate.jsx, logic in lib/loadGate.js). useApi reports a page's first requests to
+ * it so the page appears all at once. Outside a gate (the shell's own data) it is null and nothing changes.
+ */
+export const LoadGateContext = createContext(null);
 export class ApiError extends Error {
     status;
     code;
@@ -126,6 +132,17 @@ export function useApi(path, { remember = true } = {}) {
     pathRef.current = path;
     const rememberRef = useRef(remember);
     rememberRef.current = remember;
+    const gate = useContext(LoadGateContext);
+    const gateDone = useRef(null);
+    // Before the first paint: a first load with nothing to show (no remembered answer) holds its page's gate until it
+    // answers. Counting here, not in the fetch effect below, lets a page or tab that needs no new data show at once.
+    useLayoutEffect(() => {
+        if (!gate || !path || !first.current || (rememberRef.current && cacheGet(path) !== undefined))
+            return undefined;
+        const done = gate.track();
+        gateDone.current = done;
+        return () => { done(); if (gateDone.current === done) gateDone.current = null; };
+    }, [gate, path, tick]);
     useEffect(() => {
         if (!path) {
             setLoading(false);
@@ -149,8 +166,15 @@ export function useApi(path, { remember = true } = {}) {
         })
             .catch((e) => { if (e.name !== 'AbortError')
             setError(e instanceof ApiError ? e : new ApiError(0, String(e))); })
-            .finally(() => { if (!ctl.signal.aborted)
-            setLoading(false); });
+            .finally(() => {
+            if (ctl.signal.aborted)
+                return;   // a cancelled load: the layout effect's cleanup already released the gate
+            // Read the ref now, not when the request started: a new page or tab may have opened a new gate meanwhile.
+            const release = gateDone.current;
+            gateDone.current = null;
+            release?.();
+            setLoading(false);
+        });
         return () => ctl.abort();
     }, [path, tick]);
     const reload = useCallback(() => setTick((t) => t + 1), []);

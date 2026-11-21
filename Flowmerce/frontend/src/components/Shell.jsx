@@ -12,6 +12,7 @@ import { useApp, presetRange } from '../lib/app';
 import { fmtDate, timeAgo } from '../lib/format';
 import { DemoBanner } from './DemoBanner';
 import { AmbientBackground } from './AmbientBackground';
+import { LoadGate, PagePlaceholder } from './LoadGate';
 import { BudgetWarning } from './claude';
 import { IS_DEMO } from '../demo';
 import { NAV, SETTINGS, hrefOf, itemActive, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../lib/routes.mjs';
@@ -82,7 +83,8 @@ export function Shell({ children }) {
           <main className="content" id="main" tabIndex={-1}>
             {loc.pathname !== '/' ? <div className="page-back"><BackButton /></div> : null}
             {moduleOf(loc.pathname) === 'seo' && !IS_DEMO ? <ClaudeBudgetBanner pathname={loc.pathname}/> : null}
-            {children}
+            {/* Each page (and each ?tab=) appears all at once, when its data has answered: components/LoadGate.jsx */}
+            <Suspense fallback={<PagePlaceholder/>}><LoadGate>{children}</LoadGate></Suspense>
           </main>
         </div>
       </div>
