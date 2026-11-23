@@ -16,7 +16,7 @@ Files: `Dockerfile`, `.dockerignore`, `deploy/litestream.yml`, `scripts/run_host
 - The app **sleeps after about 15 minutes without visits**; the next visit waits about a minute while it wakes.
 - Background jobs (scheduler, shipping refresh) only run while it is awake.
 - 512 MB memory, shared CPU. Enough for one person; heavy imports may be slow.
-- To fit in 512 MB the image sets `CRO_WARM_VIEWS=false`, `CRO_CACHE_MAX=500` and `MALLOC_ARENA_MAX=2`, so CRO tabs read Shopify when opened instead of being pre-read. If Render's Events show "Ran out of memory" again, lower `CRO_CACHE_MAX` or move to a plan with more memory.
+- To fit in 512 MB the image sets `CRO_WARM_VIEWS=false`, `CRO_CACHE_MAX=500`, `MALLOC_ARENA_MAX=2` and `CRO_READ_WORKERS=3` (each CRO report runs 3 Shopify queries at a time instead of 8; the deep recommendations and the landing page deep dive read many reports), so CRO tabs read Shopify when opened instead of being pre-read and a little more slowly. If Render's Events show "Ran out of memory" again, lower `CRO_CACHE_MAX` or `CRO_READ_WORKERS`, or move to a plan with more memory.
 
 ## One-time setup
 

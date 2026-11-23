@@ -2,6 +2,26 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-23 (Before pushing today's CRO work: hosted memory, Claude cost estimate, demo answers)
+
+Owner: test today's work and push it to main, but first fix the concerns found. Today's CRO work runs more Shopify
+reports at once on a hosted app that ran out of memory this morning, a deep Claude plan costs more than its pre-call
+estimate, and the public demo (GitHub Pages) had no answers for the new routes.
+Verified: the Python suite (only the older failure `test_unfinished_pages_are_not_mounted`), `ruff check .` and mypy
+with no new errors (the older ones are all in the shipping module), CRO tests (141), frontend tests (96, 5 new), the API
+smoke test, a Next.js build, and demo mode in the browser (landing pages' six views, the deep dive and Recommendations
+without errors). Not verified: memory on Render after the deploy (watch its Metrics and Events), the container build
+(no Docker on this computer; CI builds it).
+
+- **Added** `CRO_READ_WORKERS` (default 8, 1-16): how many ShopifyQL queries one CRO report runs at the same time
+  (`traffic.run_many`). The hosted image sets 3, so the deep recommendations and the landing page deep dive start
+  fewer threads at once on Render's 512 MB.
+- **Changed** The pre-call estimate of a CRO Claude plan (`ai_budget.ESTIMATE_USD["cro_advice"]`) from $0.30 to $0.60:
+  the deep plan cost $0.37-0.59 a store in its first runs, so a call no longer overshoots today's limit.
+- **Added** Demo answers (`frontend/src/demo/modules/cro.js`) for `/cro/store-notes`, `/cro/landing-compare`,
+  `/cro/landing-funnel`, `/cro/landing-daily` and `/cro/landing-page`, worked out from the demo's own days, with tests
+  (`frontend/tests/cro-landing.test.mjs`). The demo's landing page list is one list (`DEMO_PAGES`).
+
 ## 2026-11-23 (CRO: each landing page's own funnel in its deep dive)
 
 Owner request 2026-11-23: see the funnel landing page wise. Verified: CRO tests (141; the deep-dive test now also

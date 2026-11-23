@@ -51,6 +51,7 @@ class CroConfig:
     snapshot_seconds: int  # how long the in-memory order snapshot is reused between syncs
     warm_views: bool  # the background job reads the CRO pages' default views after each round
     cache_max: int  # ShopifyQL answers kept in memory at most
+    read_workers: int  # ShopifyQL queries one report runs at the same time (traffic.run_many)
 
 
 def cro_config() -> CroConfig:
@@ -64,6 +65,10 @@ def cro_config() -> CroConfig:
         warm_views=(os.environ.get("CRO_WARM_VIEWS") or "true").strip().lower()
         not in ("false", "0", "no"),
         cache_max=_int_env("CRO_CACHE_MAX", 4000, 50, 20_000),
+        # The deep recommendations and the landing page deep dive (2026-11-23) run more reports at
+        # once; the hosted copy runs 3 queries at a time per report instead of 8 to keep its memory
+        # and threads down (see the Dockerfile).
+        read_workers=_int_env("CRO_READ_WORKERS", 8, 1, 16),
     )
 
 
