@@ -22,6 +22,7 @@ from . import (
     data,
     experiments,
     landing,
+    landing_detail,
     metrics,
     payments,
     recommendations,
@@ -536,6 +537,52 @@ def landing_pages(brand: str, rq: RangeQuery) -> dict[str, Any]:
     return _session_report(brand, rq, landing.landing_pages)
 
 
+def landing_compare(brand: str, mode: str) -> dict[str, Any]:
+    """Every landing page week on week ('week') or month on month ('month'), complete days."""
+    store, tz, now = _ctx(brand)
+    yesterday = _today(tz, now) - timedelta(days=1)
+    try:
+        return {"brand": brand, **landing_detail.compare_pages(store, yesterday, mode)}
+    except landing_detail.PathError as e:
+        raise InputError(str(e)) from None
+
+
+def landing_funnel(brand: str, mode: str) -> dict[str, Any]:
+    """Every landing page's funnel week on week ('week') or month on month ('month')."""
+    store, tz, now = _ctx(brand)
+    yesterday = _today(tz, now) - timedelta(days=1)
+    try:
+        return {"brand": brand, **landing_detail.funnel_pages(store, yesterday, mode)}
+    except landing_detail.PathError as e:
+        raise InputError(str(e)) from None
+
+
+def landing_daily(brand: str, paths: str, days: int) -> dict[str, Any]:
+    """Landing pages side by side, day by day: `paths` comma-separated (empty = the busiest 8)."""
+    store, tz, now = _ctx(brand)
+    try:
+        chosen = [landing_detail.clean_path(p) for p in paths.split(",") if p.strip()]
+    except landing_detail.PathError as e:
+        raise InputError(str(e)) from None
+    yesterday = _today(tz, now) - timedelta(days=1)
+    return {
+        "brand": brand,
+        **landing_detail.pages_daily(store, yesterday, chosen, max(7, min(days, 60))),
+    }
+
+
+def landing_page(brand: str, path: str) -> dict[str, Any]:
+    """One landing page's deep dive: 60 days by day, week and month compare, sources, devices,
+    countries and what changed."""
+    store, tz, now = _ctx(brand)
+    try:
+        clean = landing_detail.clean_path(path)
+    except landing_detail.PathError as e:
+        raise InputError(str(e)) from None
+    yesterday = _today(tz, now) - timedelta(days=1)
+    return {"brand": brand, **landing_detail.page_detail(store, clean, yesterday)}
+
+
 def landing_grids(brand: str, rq: RangeQuery) -> dict[str, Any]:
     """Top landing pages x traffic source and page types x device."""
     return _session_report(brand, rq, lambda store, cur, _base: landing.grids(store, cur))
@@ -732,18 +779,52 @@ def recommendation_list(brand: str) -> dict[str, Any]:
                 else e.message,
             }
 
+    def threshold_read() -> float | None:
+        try:
+            return free_shipping_amount(store)[0]
+        except SupabaseError:
+            return None
+
     # Every read at once: Shopify's figures and the small Supabase reads (they used to run one after
-    # another, about 0.4 s each).
-    rows, land, pay, report, leaky, state, rules, (statuses, status_error) = _together(
+    # another, about 0.4 s each). The deep checks (2026-11-23) add the funnel per device, page speed
+    # and site search, discount codes, and the Products tab's report (leaky products, products
+    # bought together, refunds per product).
+    (
+        rows,
+        land,
+        pay,
+        report,
+        ins,
+        state,
+        rules,
+        (statuses, status_error),
+        dev_funnel,
+        site,
+        codes,
+        threshold,
+    ) = _together(
         lambda: read("conversion rate and funnel", lambda: conversion.daily(store, today, 7)),
         lambda: read("landing pages", lambda: landing.landing_pages(store, cur, base)),
         lambda: read("payments", lambda: payments.payments(store, cur, base)),
         lambda: read("sales report", lambda: conversion.sales_daily(store, cur[0], cur[1])),
-        lambda: products_mod.leaky_for(store, tz, cur, snap),
+        lambda: products_mod.insights(store, tz, cur, snap),
         lambda: _order_data(store),
         lambda: _rules(store),
         statuses_read,
+        lambda: read("funnel by device", lambda: conversion.funnel_by_device(store, *cur)),
+        lambda: read(
+            "page speed and site search", lambda: site_health_mod.site_health(store, cur, base)
+        ),
+        lambda: read("discount codes", lambda: products_mod.discount_codes(store, cur, base)),
+        threshold_read,
     )
+    groups = ins.get("groups")
+    leaky = {
+        "fix_first": groups["fix_first"] if groups else [],
+        "days": ins["views"].get("days") or 0,
+        "state": ins["views"]["state"],
+        "message": ins["views"]["message"],
+    }
     if rows is not None:
         cvr = conversion.cvr_comparison(rows, today)
         fun = rows[-1] if rows else None
@@ -754,9 +835,21 @@ def recommendation_list(brand: str) -> dict[str, Any]:
         else None
     )
     extra, store_cvr, visits = recommendations.impact_items(
-        landing=land, payments=pay, aov=aov, compare_label=compare_label
+        landing=land, payments=pay, aov=aov, compare_label=compare_label, funnel=dev_funnel
     )
     extra += recommendations.leaky_items(leaky)
+    extra += recommendations.deep_items(
+        funnel=dev_funnel,
+        order_values=metrics.order_values(snap, days_window(cur[0], cur[1], tz), threshold)
+        if state["first_load_complete"]
+        else None,
+        search=(site or {}).get("search"),
+        site=site,
+        codes=codes,
+        bought=ins.get("bought_together"),
+        refunds=ins.get("refunds"),
+        aov=aov,
+    )
     if leaky["state"] != "ready":
         skipped.append(f"leaky products ({leaky['message']})")
     if not state["first_load_complete"]:

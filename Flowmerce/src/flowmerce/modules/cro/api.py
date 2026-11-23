@@ -172,6 +172,36 @@ def landing_pages(request: Request, brand: str = "ridhi") -> dict[str, Any]:
     return _call(lambda: service.landing_pages(brand, _rq(request, 28, today=False)))
 
 
+@cro.get("/landing-compare")
+def landing_compare(request: Request, brand: str = "ridhi", mode: str = "week") -> dict[str, Any]:
+    """Every landing page week on week (mode=week) or month on month (mode=month)."""
+    require_perm(request, "view")
+    return _call(lambda: service.landing_compare(brand, mode[:10]))
+
+
+@cro.get("/landing-funnel")
+def landing_funnel(request: Request, brand: str = "ridhi", mode: str = "week") -> dict[str, Any]:
+    """Every landing page's funnel week on week (mode=week) or month on month (mode=month)."""
+    require_perm(request, "view")
+    return _call(lambda: service.landing_funnel(brand, mode[:10]))
+
+
+@cro.get("/landing-daily")
+def landing_daily(
+    request: Request, brand: str = "ridhi", paths: str = "", days: str = "60"
+) -> dict[str, Any]:
+    """Landing pages side by side, day by day (paths comma-separated; empty = the busiest 8)."""
+    require_perm(request, "view")
+    return _call(lambda: service.landing_daily(brand, paths[:6000], _int(days, 60, 7, 60)))
+
+
+@cro.get("/landing-page")
+def landing_page(request: Request, brand: str = "ridhi", path: str = "") -> dict[str, Any]:
+    """One landing page's deep dive (the last 60 complete days)."""
+    require_perm(request, "view")
+    return _call(lambda: service.landing_page(brand, path[:500]))
+
+
 @cro.get("/landing-grids")
 def landing_grids(request: Request, brand: str = "ridhi") -> dict[str, Any]:
     """Top landing pages x traffic source and page types x device (default: last 28 days)."""
@@ -281,6 +311,33 @@ def ai_advice_start(
     if not auto:
         audit(user, "cro.ai_advice", "cro_store", None, brand, "Asked Claude for a CRO action plan")
     return st
+
+
+@cro.get("/store-notes")
+def store_notes(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """The team's notes about the store that Claude reads with the figures."""
+    require_perm(request, "view")
+    _known(brand)
+    return ai_advice.notes(brand)
+
+
+@cro.put("/store-notes")
+def set_store_notes(
+    request: Request, brand: str = "ridhi", body: dict[str, Any] = _BODY
+) -> dict[str, Any]:
+    """Save or clear (empty text) the team's notes about the store."""
+    user = require_perm(request, "view")
+    _known(brand)
+    result = ai_advice.set_notes(brand, (body or {}).get("text"), _who(user))
+    audit(
+        user,
+        "cro.store_notes",
+        "cro_store",
+        None,
+        brand,
+        f"CRO: {'saved' if result['text'] else 'cleared'} the store notes for Claude",
+    )
+    return result
 
 
 @cro.get("/benchmarks")

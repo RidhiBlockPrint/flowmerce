@@ -2,6 +2,111 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-23 (CRO: each landing page's own funnel in its deep dive)
+
+Owner request 2026-11-23: see the funnel landing page wise. Verified: CRO tests (141; the deep-dive test now also
+checks the page funnel, which caught a name clash in `funnel_counts` before it shipped), ruff and mypy --strict on the
+CRO module, frontend tests (91), and the local app with live Ridhi data: /collections/quilts shows 3,085 visits, 1,026
+viewed a product, 116 added to cart, 50 reached checkout, 28 purchased, as in Funnel by page; the Mobile switch shows
+2,652 visits, as in the devices table; MoM works; no console errors.
+
+- **Added** "Funnel for this page" in each landing page's deep dive (under What changed): visits, viewed a product,
+  added to cart, reached checkout and purchased, each with its count, share of visits and share of the step before,
+  a grey bar for the other period and the change in points; WoW or MoM; all devices or one (Mobile, Desktop, Tablet);
+  checkout abandonment and purchase rate below. `landing_detail.page_detail` asks Shopify for the page's funnel by
+  device and product view for both weeks and both months (4 more queries); `page_funnel` adds it up.
+
+## 2026-11-23 (CRO: landing pages in six views, with funnel by page and date-wise)
+
+Owner request 2026-11-23: the Landing pages tab gets the CRO prototype's six views. Verified: CRO tests (141, 2 new),
+ruff and mypy --strict on the CRO module, frontend tests (91), and the local app with live Ridhi data on a second, quiet
+API: funnel by page and date-wise match the prototype (for example /collections/quilts 3,085 sessions, 1,026 viewed a
+product, 116 added to cart, 50 reached checkout, 28 purchased; date-wise 30-day totals 19,193 / 5,893 / 5,331 / ...),
+choosing pages works through the API and an unsafe path is refused. Not checked: CPC, demo mode (no answers for the new
+routes).
+
+- **Changed** The Landing pages tab shows six views: 1. All landing pages (tiles and the page table), 2. Week / Month
+  compare, 3. Funnel by page, 4. Date-wise, 5. Page type, source, device, 6. Page × source grids. 1, 5 and 6 follow the
+  date range above as before; 2, 3 and 4 use fixed windows of complete days. Every page name opens its deep dive.
+- **Added** Funnel by page (`GET /api/cro/landing-funnel?mode=week|month`, `landing_detail.funnel_pages`): every
+  landing page's sessions, viewed a product, added to cart, reached checkout and purchased, each as a share of sessions
+  with its change and as a count with the share of the step before; five sorts (sessions, best purchase rate, biggest
+  purchase-rate drop, biggest add-to-cart drop, most checkout abandonment).
+- **Added** Date-wise (`GET /api/cro/landing-daily?paths=`, `landing_detail.pages_daily`): dates down, pages across,
+  one metric at a time (sessions, conversion, bounce, add to cart, orders, revenue, revenue per visit), 7/14/30/60
+  days with a total / average row and CSV; the busiest 8 pages of the last 30 days to start, pages removed with × or
+  added from a search of the busiest 200 (up to 12).
+
+## 2026-11-23 (CRO: landing pages week on week, month on month and a deep dive per page)
+
+Owner request 2026-11-23: compare landing pages week on week and month on month, and give a deep dive for every
+landing page; the deep dive opens in a side panel (first on the right; the owner then asked for the left). Laid out like the CRO prototype's "Week /
+Month compare" and page deep dive. Verified: CRO tests (139, 4 new), ruff and mypy --strict on the CRO module,
+frontend tests (91), and the local app with live Ridhi data on a second, quiet API: the compare table and the deep dive
+of /collections/quilts match the prototype's figures (for example 3,085 vs 3,959 sessions, -22.1%; 7 Nov: 525
+sessions, 47.24% bounce, 1.71% conversion, $1,592), desktop and phone width, no console errors. Not checked: CPC, and
+demo mode (it has no answer for the new routes, so the views show an error there).
+
+- **Added** `modules/cro/landing_detail.py` with `GET /api/cro/landing-compare?mode=week|month` (every landing page
+  Shopify lists, up to 200: sessions, bounce, add to cart, conversion, orders, revenue, revenue per visit, both periods
+  and the change; pages under 100 visits in either period marked low data) and `GET /api/cro/landing-page?path=` (one
+  page: 60 days by day, week and month compare, traffic sources and devices WoW and MoM, countries MoM, what changed).
+  Complete days ending yesterday, bots left out. The path is checked before it goes into ShopifyQL.
+- **Added** `frontend/src/components/croLanding.jsx`: on the Landing pages tab a switch between "All landing pages" and
+  "Week / Month compare" (page-type filter, six sorts); a page name or "Deep dive" opens the page's deep dive in a
+  left-side panel: what changed, WoW and MoM side by side, date-wise 7/14/30/60 days with CSV download, the 60-day
+  trend, traffic sources, devices and top countries.
+
+## 2026-11-23 (CRO: Claude's recommendations become a data-driven deep dive)
+
+Owner request 2026-11-23: the recommendations were too simple and generic; they must be deep, data-driven and
+actionable. Phase 1 (Claude's plan) approved and done; phase 2 (deeper rule-based checks) not started. Why the plans
+were generic: Claude saw only part of the figures (no landing pages, GA4 product views, payments, free shipping,
+discount codes, customers, page speed, site search, hours), the prompt capped every field at a few words, and Claude
+knew nothing about the store's setup, so it guessed (for example "switch on abandoned-checkout emails").
+Verified: CRO unit tests (132, 4 new), ruff and mypy --strict on the CRO module, frontend tests (91), `next build`.
+The whole Python suite has one failure that predates this (`test_unfinished_pages_are_not_mounted`). Not verified:
+a real run against the Claude API (costs money; the owner presses Refresh), and the new card on screen with a real plan.
+
+- **Changed** `modules/cro/ai_advice.py`: Claude reads every CRO report for the last 30 complete days against the 30
+  before, compact and without customer details, plus the rule-based findings with the team's status. A new prompt asks
+  for root causes found by combining reports, a conservative money impact with its arithmetic, exact targets and
+  steps, and how to measure each action; it forbids generic advice and advice that assumes setup Claude cannot see.
+  Each action now has target, diagnosis, evidence lines, `impact_usd` and `impact_math`, steps, measure (metric,
+  baseline, goal, check after N days), experiment metric and page, confidence and what to check first. Claude runs at
+  high effort. Plans are saved as version 2; an older plan from today no longer stops the once-a-day automatic ask.
+- **Added** Store notes for Claude: `GET/PUT /api/cro/store-notes` (audited), kept per store in `app_settings`
+  (`cro_notes:<brand>`, up to 3,000 characters), sent to Claude with the figures; a card under the plan on
+  Recommendations (hidden in demo mode, which has no answer for it yet).
+- **Changed** Recommendations tab: the plan's summary and total money at stake; each action shows target, money at
+  stake, diagnosis, the numbers, how to know it worked, confidence, what to check first and "Start experiment" (fills
+  the Experiments form). The Overview's "What to do next" shows each action's money at stake. Older plans keep their
+  layout with a note to Refresh.
+- **Note** A deep-dive plan costs more than the earlier ones ($0.07-0.09): the first real one (Ridhi, 23 Nov) cost
+  $0.59. The pre-call estimate in `seo/services/ai_budget.py` (0.30) was left unchanged.
+- **Changed** (same day, owner: the cards looked spread out and confusing) Each action is now folded to one heading
+  line (number, instruction, target, effort, confidence, area, money at stake); the first one is open. Opened, it reads
+  in one fixed order: problem, check first, what to do, measure with "Start experiment", and the numbers and the money
+  arithmetic behind a "show" link. The prompt now caps each field (for example diagnosis 2 sentences, 3-5 evidence lines
+  of up to 20 words, 3-5 one-sentence steps) so new plans stay short; plans already saved keep their longer text until
+  Refresh. Checked on the local app (desktop and phone width, no sideways scroll, no console errors) with the saved
+  Ridhi plan.
+- **Changed** (same day, owner: "phase 1 again on the full recommendation system, include all landing pages") Phase 2
+  done together with this. The rule-based Ranked checks are now deep too (`modules/cro/recommendations.py`): each has
+  a problem (diagnosis), steps naming the page, product, device or term, a measure and the experiment metric and page.
+  Every landing page Shopify lists (up to 200) is checked; a poorly converting page is diagnosed from its own rates
+  against the store's: a content page with no route to products, visitors leaving at once (bounce), browsing without
+  adding to cart, or adding to cart and not buying, each with its own steps. Contact, help, policy, account and cart
+  pages are left out. New checks with a money estimate where the figures allow: the funnel step that breaks on one
+  device, orders just under the free-shipping amount, searches that find nothing or get few clicks, discounts given
+  without a code, products refunded at twice the store's rate; without one: slow mobile page types and products
+  bought together. `service.recommendation_list` also reads the funnel per device, page speed and site search, discount
+  codes and the Products tab report (all at once with the other reads). Claude now gets every landing page with
+  enough visits (not the busiest 25) and is told to read all of them and group pages with a shared cause.
+  The Ranked checks use the same folded card as Claude's plan (status buttons inside). Verified: CRO tests (135, 3 new),
+  ruff and mypy --strict on the CRO module, frontend tests (91); a live read of Ridhi's checks on a second, quiet API
+  (72 checks in 7 s, no source skipped).
+
 ## 2026-11-23 (Shipping: one section per order, clock from the last scan, dispatched parcels only)
 
 Owner request 2026-11-23, after reviewing every separation rule of the Shipping page: stop tracking orders that are not

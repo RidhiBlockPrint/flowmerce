@@ -18,6 +18,7 @@ import { CroEmpty, CroGate, ExplainedError, KpiTile, RangeBar, Seg } from '../co
 import { RingBody } from '../components/dash';
 import { Gauge } from '../components/motion';
 import { DayStrip, GaugeCard, HealthTile, HeatmapCard, JourneyCard, MoversCard, OrdersCard, SalesChart, SalesTile, TrendsRow, VisitsCard } from '../components/croOverview';
+import { FunnelByPage, LandingCompare, PageDive, PagesDaily } from '../components/croLanding';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
 import { Button, Card, Field, LoadingBlock, PageHead, Paged, Pill, Skeleton, Tabs } from '../components/ui';
@@ -147,8 +148,9 @@ function OverviewTab({ rq: wanted, today, onTab, onPickDay }) {
         health: useApi(`/cro/site-health${qs({ brand: wanted.brand, from: shiftDay(today, -8), to: shiftDay(today, -2), compare: 'previous' })}`),
     }, wanted);
     const actions = advice.data?.advice?.actions?.length
-        ? advice.data.advice.actions.slice(0, 3).map((a) => ({ title: a.title, why: a.evidence ? factsOf(a.evidence)[0] : firstSentence(a.why),
-            tags: [{ label: `${a.impact} impact`, lane: IMPACT_LANE[a.impact] ?? 'plain' }, ...(ADVICE_AREA[a.area] ? [{ label: ADVICE_AREA[a.area], lane: 'lane-research' }] : [])] }))
+        ? advice.data.advice.actions.slice(0, 3).map((a) => ({ title: a.title, why: a.diagnosis ? firstSentence(a.diagnosis) : a.evidence ? adviceFacts(a)[0] : firstSentence(a.why),
+            tags: [a.impact_usd ? { label: `≈ ${money(a.impact_usd, 'USD', 0)} / 30 days`, lane: IMPACT_LANE[a.impact] ?? 'plain' } : { label: `${a.impact} impact`, lane: IMPACT_LANE[a.impact] ?? 'plain' },
+                ...(AREA_LABEL[a.area] ? [{ label: AREA_LABEL[a.area], lane: 'lane-research' }] : [])] }))
         : (recs.data?.recommendations ?? []).filter((r) => !['done', 'ignored'].includes(r.status)).slice(0, 3).map((r) => ({ title: r.title, why: r.evidence, tags: [{ label: r.priority, lane: PRIORITY_LANE[r.priority] ?? 'plain' }] }));
     const planKey = advice.data?.advice?.actions?.length ? `ai-${advice.data.generated_at}` : `rules-${rq.brand}-${actions.map((a) => a.title).join('|').length}`;
     const history = conv28.data?.trend ?? [];
@@ -599,9 +601,33 @@ const pctChange = (a, b) => (a === null || a === undefined || !b ? null : ((a - 
  * filters the table), page types, bounce by source and by device, the landing-page table with search, type filter and
  * sort, and a pages × traffic source (or page type × device) grid coloured against the grid's own average.
  */
+/* The Landing pages tab's six views (owner request 2026-11-23, numbered like the CRO prototype). 1, 5 and 6 follow the
+ * date range above; 2, 3 and 4 use their own fixed windows of complete days. */
+const LANDING_VIEWS = [
+    { key: 'all', label: '1. All landing pages' }, { key: 'compare', label: '2. Week / Month compare' }, { key: 'funnel', label: '3. Funnel by page' },
+    { key: 'daily', label: '4. Date-wise' }, { key: 'segments', label: '5. Page type, source, device' }, { key: 'grids', label: '6. Page × source grids' },
+];
+
+/** The Landing pages tab: six views of the store's landing pages; every page name opens its deep dive in the left-side
+ * panel. */
 function LandingTab({ rq }) {
+    const [view, setView] = useState('all');
+    const [dive, setDive] = useState(null);   // { path, type } of the page whose deep dive is open
+    const open = (path, type) => setDive({ path, type });
+    return (<div className="col" style={{ gap: 16 }}>
+      <div className="lp-views"><Seg label="Landing pages view" size="" options={LANDING_VIEWS} value={view} onChange={setView}/></div>
+      {view === 'compare' ? <LandingCompare brand={rq.brand} onOpen={open}/>
+          : view === 'funnel' ? <FunnelByPage brand={rq.brand} onOpen={open}/>
+            : view === 'daily' ? <PagesDaily brand={rq.brand} onOpen={open}/>
+              : view === 'grids' ? <GridCard rq={rq}/>
+                : <LandingReport rq={rq} part={view} onOpen={open}/>}
+      {dive ? <PageDive brand={rq.brand} path={dive.path} type={dive.type} onClose={() => setDive(null)}/> : null}
+    </div>);
+}
+
+/** Views 1 (every page, with the tiles) and 5 (page types, sources, devices) of the range's landing page report. */
+function LandingReport({ rq, part, onOpen }) {
     const q = useApi(`/cro/landing-pages${qs(rq)}`);
-    const g = useApi(`/cro/landing-grids${qs(rq)}`);
     const [flagOnly, setFlagOnly] = useState(false);
     return (<CroGate query={q}>
       {(d) => {
@@ -609,9 +635,20 @@ function LandingTab({ rq }) {
           const flagged = d.pages.filter((p) => p.bounce_flag);
           const judged = d.pages.filter((p) => !p.too_few_sessions).length;
           const top = d.pages[0];
+          const context = <div className="cro-ctx"><b>Showing: {fmtDate(d.window.from)} – {fmtDate(d.window.to)}</b>{d.window.base_from ? <span className="muted"> · changes (pts) are against {fmtDate(d.window.base_from)} – {fmtDate(d.window.base_to)}</span> : null}</div>;
+          if (part === 'segments') {
+              return (<>
+                {context}
+                <BounceTable title="By page type" rows={d.page_types} head="Page type" share/>
+                <div className="cro-two-wide">
+                  <BounceTable title="Bounce by traffic source" rows={d.by_source} head="Source"/>
+                  <BounceTable title="Bounce by device" rows={d.by_device} head="Device"/>
+                </div>
+              </>);
+          }
           return (<>
             <div className="callout info"><Icon name="info"/><div><b>Bounce</b> is Shopify&rsquo;s: a visit that saw only one page. Pages with fewer than {fmtInt(d.min_sessions)} visits are marked &ldquo;few visits&rdquo; and are not compared.</div></div>
-            <div className="cro-ctx"><b>Showing: {fmtDate(d.window.from)} – {fmtDate(d.window.to)}</b>{d.window.base_from ? <span className="muted"> · changes (pts) are against {fmtDate(d.window.base_from)} – {fmtDate(d.window.base_to)}</span> : null}</div>
+            {context}
             <div className="cro-three">
               <div className="cro-mini"><span className="k">Landing pages with visits</span><span className="v num">{d.pages.length >= 200 ? '200+' : fmtInt(d.pages.length)}</span><span className="s">{fmtInt(judged)} with {fmtInt(d.min_sessions)}+ visits</span></div>
               <button type="button" className={`cro-mini as-btn${flagOnly ? ' on' : ''}`} aria-pressed={flagOnly} onClick={() => setFlagOnly((f) => !f)} disabled={!flagged.length}>
@@ -619,13 +656,7 @@ function LandingTab({ rq }) {
                 <span className="s">pages {d.bounce_flag_pts}+ pts above their last period{flagged.length ? ' · click to show only these' : ''}</span></button>
               <div className="cro-mini"><span className="k">Top landing page</span><span className="v" style={{ fontSize: 17 }} title={top.path}><span className="ellipsis" style={{ display: 'block' }}>{top.path}</span></span><span className="s">{fmtInt(top.sessions)} visits · bounce {pct(top.bounce_rate, 1)}</span></div>
             </div>
-            <BounceTable title="By page type" rows={d.page_types} head="Page type" share/>
-            <div className="cro-two-wide">
-              <BounceTable title="Bounce by traffic source" rows={d.by_source} head="Source"/>
-              <BounceTable title="Bounce by device" rows={d.by_device} head="Device"/>
-            </div>
-            <LandingTable d={d} flagOnly={flagOnly}/>
-            <GridCard q={g}/>
+            <LandingTable d={d} flagOnly={flagOnly} onOpen={onOpen}/>
             <MissingNote errors={d.errors} names={{ page_sales: 'revenue by page', page_sources: 'top source', pages_prev: 'the comparison' }}/>
           </>);
       }}
@@ -656,7 +687,7 @@ const LANDING_SORT = [
     { key: 'sessions', label: 'Visits' }, { key: 'bounce_rate', label: 'Bounce rate' }, { key: 'bounce_change_pts', label: 'Bounce change' },
     { key: 'conversion_rate', label: 'Conversion' }, { key: 'revenue_per_session', label: 'Revenue / visit' },
 ];
-function LandingTable({ d, flagOnly }) {
+function LandingTable({ d, flagOnly, onOpen }) {
     const [search, setSearch] = useState('');
     const [type, setType] = useState('');
     const [sort, setSort] = useState('sessions');
@@ -666,7 +697,7 @@ function LandingTable({ d, flagOnly }) {
     const rows = d.pages.filter((p) => (!flagOnly || p.bounce_flag) && (!type || p.page_type === type) && (!s || p.path.includes(s)))
         .sort((a, b) => (b[sort] ?? -Infinity) - (a[sort] ?? -Infinity));
     const shown = all ? rows : rows.slice(0, 25);
-    return (<Card title="Landing pages" sub={d.revenue_note} flush
+    return (<Card title="Landing pages" sub={`${d.revenue_note} Click a page for its deep dive.`} flush
       actions={<div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         <label className="cro-search"><Icon name="search" size="sm"/><input className="input sm" placeholder="Search page" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search page"/></label>
         <select className="input sm" value={type} onChange={(e) => setType(e.target.value)} aria-label="Page type"><option value="">All page types</option>{types.map((t) => <option key={t} value={t}>{t}</option>)}</select>
@@ -676,7 +707,7 @@ function LandingTable({ d, flagOnly }) {
         <thead><tr><th>Page</th><th className="r">Visits</th><th>Bounce rate</th><th className="r hide-sm">Add to cart</th><th className="r">Conversion</th>
           {d.revenue_available ? <><th className="r hide-sm">Revenue</th><th className="r">Rev / visit</th></> : null}<th className="hide-sm">Top source</th></tr></thead>
         <tbody>{shown.map((p) => (<tr key={p.path} className={p.bounce_flag ? 'flag' : p.too_few_sessions ? 'fade' : ''}>
-          <td style={{ maxWidth: 280 }}><div className="ellipsis strong" title={p.path}>{p.bounce_flag ? <Icon name="alert" size="sm" className="down"/> : null} {p.path === '/' ? '/ (homepage)' : p.path}</div><span className="lane-chip plain">{p.page_type}</span></td>
+          <td style={{ maxWidth: 280 }}><button type="button" className="link-btn lp-path strong" title={`${p.path} · click for this page's deep dive (week on week, month on month)`} onClick={() => onOpen(p.path, p.page_type)}>{p.bounce_flag ? <Icon name="alert" size="sm" className="down"/> : null} {p.path === '/' ? '/ (homepage)' : p.path}</button><span className="lane-chip plain">{p.page_type}</span></td>
           <td className="r">{fmtInt(p.sessions)}</td><td><BounceCell r={p} usual={p.bounce_flag}/></td><td className="r hide-sm">{pct(p.added_to_cart_rate, 1)}</td>
           <td className="r">{p.too_few_sessions ? <span className="muted xs">few visits</span> : <><b>{pct(p.conversion_rate)}</b> <PtsDelta v={p.conversion_change_pts}/></>}</td>
           {d.revenue_available ? <><td className="r hide-sm"><b>{p.revenue === null ? '—' : money(p.revenue, 'USD', 0)}</b></td><td className="r">{p.revenue_per_session === null ? '—' : money(p.revenue_per_session)}</td></> : null}
@@ -690,7 +721,8 @@ function LandingTable({ d, flagOnly }) {
 /** Pages × traffic source or page types × device: each cell's rate against the grid's own "All" figure. Green better,
  * red worse (lower is better for bounce), grey under 30 visits. */
 const GRID_METRICS = [{ key: 'conversion_rate', label: 'Conversion' }, { key: 'added_to_cart_rate', label: 'Add to cart' }, { key: 'bounce_rate', label: 'Bounce' }];
-function GridCard({ q }) {
+function GridCard({ rq }) {
+    const q = useApi(`/cro/landing-grids${qs(rq)}`);
     const [kind, setKind] = useState('page_by_source');
     const [metric, setMetric] = useState('conversion_rate');
     const lowerBetter = metric === 'bounce_rate';
@@ -1330,13 +1362,24 @@ function NewReturningCard({ d }) {
 const factsOf = (text) => String(text || '').split(/;\s+|\.\s+(?=[A-Z])/).map((x) => x.trim().replace(/\.$/, '')).filter(Boolean).slice(0, 5);
 /** The first sentence only: the reason in one line. */
 const firstSentence = (text) => (String(text || '').match(/^.*?[.!?](?=\s+[A-Z]|$)/)?.[0] ?? String(text || '')).trim();
+/** An action's figures as lines: a list in the deep-dive plan, one "a; b" string in plans made before 2026-11-23. */
+const adviceFacts = (a) => (Array.isArray(a.evidence) ? a.evidence : factsOf(a.evidence));
+/** The plan's areas: those shared with the Overview (lib/cro.js) and the ones the deep-dive plan added. */
+const AREA_LABEL = { ...ADVICE_AREA, landing_page: 'Landing page', payments: 'Payments', search: 'Site search', site_speed: 'Page speed' };
+const TARGET_LABEL = {
+    page: 'Page', product: 'Product', collection: 'Collection', device: 'Device', channel: 'Channel', country: 'Country', discount_code: 'Discount code',
+    checkout_step: 'Checkout step', payment_method: 'Payment method', search_term: 'Search term', store: 'Whole store',
+};
+const CONFIDENCE_TONE = { High: 'ok', Medium: 'info', Low: 'warn' };
 
 /**
- * One action from Claude's plan, laid out to be read at a glance: its number and what to do as the heading, impact and
- * effort as tags, then "What to do" (numbered steps) beside "Why" (one line) and "The numbers" (short bullets).
- * `compact` is the one-line form on the Overview.
+ * One action from Claude's plan, laid out to be read at a glance: its number and what to do as the heading, the money
+ * at stake, effort and Claude's confidence as tags, and the exact target; then "What to do" (numbered steps) beside
+ * "Diagnosis" and "The numbers"; then the estimate's arithmetic, how to measure the result and what to check first.
+ * "Start experiment" opens the Experiments tab with the form filled in. Plans made before the deep dive (no
+ * `diagnosis`) keep their older, shorter layout. `compact` is the one-line form on the Overview.
  */
-function ActionRow({ a, n, compact }) {
+function ActionRow({ a, n, compact, onExperiment, open }) {
     if (compact) {
         return (<div className="act-mini">
           <span className={`act-n impact-${a.impact}`}>{n}</span>
@@ -1347,7 +1390,48 @@ function ActionRow({ a, n, compact }) {
           <Pill tone={IMPACT_TONE[a.impact]}>{a.impact}</Pill>
         </div>);
     }
-    const facts = factsOf(a.evidence);
+    const facts = adviceFacts(a);
+    if (a.diagnosis) {
+        // One fixed order for every action, folded to its heading line so the plan reads as a list:
+        // heading (what, where, money) -> problem -> check first -> steps -> how to measure -> the numbers behind it.
+        const m = a.measure ?? {};
+        return (<details className={`act2 impact-${a.impact}`} open={open}>
+          <summary className="act2-head">
+            <span className={`act-n impact-${a.impact}`}>{n}</span>
+            <span className="act2-titles">
+              <span className="act2-title">{a.title}</span>
+              <span className="act2-meta">
+                {a.target?.name ? <span className="lane-chip lane-research act2-target" title={a.target.name}>{TARGET_LABEL[a.target.kind] ?? 'Target'}: {a.target.name}</span> : null}
+                <Pill tone={EFFORT_TONE[a.effort]}>{a.effort} effort</Pill>
+                <Pill tone={CONFIDENCE_TONE[a.confidence]}>{a.confidence} confidence</Pill>
+                <span className="lane-chip plain">{AREA_LABEL[a.area] ?? a.area}</span>
+              </span>
+            </span>
+            <span className="act2-money">
+              <b className="num">{a.impact_usd ? `≈ ${money(a.impact_usd, 'USD', 0)}` : '—'}</b>
+              <span>{a.impact_usd ? 'extra sales / 30 days' : 'not estimated'}</span>
+            </span>
+            <Icon name="chevronDown" size="sm" className="act2-chev"/>
+          </summary>
+          <div className="act2-body">
+            <p className="act2-problem"><b>Problem.</b> {a.diagnosis}</p>
+            {a.assumptions ? <div className="act2-check"><Icon name="alert" size="sm"/><span><b>Check first:</b> {a.assumptions}</span></div> : null}
+            <div>
+              <div className="act-label"><Icon name="checkCircle" size="sm"/>What to do</div>
+              <ol className="act-steps">{(a.steps ?? []).map((x, i) => <li key={i}>{x}</li>)}</ol>
+            </div>
+            <div className="act2-measure">
+              <span><b>Measure:</b> {m.metric || '—'} · now <b>{m.baseline || '—'}</b> → goal <b>{m.goal || '—'}</b> · check after {m.check_after_days ?? 14} days</span>
+              {onExperiment ? <Button size="sm" icon="flag" onClick={() => onExperiment(a)}>Start experiment</Button> : null}
+            </div>
+            {facts.length || a.impact_math ? (<details className="act2-more">
+              <summary>The numbers behind this{a.impact_math ? ' and how the money is worked out' : ''}</summary>
+              {facts.length ? <ul className="act-facts">{facts.map((f, i) => <li key={i}>{f}</li>)}</ul> : null}
+              {a.impact_math ? <p className="act2-math"><b>Money:</b> {a.impact_math}</p> : null}
+            </details>) : null}
+          </div>
+        </details>);
+    }
     return (<article className={`act impact-${a.impact}`}>
       <header className="act-head">
         <span className={`act-n impact-${a.impact}`}>{n}</span>
@@ -1371,15 +1455,16 @@ function ActionRow({ a, n, compact }) {
           </>) : null}
         </section>
       </div>
-      <footer className="act-foot">{ADVICE_AREA[a.area] ?? a.area}{a.metric ? <> · improves <b>{a.metric.replace(/\s*\(.*$/, '')}</b></> : null}</footer>
+      <footer className="act-foot">{AREA_LABEL[a.area] ?? a.area}{a.metric ? <> · improves <b>{a.metric.replace(/\s*\(.*$/, '')}</b></> : null}</footer>
     </article>);
 }
 
 /**
- * Claude's action plan for the store. Opening the tab asks for today's plan once (within the shared daily Claude limit);
- * "Refresh" asks again. While Claude works, the state is read every 4 seconds.
+ * Claude's action plan for the store: a deep dive into the last 30 days of every CRO report, with the team's store notes.
+ * Opening the tab asks for today's plan once (within the shared daily Claude limit); "Refresh" asks again. While Claude
+ * works, the state is read every 4 seconds. `onExperiment` gets an action to turn into an experiment.
  */
-function AiAdvice({ brand }) {
+function AiAdvice({ brand, onExperiment }) {
     const q = useApi(`/cro/ai-advice${qs({ brand })}`, { remember: false });
     const toast = useToast();
     const [asking, setAsking] = useState(false);
@@ -1409,17 +1494,72 @@ function AiAdvice({ brand }) {
         return <LoadingBlock rows={3}/>;
     const running = data.status === 'running' || asking;
     const plan = data.advice;
-    const sub = plan ? `${plan.actions.length} actions from the last 30 days · ${timeAgo(data.generated_at)}` : 'Claude reads the last 30 days of this store\'s figures and says what to do next.';
+    const deep = data.version >= 2;
+    const total = deep ? plan?.actions.reduce((s, a) => s + (a.impact_usd || 0), 0) : 0;
+    const sub = plan ? `${plan.actions.length} actions from the last 30 days · ${timeAgo(data.generated_at)}${total ? ` · about ${money(total, 'USD', 0)} at stake over 30 days` : ''}`
+        : 'Claude reads the last 30 days of every report on this page, with your store notes, and says what to change.';
     return (<Card className="advice-plan" title={<span className="row" style={{ gap: 8 }}><Icon name="sparkle"/>Claude&rsquo;s action plan</span>} sub={sub}
       actions={data.configured ? <Button size="sm" icon="refresh" loading={running} onClick={() => ask(false)} title={`Ask Claude again (about $${Number(data.estimate_usd ?? 0.3).toFixed(2)} of today's Claude limit)`}>{running ? 'Claude is reading…' : 'Refresh'}</Button> : null}>
       {!data.configured ? <div className="callout info"><Icon name="info"/><div>Set <b>ANTHROPIC_API_KEY</b> on the server (the same key SEO &amp; Blog uses) to get Claude&rsquo;s plan here.</div></div> : null}
       {data.error ? <div className="callout warn mb-12"><Icon name="alert"/><div>The last request did not finish: {data.error}</div></div> : null}
       {running && !plan ? (<div className="advice-wait"><Icon name="loader" className="spin"/><span>Claude is reading the store&rsquo;s figures. This takes about a minute.</span></div>) : null}
       {plan ? (<div className="col" style={{ gap: 12 }}>
-          <div className="act-list stagger">{plan.actions.map((a, i) => <ActionRow key={`${a.title}-${i}`} a={a} n={i + 1}/>)}</div>
+          {!deep && !running ? <div className="callout info"><Icon name="info"/><div>This is the older, shorter plan. Press <b>Refresh</b> for the deep dive: root cause, money at stake and how to measure each action.</div></div> : null}
+          {deep && plan.summary ? <p className="act-summary">{plan.summary}</p> : null}
+          <div className="act-list stagger">{plan.actions.map((a, i) => <ActionRow key={`${a.title}-${i}`} a={a} n={i + 1} open={i === 0} onExperiment={onExperiment}/>)}</div>
+          {deep && plan.actions.length > 1 ? <div className="muted xs">Click an action to open or fold it. The first one is open.</div> : null}
           {data.not_available?.length ? <div className="muted xs">Claude could not see: {data.not_available.join('; ')}.</div> : null}
         </div>) : null}
-      {data.budget ? <div className="muted xs mt-8">Claude today: ${Number(data.budget.todayUsd ?? 0).toFixed(2)} of ${Number(data.budget.dailyLimitUsd ?? 0).toFixed(2)} used, shared with SEO &amp; Blog.</div> : null}
+      {data.budget ? <div className="muted xs mt-8">Claude today: ${Number(data.budget.todayUsd ?? 0).toFixed(2)} of ${Number(data.budget.dailyLimitUsd ?? 0).toFixed(2)} used, shared with SEO &amp; Blog{data.cost_usd ? ` · this plan cost $${Number(data.cost_usd).toFixed(2)}` : ''}.</div> : null}
+    </Card>);
+}
+
+/** The experiment form's fields from one of Claude's actions. */
+function experimentFrom(a) {
+    const m = a.measure ?? {};
+    const goal = m.metric ? ` Measure ${m.metric}: ${m.baseline || 'now'} → ${m.goal || 'better'}, check after ${m.check_after_days ?? 14} days.` : '';
+    return { name: a.title.slice(0, 200), metric: a.experiment_metric || 'conversion_rate', page_path: a.page_path || '', rec_key: `ai:${a.title}`.slice(0, 300),
+        hypothesis: `${a.diagnosis || firstSentence(a.why)}${goal}`.slice(0, 2000) };
+}
+
+const NOTES_HINT = 'For example: what you sell and the usual price range; the free-shipping amount; apps already in use (reviews, email, '
+    + 'abandoned-checkout emails, upsell); what you tried before and how it went; anything the figures cannot show (stock problems, '
+    + 'slow suppliers, a sale coming up).';
+
+/** The team's notes about the store, which Claude reads with the figures so it does not recommend what is already in
+ * place. Saved for everyone (not per browser). Shown open while empty, folded to the first lines once written. */
+function StoreNotes({ brand }) {
+    const q = useApi(`/cro/store-notes${qs({ brand })}`, { remember: false });
+    const toast = useToast();
+    const [text, setText] = useState(null);   // null = not editing
+    const [saving, setSaving] = useState(false);
+    const saved = q.data?.text ?? '';
+    const editing = text !== null || (q.data && !saved);
+    const value = text ?? saved;
+    const save = async () => {
+        setSaving(true);
+        try { await api.put(`/cro/store-notes${qs({ brand })}`, { text: value }); toast.ok(value.trim() ? 'Store notes saved. Claude reads them on the next Refresh.' : 'Store notes cleared.'); setText(null); q.reload(); }
+        catch (e) { toast.error(e); }
+        finally { setSaving(false); }
+    };
+    if (q.error?.code === 'demo_not_found')
+        return null;   // the demo has no store notes yet
+    return (<Card title="Store notes for Claude" sub="What the figures cannot show. Claude reads these with the figures, so it does not suggest what you already have."
+      actions={!editing ? <Button size="sm" variant="ghost" icon="edit" onClick={() => setText(saved)}>Edit</Button> : null}>
+      {q.error ? <ExplainedError error={q.error} onRetry={q.reload}/> : !q.data ? <LoadingBlock rows={2}/> : editing ? (<>
+        <textarea className="input" rows={6} style={{ width: '100%' }} value={value} maxLength={q.data.max_length} placeholder={NOTES_HINT}
+          onChange={(e) => setText(e.target.value)} aria-label="Store notes for Claude"/>
+        <div className="row mt-8" style={{ gap: 8, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          <span className="muted xs">{value.length.toLocaleString()} of {q.data.max_length.toLocaleString()} characters · seen by everyone on the team</span>
+          <div className="row" style={{ gap: 8 }}>
+            {saved ? <Button size="sm" variant="ghost" onClick={() => setText(null)}>Cancel</Button> : null}
+            <Button size="sm" variant="primary" loading={saving} disabled={value === saved} onClick={save}>Save notes</Button>
+          </div>
+        </div>
+      </>) : (<>
+        <p className="act-notes">{saved}</p>
+        <div className="muted xs">Saved {q.data.updated_at ? timeAgo(q.data.updated_at) : ''}{q.data.updated_by ? ` by ${q.data.updated_by}` : ''}.</div>
+      </>)}
     </Card>);
 }
 
@@ -1453,7 +1593,8 @@ function RecommendationsTab({ brand, onExperiment }) {
         finally { setSaving(null); }
     };
     return (<div className="col" style={{ gap: 16 }}>
-    <AiAdvice brand={brand}/>
+    <AiAdvice brand={brand} onExperiment={(a) => onExperiment(experimentFrom(a))}/>
+    <StoreNotes brand={brand}/>
     <div className="cro-sec">Ranked checks</div>
     <CroGate query={q}>
       {(d) => {
@@ -1462,7 +1603,6 @@ function RecommendationsTab({ brand, onExperiment }) {
           const count = (a) => open.filter((r) => r.action === a).length;
           const shown = d.recommendations.filter((r) => (filter === 'open' ? isOpen(r) : filter === 'closed' ? !isOpen(r) : isOpen(r) && r.action === filter));
           const best = open.filter((r) => r.impact !== null)[0];
-          const max = Math.max(1, ...d.recommendations.map((r) => r.impact ?? 0));
           const total = open.reduce((a, r) => a + (r.impact ?? 0), 0);
           return (<>
             <div className="muted small">Based on <b>{fmtDate(d.window.from)} – {fmtDate(d.window.to)}</b> · ranked by estimated impact</div>
@@ -1482,9 +1622,8 @@ function RecommendationsTab({ brand, onExperiment }) {
               {total ? <span className="muted small">Open items together: about <b>{money(total, 'USD', 0)}</b> over 28 days if each closed its gap</span> : null}
             </div>
             {shown.length ? (<Paged rows={shown} size={10} resetKey={filter}>
-              {(rows) => <div className="col" style={{ gap: 12 }}>{rows.map((r) => <RecCard key={r.key} r={r} max={max} saving={saving === r.key} canSave={d.statuses_available}
-                onStatus={(s) => setStatus(r, s)} onExperiment={() => onExperiment({ name: r.title, metric: r.kind.startsWith('landing') || r.kind.startsWith('source') ? 'conversion_rate' : 'conversion_rate',
-                    page_path: r.key.startsWith('landing_') ? r.key.split(':').slice(1).join(':') : '', rec_key: r.key, hypothesis: `${r.title}. ${r.evidence}` })}/>)}</div>}
+              {(rows) => <div className="col" style={{ gap: 10 }}>{rows.map((r, i) => <RecCard key={r.key} r={r} open={i === 0 && filter === 'open'} saving={saving === r.key} canSave={d.statuses_available}
+                onStatus={(s) => setStatus(r, s)} onExperiment={() => onExperiment(experimentFromRec(r))}/>)}</div>}
             </Paged>) : <CroEmpty icon="checkCircle" title={filter === 'closed' ? 'Nothing marked done or ignored yet' : 'Nothing flagged for these days'}>Recommendations only appear when the store&rsquo;s own figures support them.</CroEmpty>}
             <div className="muted xs">Impacts are estimates to rank the list (visits × conversion gap × average order over the 28 days), not promises. Checks without an estimate rank after them by priority.</div>
           </>);
@@ -1493,31 +1632,69 @@ function RecommendationsTab({ brand, onExperiment }) {
     </div>);
 }
 
-function RecCard({ r, max, saving, canSave, onStatus, onExperiment }) {
+/** The experiment form's fields from one ranked check: its own metric and page when the check gives them. */
+function experimentFromRec(r) {
+    const m = r.measure;
+    const goal = m?.metric ? ` Measure ${m.metric}: ${m.baseline} → ${m.goal}.` : '';
+    return { name: r.title.slice(0, 200), metric: r.experiment_metric || 'conversion_rate',
+        page_path: r.page_path ?? (r.key.startsWith('landing_') ? r.key.split(':').slice(1).join(':') : ''), rec_key: r.key,
+        hypothesis: `${r.diagnosis || r.title}${goal}`.slice(0, 2000) };
+}
+
+const REC_STATUS_TONE = { in_progress: 'info', done: 'ok', ignored: 'neutral' };
+
+/**
+ * One ranked check, folded to its heading line like the actions of Claude's plan: rank, the check, its target, kind of
+ * action, effort and estimated money. Opened: problem, what to do, how to measure with "Start experiment", the team's
+ * status, and the numbers behind it. Checks from before the deep checks (no `diagnosis`) show their evidence instead.
+ */
+function RecCard({ r, open, saving, canSave, onStatus, onExperiment }) {
     const a = ACTION_META[r.action] ?? ACTION_META.fix;
     const closed = r.status === 'done' || r.status === 'ignored';
-    return (<article className={`cro-rec${closed ? ' dim' : ''}`}>
-      <div className="top">
-        <span className="rank">#{r.rank}</span>
-        <div style={{ minWidth: 0 }}>
-          <div className="row" style={{ gap: 6 }}><span className={`lane-chip ${a.lane}`}><Icon name={a.icon} size="sm"/>{a.label}</span><span className={`lane-chip ${EFFORT_LANE[r.effort] ?? 'plain'}`}>{r.effort} effort</span><span className="lane-chip lane-research">{r.area}</span></div>
-          <h3 className={`title${r.status === 'done' ? ' done' : ''}`}>{r.title}</h3>
-          {r.segment ? <div className="muted small">{r.segment}</div> : null}
+    const m = r.measure;
+    const steps = r.steps?.length ? r.steps : r.suggested_action ? [r.suggested_action] : [];
+    const status = REC_STATUS.find((s) => s.key === r.status);
+    return (<details className={`act2 rec2${closed ? ' dim' : ''}`} open={open}>
+      <summary className="act2-head">
+        <span className="act-n rec-n">{r.rank}</span>
+        <span className="act2-titles">
+          <span className={`act2-title${r.status === 'done' ? ' done' : ''}`}>{r.title}</span>
+          <span className="act2-meta">
+            <span className={`lane-chip ${a.lane}`}><Icon name={a.icon} size="sm"/>{a.label}</span>
+            {r.segment ? <span className="lane-chip lane-research act2-target" title={r.segment}>{r.segment}</span> : null}
+            <span className={`lane-chip ${EFFORT_LANE[r.effort] ?? 'plain'}`}>{r.effort} effort</span>
+            {r.status && r.status !== 'open' ? <Pill tone={REC_STATUS_TONE[r.status]}>{status?.label ?? r.status}</Pill> : null}
+          </span>
+        </span>
+        <span className="act2-money">
+          <b className="num">{r.impact === null ? '—' : `≈ ${money(r.impact, 'USD', 0)}`}</b>
+          <span>{r.impact === null ? 'not estimated' : 'est. / 28 days'}</span>
+        </span>
+        <Icon name="chevronDown" size="sm" className="act2-chev"/>
+      </summary>
+      <div className="act2-body">
+        {r.diagnosis ? <p className="act2-problem"><b>Problem.</b> {r.diagnosis}</p> : null}
+        {steps.length ? (<div>
+          <div className="act-label"><Icon name="checkCircle" size="sm"/>What to do</div>
+          <ol className="act-steps">{steps.map((x, i) => <li key={i}>{x}</li>)}</ol>
+        </div>) : null}
+        <div className="act2-measure">
+          <span>{m?.metric ? <><b>Measure:</b> {m.metric} · now <b>{m.baseline}</b> → goal <b>{m.goal}</b> · check after {m.check_after_days ?? 14} days</>
+              : <span className="muted">Mark its status so the whole team sees it.</span>}</span>
+          <span className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <Button size="sm" icon="flag" onClick={onExperiment}>Start experiment</Button>
+            <span className={`seg sm${saving ? ' busy' : ''}`} role="group" aria-label="Status">
+              {REC_STATUS.map((s) => <button key={s.key} type="button" aria-pressed={r.status === s.key} disabled={saving || !canSave} onClick={() => onStatus(s.key)}>{s.label}</button>)}
+            </span>
+          </span>
         </div>
-        <div className="imp"><div className="muted xs">Est. impact</div><div className="v num">{r.impact === null ? 'not estimated' : `≈ ${money(r.impact, 'USD', 0)}`}</div>
-          <div className="ibar"><span style={{ width: `${r.impact ? Math.max(4, (r.impact / max) * 100) : 0}%`, background: a.bar }}/></div></div>
+        <details className="act2-more" open={!r.diagnosis}>
+          <summary>The numbers behind this{r.impact_formula ? ' and how the money is worked out' : ''}</summary>
+          <ul className="act-facts">{(r.evidence_list ?? [r.evidence]).map((e) => <li key={e}>{e}</li>)}</ul>
+          {r.impact_formula ? <p className="act2-math"><b>Money:</b> {r.impact_formula}</p> : null}
+        </details>
       </div>
-      <div className="bot">
-        <div style={{ minWidth: 0, flex: '1 1 420px' }}><ul className="ev">{(r.evidence_list ?? [r.evidence]).map((e) => <li key={e}>{e}</li>)}</ul>
-          {r.impact_formula ? <div className="muted xs mt-4">{r.impact_formula}</div> : null}</div>
-        <div className="row" style={{ gap: 8 }}>
-          <Button size="sm" icon="flag" onClick={onExperiment}>Start experiment</Button>
-          <div className={`seg sm${saving ? ' busy' : ''}`} role="group" aria-label="Status">
-            {REC_STATUS.map((s) => <button key={s.key} type="button" aria-pressed={r.status === s.key} disabled={saving || !canSave} onClick={() => onStatus(s.key)}>{s.label}</button>)}
-          </div>
-        </div>
-      </div>
-    </article>);
+    </details>);
 }
 
 /* ------------------------------------------------------------------ Experiments */
