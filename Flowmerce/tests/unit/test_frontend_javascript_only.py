@@ -70,7 +70,9 @@ def test_unfinished_pages_are_not_mounted() -> None:
     mounted = "\n".join(p.read_text(encoding="utf-8") for p in app_dir.rglob("page.jsx"))
     for unfinished in ("Login", "Planned", "Users"):
         assert f"views/{unfinished}'" not in mounted
-    assert not (app_dir / "users").exists() and not (app_dir / "login").exists()
+    # /login is the hosted sign-in page (its own page.jsx since 18 Nov 2026), not the unfinished views/Login.jsx
+    assert not (app_dir / "users").exists()
+    assert "views/Login" not in (app_dir / "login" / "page.jsx").read_text(encoding="utf-8")
 
 
 def test_no_planned_destinations_in_navigation() -> None:
