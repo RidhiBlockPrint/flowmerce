@@ -2,6 +2,15 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-23 (Shipping and CRO: no tab bar under the title)
+
+Owner request 2026-11-23: the tab bars on Shipping (Overview, Shipments, Hand checks) and CRO (Overview, Conversion,
+Landing pages, ...) repeat the sidebar's module menu, so they are removed.
+
+- **Removed** The tab bar (and its "Advanced" toggle) on the Shipping and Conversion (CRO) pages. Every section is still
+  opened from the sidebar (Advanced sections from its Advanced group) and by links on the pages; addresses (`?tab=`) are
+  unchanged. The page title now names the open section, e.g. "Shipping · Hand checks".
+
 ## 2026-11-23 (Before pushing today's CRO work: hosted memory, Claude cost estimate, demo answers)
 
 Owner: test today's work and push it to main, but first fix the concerns found. Today's CRO work runs more Shopify

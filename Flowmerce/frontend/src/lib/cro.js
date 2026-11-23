@@ -13,7 +13,7 @@ export const TABS = [
     { key: 'checkout', label: 'Cart & checkout' },
     { key: 'products', label: 'Products' },
     { key: 'sales', label: 'Sales' },
-    // Opened now and then: kept under the tab bar's "Advanced" menu and the sidebar's Advanced group (owner decision
+    // Opened now and then: kept in the sidebar's Advanced group (owner decision
     // 2026-11-21 for Site health, Recommendations and Experiments).
     { key: 'site', label: 'Site health', advanced: true },
     { key: 'recommendations', label: 'Recommendations', advanced: true },

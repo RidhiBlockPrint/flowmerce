@@ -7,18 +7,19 @@ import { useApi, qs, download } from '../lib/api';
 import { useBrandParam } from '../lib/app';
 import { fmtDateTime, fmtInt, timeAgo } from '../lib/format';
 import { AGE_FILTERS, CAT, CHIPS, SORTS, ageSegments, dayText, fmtMoney } from '../lib/shipping';
-import { Button, Card, Empty, ErrorState, LoadingBlock, PAGE_SIZE, PageHead, Paged, Pill, Tabs } from '../components/ui';
+import { Button, Card, Empty, ErrorState, LoadingBlock, PAGE_SIZE, PageHead, Paged, Pill } from '../components/ui';
 import { useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import { BarList, LineChart } from '../components/charts';
 import { Journey, MiniGrid, MiniStat, RingCard, SectionHead } from '../components/dash';
 import { ImportPreview, OrderDrawer, ShipmentsTable, ShopifyOrderLink, SourceGate, Tile } from '../components/shipping';
 
+/* The sections of the page. No tab bar: the sidebar's Shipping menu opens them (?tab=); the title names the open one. */
 const TABS = [
     { key: 'overview', label: 'Overview' },
     { key: 'shipments', label: 'Shipments' },
     { key: 'checks', label: 'Hand checks' },
-    // Read now and then, not every day: behind the tab bar's "Advanced" toggle and the sidebar's Advanced group.
+    // Read now and then, not every day: in the sidebar's Advanced group.
     { key: 'analytics', label: 'Analytics', advanced: true },
 ];
 
@@ -57,9 +58,8 @@ export default function Shipping() {
         setSp(next, { replace: true });
     };
     return (<>
-      <PageHead title="Shipping"
+      <PageHead title={tab === 'overview' ? 'Shipping' : `Shipping · ${TABS.find((t) => t.key === tab).label}`}
         actions={<Button icon="refresh" loading={refreshing} onClick={refresh} title="Read the latest changes from Shopify into Flowmerce now">Refresh now</Button>}/>
-      <Tabs value={tab} onChange={(t) => update({ tab: t === 'overview' ? null : t, page: null })} tabs={TABS}/>
       <div className="mt-16" key={rev}>
         {tab === 'shipments' ? <ShipmentsTab brand={brand} sp={sp} update={update} onOpen={setOpen}/>
             : tab === 'analytics' ? <AnalyticsTab brand={brand} update={update}/>

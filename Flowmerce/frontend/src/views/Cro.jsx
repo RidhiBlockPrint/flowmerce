@@ -21,7 +21,7 @@ import { DayStrip, GaugeCard, HealthTile, HeatmapCard, JourneyCard, MoversCard, 
 import { FunnelByPage, LandingCompare, PageDive, PagesDaily } from '../components/croLanding';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
-import { Button, Card, Field, LoadingBlock, PageHead, Paged, Pill, Skeleton, Tabs } from '../components/ui';
+import { Button, Card, Field, LoadingBlock, PageHead, Paged, Pill, Skeleton } from '../components/ui';
 
 const RANGE_TABS = ['overview', 'conversion', 'landing', 'checkout', 'products', 'sales', 'site'];
 
@@ -74,12 +74,11 @@ export default function Cro() {
     };
     const rq = range ? { brand, from: range.from, to: range.to, compare: range.cmp } : null;
     return (<>
-      <PageHead title="Conversion (CRO)" sub="How visitors become orders, and what to do next."
+      <PageHead title={tab === 'overview' ? 'Conversion (CRO)' : `Conversion (CRO) · ${TABS.find((t) => t.key === tab).label}`} sub="How visitors become orders, and what to do next."
         actions={<>
           {globalBrand ? null : <Seg label="Store" size="" options={STORES} value={brand} onChange={(s) => update({ store: s === 'ridhi' ? null : s })}/>}
           <Button icon="refresh" loading={syncing} onClick={syncNow} title="Read the latest orders for this store from Shopify now (it also runs every 15 minutes)">Sync now</Button>
         </>}/>
-      <Tabs value={tab} onChange={(t) => update({ tab: t === 'overview' ? null : t })} tabs={TABS}/>
       <div className="mt-16 col" style={{ gap: 16 }} key={`${brand}-${rev}`}>
         {RANGE_TABS.includes(tab) ? (settings.error ? <ExplainedError error={settings.error} onRetry={settings.reload}/>
             : range ? <RangeBar value={range} today={today} onChange={setRange}/> : <LoadingBlock rows={1}/>) : null}
