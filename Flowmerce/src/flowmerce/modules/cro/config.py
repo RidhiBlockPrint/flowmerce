@@ -49,6 +49,8 @@ class CroConfig:
     sync_minutes: int  # order sync + alarm check interval; 0 turns the background job off
     cache_seconds: int  # how long ShopifyQL answers are reused
     snapshot_seconds: int  # how long the in-memory order snapshot is reused between syncs
+    warm_views: bool  # the background job reads the CRO pages' default views after each round
+    cache_max: int  # ShopifyQL answers kept in memory at most
 
 
 def cro_config() -> CroConfig:
@@ -57,6 +59,11 @@ def cro_config() -> CroConfig:
         sync_minutes=_int_env("CRO_SYNC_MINUTES", 15, 0, 1440),
         cache_seconds=_int_env("CRO_CACHE_SECONDS", 600, 0, 86_400),
         snapshot_seconds=_int_env("CRO_SNAPSHOT_SECONDS", 120, 0, 3600),
+        # The hosted copy (512 MB on Render's free plan) turns the warm-up off and keeps fewer
+        # answers: with both on it crashed four times on 2026-11-23 (see the Dockerfile).
+        warm_views=(os.environ.get("CRO_WARM_VIEWS") or "true").strip().lower()
+        not in ("false", "0", "no"),
+        cache_max=_int_env("CRO_CACHE_MAX", 4000, 50, 20_000),
     )
 
 

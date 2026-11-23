@@ -25,6 +25,8 @@ Runtime dependencies of the core package: none (standard library only). The `seo
 |---|---|---|
 | `CRO_SYNC_MINUTES` | `15` | How often the background job copies new Shopify orders into schema `cro` and checks the alarms; `0` turns it off |
 | `CRO_CACHE_SECONDS` | `600` | How long a ShopifyQL answer (sessions, conversion rate, funnel) is reused |
+| `CRO_CACHE_MAX` | `4000` | How many ShopifyQL answers are kept in memory at most (hosted image: `500`) |
+| `CRO_WARM_VIEWS` | `true` | After each round, read the CRO pages' default views so visits answer from the cache (hosted image: `false`) |
 | `CRO_SNAPSHOT_SECONDS` | `120` | How long the in-memory order snapshot is reused between syncs |
 
 CRO uses Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` and each brand's existing Shopify keys (`RIDHI_SHOPIFY_*`, `CPC_SHOPIFY_*`). Supabase must expose the `cro` schema (Data API → Exposed schemas), and `db/central/112_cro.sql`, `113_cro_orders.sql` and `114_cro_tracking.sql` (recommendation status, experiments, free-shipping amount) must have been run. Conversion figures need each store's app to have the `read_reports` scope and Level 2 protected customer data access. The Products tab's views and product groups use GA4 through the SEO module's Google service account (`GOOGLE_SERVICE_ACCOUNT_FILE`, `RIDHI_GA4_PROPERTY_ID`, `CPC_GA4_PROPERTY_ID`); without them the tab still shows sales, refunds, price bands and products bought together.

@@ -2,6 +2,23 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-23 (Fix: hosted app crashing out of memory)
+
+The live app on Render showed "Request failed (503)". Render's events: since the 2026-11-21 18:56 deploy the instance
+ran out of memory (over 512 MB) at 09:35 and 10:24 and failed its health check at 10:07 and 10:52; each time Render
+restarted it and pages answered 503 for about 30 s. The CRO speed-ups keep more in memory: up to 4,000 Shopify answers
+for 6 hours, and a warm-up that reads every CRO tab's default view after each 15-minute round. Fine locally, too much
+beside Next.js and Litestream in 512 MB. Verified: CRO tests (129, 1 new), the Python suite (only the older failure
+`test_unfinished_pages_are_not_mounted`), ruff and mypy --strict on the CRO module. Not verified before pushing: memory
+on Render itself (watch its Metrics and Events after the deploy).
+
+- **Added** `CRO_WARM_VIEWS` (default `true`): `false` skips the warm-up after each round; pages read Shopify when
+  opened (first visit to a CRO tab about 1-2 s slower). The order sync, alarms and product list still run.
+- **Added** `CRO_CACHE_MAX` (default `4000`): how many ShopifyQL answers are kept in memory.
+- **Changed** The hosted image (Dockerfile) sets `CRO_WARM_VIEWS=false`, `CRO_CACHE_MAX=500` and
+  `MALLOC_ARENA_MAX=2` (glibc otherwise gives each of the app's many threads its own memory arena). The local app is
+  unchanged.
+
 ## 2026-11-21 (CRO: faster pages and filter changes)
 
 Owner request 2026-11-21: data showing, page loading and filter changes were too slow; check desktop and mobile and

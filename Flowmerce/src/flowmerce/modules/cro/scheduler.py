@@ -48,6 +48,10 @@ def run_once() -> dict[str, Any]:
             res = {"store": store, "state": "failed", "error": str(e)[:300]}
         out["stores"][store] = res
     last_run = out  # orders and alarms are up to date: say so before the warm-up
+    if not cro_config().warm_views:  # CRO_WARM_VIEWS=false (the hosted copy): pages read on demand
+        for store in STORE_BRAND:
+            out["stores"][store]["warm"] = "off"
+        return out
     for store, brand in STORE_BRAND.items():
         try:
             out["stores"][store]["warm"] = service.warm_views(brand)

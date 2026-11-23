@@ -449,6 +449,25 @@ def test_a_round_syncs_every_store_before_warming_any_views(
     assert out["stores"]["RBP"]["warm"] == {"reads": 0}
 
 
+def test_the_hosted_copy_can_turn_the_warm_up_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from flowmerce.modules.cro import scheduler, service, sync
+
+    monkeypatch.setenv("CRO_WARM_VIEWS", "false")
+    monkeypatch.setattr(sync, "sync_store", lambda store: {"state": "ok"})
+    monkeypatch.setattr(scheduler.data, "snapshot", lambda store, force=False: None)
+    monkeypatch.setattr(service, "today_for", lambda store: date(2026, 11, 23))
+    monkeypatch.setattr(alarms, "check_store", lambda store, today: {})
+    monkeypatch.setattr(scheduler, "_warm_catalog", lambda store: "cached")
+
+    def no_warm(brand: str) -> dict[str, Any]:
+        raise AssertionError("warm_views must not run with CRO_WARM_VIEWS=false")
+
+    monkeypatch.setattr(service, "warm_views", no_warm)
+    out = scheduler.run_once()
+    assert out["stores"]["RBP"]["warm"] == "off" and out["stores"]["CPC"]["warm"] == "off"
+    assert out["stores"]["RBP"]["state"] == "ok"
+
+
 def test_every_change_log_window_comes_from_one_read(monkeypatch: pytest.MonkeyPatch) -> None:
     from zoneinfo import ZoneInfo
 

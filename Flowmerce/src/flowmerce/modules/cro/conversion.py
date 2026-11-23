@@ -80,7 +80,7 @@ _key_locks: dict[tuple[str, str], threading.Lock] = {}
 _UNTIL = re.compile(r"\bUNTIL\s+(\d{4}-\d{2}-\d{2})\b")
 SETTLING_HOURS = 3  # Shopify's figures for a day can still move for a few hours after it ends
 FINAL_TTL = 6 * 3600.0
-CACHE_MAX = 4000  # answers kept; expired ones are dropped first when there are more
+CACHE_MAX = cro_config().cache_max  # answers kept (CRO_CACHE_MAX); expired ones are dropped first
 
 
 def ttl_for(store: str, query: str, now: datetime | None = None) -> float:
