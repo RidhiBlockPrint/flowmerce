@@ -38,7 +38,7 @@ function alertsFor(db, ids, ship) {
   const failed = reqs.filter((r) => r.status === 'failed');
   if (failed.length) out.push({ level: 'critical', title: `${failed.length} publish request${failed.length === 1 ? '' : 's'} failed`, detail: 'The simulated publish step reported an error. Open Publishing to retry.', link: '/publishing' });
   out.push(...automationAlerts(db, ids));
-  if (ship?.red) out.push({ level: 'warning', title: `${ship.red} shipments need escalation`, detail: 'Delayed past the promised date or without a scan. Open Shipping, Checks and exceptions.', link: '/shipping?tab=checks' });
+  if (ship?.red) out.push({ level: 'warning', title: `${ship.red} shipments need escalation`, detail: 'No carrier update for 9+ days. Open Shipping, Critical.', link: '/shipping?tab=shipments&cat=red' });
   out.push({ level: 'info', title: 'All integrations are simulated in this preview', detail: 'Shopify, Search Console, GA4 and the AI worker are not connected. See Settings, Integrations.', link: '/settings/integrations' });
   const order = { critical: 0, warning: 1, info: 2 };
   return out.sort((a, b) => order[a.level] - order[b.level]);

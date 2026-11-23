@@ -5,38 +5,37 @@ export const CAT = {
     red: { label: 'Critical 9+ days', tone: 'crit' },
     orange: { label: 'Orange 6-8 days', tone: 'warn' },
     yellow: { label: 'Yellow 4-5 days', tone: 'warn' },
-    grey: { label: 'Grey 2-3 days', tone: 'neutral' },
-    on_track: { label: 'On track', tone: 'ok' },
-    no_scan: { label: 'No scan data', tone: 'outline' },
-    unconfirmed: { label: 'Carrier unconfirmed', tone: 'info' },
-    lost: { label: 'Lost (team confirmed)', tone: 'crit' },
-    failed: { label: "Couldn't deliver (team confirmed)", tone: 'warn' },
+    on_track: { label: 'On track 0-3 days', tone: 'ok' },
+    tracking_missing: { label: 'Tracking missing', tone: 'crit' },
+    invalid: { label: 'Invalid tracking', tone: 'info' },
+    checks: { label: 'Fix in Shopify', tone: 'warn' },
     delivered: { label: 'Delivered', tone: 'ok' },
     reshipped: { label: 'Reshipped (old parcel)', tone: 'info' },
     resolved: { label: 'Resolved', tone: 'neutral' },
-    unfulfilled: { label: 'Unfulfilled', tone: 'warn' },
 };
 
 /** Outcomes the team can record for an order Shopify does not know about. */
 export const OUTCOMES = [['delivered', 'Delivered'], ['lost', 'Lost'], ['returned', 'Returned'], ['refunded', 'Refunded']];
 
-/** Quick filters above the shipment list. Keys are the `cat` values the API understands. */
+/** Quick filters above the shipment list. Keys are the `cat` values the API understands. Every active order is in
+ *  exactly one of the sections (Critical ... Fix in Shopify), so no order is listed under two of them. */
 export const CHIPS = [
     { key: '', label: 'All active' },
     { key: 'red', label: 'Critical' },
-    { key: 'nomove', label: 'No movement' },
-    { key: 'noscan', label: 'Scan missing' },
-    { key: 'exception', label: 'Exceptions' },
-    { key: 'flagged', label: 'Flagged by team' },
-    { key: 'unconfirmed', label: 'Carrier unconfirmed' },
+    { key: 'orange', label: 'Orange' },
+    { key: 'yellow', label: 'Yellow' },
+    { key: 'on_track', label: 'On track' },
+    { key: 'tracking_missing', label: 'Tracking missing' },
+    { key: 'invalid', label: 'Invalid tracking' },
+    { key: 'checks', label: 'Fix in Shopify' },
     { key: 'reshipped', label: 'Reshipped' },
     { key: 'resolved', label: 'Resolved' },
+    { key: 'flagged', label: 'Flagged by team' },
 ];
 
 export const SORTS = [
     { key: 'priority', label: 'Most urgent first' },
-    { key: 'stuck', label: 'Stuck first' },
-    { key: 'oldest', label: 'Oldest in stage' },
+    { key: 'oldest', label: 'Longest without an update' },
     { key: 'order', label: 'Order number' },
 ];
 
@@ -47,8 +46,6 @@ export const AGE_FILTERS = [
     { key: '30', label: 'Last 30 days' },
     { key: '60', label: 'Last 60 days' },
 ];
-
-export const STAGE_LABEL = { pre_dispatch: 'Not dispatched', dispatched: 'Dispatched', delivered: 'Delivered' };
 
 export const TEAM_LABEL = { delivered: 'Marked delivered', lost: 'Marked lost', failed: "Marked couldn't deliver", in_transit: 'Marked in transit' };
 
@@ -106,13 +103,13 @@ export const SOURCE_TITLE = {
     schema_mismatch: 'Schema mismatch',
 };
 
-/* Age bands, fresh to oldest, then the parcels no carrier reports on (Amazon), which have no age band. Together they
-   add up to the active total. The server's label holds the name and the day range. Grey (2-3 days) applies only to
-   orders not sent yet, which live on the Unfulfilled tab, so it is left out while empty. */
-const BANDS = ['on_track', 'grey', 'yellow', 'orange', 'red', 'unconfirmed'];
-const BAND_COLOUR = { on_track: 'var(--ok)', grey: '#a59d93', yellow: '#d6a419', orange: '#c2571a', red: 'var(--crit)',
-    unconfirmed: 'var(--info)' };
-const BAND_NAME = { unconfirmed: ['Unconfirmed', 'no carrier updates'] };
+/* Age bands (days since the last carrier update), fresh to oldest, then the hand-check sections. Every active order is
+   in exactly one, so together they add up to the active total. The server's label holds the name and the day range. */
+const BANDS = ['on_track', 'yellow', 'orange', 'red', 'tracking_missing', 'invalid', 'checks'];
+const BAND_COLOUR = { on_track: 'var(--ok)', yellow: '#d6a419', orange: '#c2571a', red: 'var(--crit)',
+    tracking_missing: '#8b1e3f', invalid: 'var(--info)', checks: '#a59d93' };
+const BAND_NAME = { tracking_missing: ['Tracking missing', 'no number'], invalid: ['Invalid tracking', 'no carrier word'],
+    checks: ['Fix in Shopify', 'data to correct'] };
 function splitLabel(label) {
     const m = /^(.*?)\s*\(?(\d+\s*[–-]\s*\d+\s*days|\d+\+\s*days)\)?$/.exec(label ?? '');
     return m ? [m[1], m[2]] : [label, ''];
@@ -124,7 +121,7 @@ export function ageSegments(kpis, go) {
     const by = Object.fromEntries((kpis ?? []).map((k) => [k.key, k]));
     const total = by['']?.value ?? 0;
     const onTrack = total ? Math.round(((by.on_track?.value ?? 0) / total) * 100) : 0;
-    const segments = BANDS.filter((k) => by[k] && (k !== 'grey' || by[k].value)).map((k) => {
+    const segments = BANDS.filter((k) => by[k] && (k in BAND_NAME ? by[k].value : true)).map((k) => {
         const [name, range] = BAND_NAME[k] ?? splitLabel(by[k].label);
         return { key: k, name, range, value: by[k].value, color: BAND_COLOUR[k], onClick: go ? () => go(k) : undefined };
     });

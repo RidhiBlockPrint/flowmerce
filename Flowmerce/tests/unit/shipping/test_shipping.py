@@ -371,6 +371,57 @@ class ShopifySourceTest(unittest.TestCase):
         res = self.ss.sync_store("RBP", "test", gql=self._fake_shopify())
         self.assertEqual(res["state"], "already_running")
 
+    def _old_orders(self):
+        def f(fid, display, number):
+            return {"legacyResourceId": str(fid), "status": "SUCCESS", "displayStatus": display, "createdAt": "2025-03-02T00:00:00Z",
+                    "updatedAt": "2025-03-09T00:00:00Z", "trackingInfo": [{"company": "USPS", "number": number, "url": None}]}
+        return [{"legacyResourceId": "11", "name": "#11", "createdAt": "2025-03-01T00:00:00Z", "updatedAt": "2025-03-09T00:00:00Z",
+                 "cancelledAt": None, "displayFulfillmentStatus": "FULFILLED", "fulfillments": [f(71, "DELIVERED", "A1")]},
+                {"legacyResourceId": "12", "name": "#12", "createdAt": "2025-03-01T00:00:00Z", "updatedAt": "2025-03-09T00:00:00Z",
+                 "cancelledAt": None, "displayFulfillmentStatus": "FULFILLED", "fulfillments": [f(72, "FULFILLED", "B1")]},
+                {"legacyResourceId": "13", "name": "#13", "createdAt": "2025-03-01T00:00:00Z", "updatedAt": "2025-03-09T00:00:00Z",
+                 "cancelledAt": None, "displayFulfillmentStatus": "FULFILLED", "fulfillments": [f(73, "IN_TRANSIT", "C1")]},
+                {"__parentId": "gid://shopify/Order/13", "id": "x"}]           # a flat bulk line that is not an order
+
+    def test_backfill_dry_run_reads_old_orders_and_writes_nothing(self):
+        from unittest import mock
+        rec = use({"shopify_orders": [{"id": 13}]})                   # #13 is already stored: left alone
+        with mock.patch.object(self.ss, "_orders_bulk", return_value=self._old_orders()) as bulk:
+            res = self.ss.backfill_store("RBP", gql=lambda q, v=None: {}, now=datetime(2026, 11, 23, tzinfo=timezone.utc),
+                                         write=False)
+        self.assertEqual((bulk.call_args.kwargs["created_before"], bulk.call_args.kwargs["created_after"]),
+                         (datetime(2026, 9, 24, tzinfo=timezone.utc), datetime(2026, 7, 26, tzinfo=timezone.utc)))
+        self.assertEqual(res, {"store": "RBP", "orders": 3, "alreadyStored": 1, "new": 2, "openFulfilments": 1, "written": 0})
+        self.assertFalse([r for r in rec.requests if r.method != "GET"])
+
+    def test_backfill_writes_new_orders_with_history_only_for_open_parcels(self):
+        from unittest import mock
+        rec = use({"shopify_orders": lambda r: httpx.Response(201) if r.method == "POST" else httpx.Response(200, json=[])})
+        asked: list[list[str]] = []
+
+        def gql(query, variables=None):
+            assert "... on Fulfillment" in query, query
+            asked.append(variables["ids"])
+            return {"nodes": [{"legacyResourceId": "72", "events": {"pageInfo": {"hasNextPage": False}, "nodes": []},
+                               "fulfillmentLineItems": {"nodes": []}}]}
+        with mock.patch.object(self.ss, "_orders_bulk", return_value=self._old_orders()):
+            res = self.ss.backfill_store("RBP", gql=gql, now=datetime(2026, 11, 23, tzinfo=timezone.utc))
+        self.assertEqual((res["new"], res["written"]), (3, 3))
+        self.assertEqual(asked, [["gid://shopify/Fulfillment/72", "gid://shopify/Fulfillment/73"]])   # not the delivered one
+        up = [r for r in rec.requests if r.method == "POST"]
+        self.assertEqual([x["id"] for x in json.loads(up[0].content)], [11, 12, 13])
+
+    def test_bulk_export_by_creation_date(self):
+        seen: list[str] = []
+
+        def gql(query, variables=None):
+            seen.append((variables or {}).get("q", ""))
+            raise RuntimeError("stop")
+        with self.assertRaises(RuntimeError):
+            self.ss._orders_bulk(gql, None, created_before=datetime(2026, 9, 24, tzinfo=timezone.utc),
+                                 created_after=datetime(2026, 7, 26, tzinfo=timezone.utc))
+        self.assertIn("created_at:<'2026-09-24T00:00:00Z' created_at:>='2026-07-26T00:00:00Z'", seen[0])
+
     def test_refresh_reads_shopify_first_then_merges(self):
         from unittest import mock
         rec = use({"rpc/refresh_from_shopify_orders": {"run_id": 1}})

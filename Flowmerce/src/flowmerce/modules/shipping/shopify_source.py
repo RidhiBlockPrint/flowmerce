@@ -4,10 +4,12 @@
   never leave this server: nothing about them is written to Supabase.
 * Nothing about the customer is read: only order number, dates, statuses, carrier, tracking numbers, line-item
   ids/quantities and carrier events (time, status, message, city/province/country).
-* First run per store: one Shopify bulk export of the orders updated in the last 60 days (all a store app may
-  read without the read_all_orders scope). Later runs: only orders updated since the last successful run (with
-  a 10-minute overlap), plus a re-check of still-open parcels every OPEN_RECHECK_HOURS, because a new carrier
-  event does not always change the order itself.
+* First run per store: one Shopify bulk export of the orders updated in the last 60 days. Later runs: only orders
+  updated since the last successful run (with a 10-minute overlap), plus a re-check of still-open parcels every
+  OPEN_RECHECK_HOURS (orders older than FIRST_RUN_DAYS: every OLD_RECHECK_HOURS), because a new carrier event does
+  not always change the order itself.
+* Older orders: both store apps hold the read_all_orders scope (checked 23 Nov 2026), so backfill_store() reads a
+  store's orders from 60 to BACKFILL_DAYS (120) days ago once (scripts/shipping_backfill.py). It is run by hand, never by the scheduler.
 * Each store runs on its own: one store failing (keys refused, Shopify down) is recorded as a failed run for that
   store and never stops the other store or the Supabase refresh.
 * Read-only towards Shopify.
@@ -32,6 +34,8 @@ STORE_BRAND = {"RBP": "ridhi", "CPC": "cpc"}       # ops.stores id -> SEO brand 
 FIRST_RUN_DAYS = 60
 OVERLAP_MINUTES = 10
 OPEN_RECHECK_HOURS = 2
+BACKFILL_DAYS = 120             # how far back backfill_store reads (the Shipping board tracks 120 days: board.TRACK_DAYS)
+OLD_RECHECK_HOURS = 24          # open parcels of orders older than FIRST_RUN_DAYS rarely change: once a day is enough
 BULK_THRESHOLD = 250            # more changed orders than this -> one bulk export instead of paging
 DETAIL_BATCH = 6                # fulfillments per detail query (keeps each query under Shopify's cost limit)
 EVENTS_PER_FULFILLMENT = 100
@@ -174,8 +178,17 @@ def _orders_by_id(gql: Callable, gids: list[str]) -> list[dict[str, Any]]:
     return out
 
 
-def _orders_bulk(gql: Callable, since: datetime, timeout_s: int = 900) -> list[dict[str, Any]]:
-    inner = '{ orders(query: "updated_at:>=\'%s\'") { edges { node { %s } } } }' % (_iso(since), ORDER_FIELDS)
+def _orders_bulk(gql: Callable, since: datetime | None, timeout_s: int = 900,
+                 created_before: datetime | None = None, created_after: datetime | None = None) -> list[dict[str, Any]]:
+    """Every order updated since `since` (or, with `created_before`, every order created before it and, with
+    `created_after`, on or after that), as one bulk export."""
+    if created_before:
+        q = f"created_at:<'{_iso(created_before)}'"
+        if created_after:
+            q += f" created_at:>='{_iso(created_after)}'"
+    else:
+        q = f"updated_at:>='{_iso(since)}'"   # type: ignore[arg-type]
+    inner = '{ orders(query: "%s") { edges { node { %s } } } }' % (q, ORDER_FIELDS)
     d = gql("""mutation($q: String!) { bulkOperationRunQuery(query: $q) {
                  bulkOperation { id } userErrors { message } } }""", {"q": inner})["bulkOperationRunQuery"]
     if d["userErrors"]:
@@ -231,7 +244,8 @@ def _stored(c: SupabaseClient, ids: list[int]) -> dict[int, dict[str, Any]]:
 
 
 def _open_order_gids(c: SupabaseClient, store: str, now: datetime) -> list[str]:
-    """Orders with a parcel still on its way whose stored copy is older than OPEN_RECHECK_HOURS."""
+    """Orders with a parcel still on its way whose stored copy is older than OPEN_RECHECK_HOURS (older than
+    OLD_RECHECK_HOURS for an order placed more than FIRST_RUN_DAYS ago)."""
     open_ids: set[int] = set()
     offset = 0
     while True:
@@ -242,16 +256,25 @@ def _open_order_gids(c: SupabaseClient, store: str, now: datetime) -> list[str]:
             break
         offset += 1000
     stale_before = _iso(now - timedelta(hours=OPEN_RECHECK_HOURS))
-    created_after = _iso(now - timedelta(days=FIRST_RUN_DAYS - 1))
+    old_stale_before = now - timedelta(hours=OLD_RECHECK_HOURS)
+    recent_after = now - timedelta(days=FIRST_RUN_DAYS - 1)
     ids = sorted(open_ids)
     stale: list[str] = []
     for i in range(0, len(ids), 150):
         part = ids[i:i + 150]
-        rows = c.select("shopify_orders", [("select", "id"), ("id", "in.(" + ",".join(map(str, part)) + ")"),
-                                           ("fetched_at", f"lt.{stale_before}"),
-                                           ("created_at", f"gt.{created_after}")], limit=len(part)).rows
-        stale += [f"gid://shopify/Order/{r['id']}" for r in rows]
+        rows = c.select("shopify_orders", [("select", "id,created_at,fetched_at"), ("id", "in.(" + ",".join(map(str, part)) + ")"),
+                                           ("fetched_at", f"lt.{stale_before}")], limit=len(part)).rows
+        stale += [f"gid://shopify/Order/{r['id']}" for r in rows
+                  if (_ts(r.get("created_at")) or now) > recent_after or (_ts(r.get("fetched_at")) or now) < old_stale_before]
     return stale
+
+
+def _ts(v: Any) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00")) if v else None
+    except ValueError:
+        return None
+    return d.replace(tzinfo=timezone.utc) if d and d.tzinfo is None else d
 
 
 # ------------------------------------------------------------------------------------------- one store
@@ -318,6 +341,41 @@ def sync_store(store: str, triggered_by: str, c: SupabaseClient | None = None,
         except SupabaseError:
             pass
         return {"store": store, "state": "failed", "error": msg[:300]}
+
+
+def backfill_store(store: str, c: SupabaseClient | None = None, gql: Callable | None = None, now: datetime | None = None,
+                   write: bool = True) -> dict[str, Any]:
+    """One-off: every order of `store` created 60 to BACKFILL_DAYS days ago, into ops.shopify_orders. Orders already
+    stored are left alone (the normal runs keep them current). Carrier events and line items are fetched only for
+    fulfilments that are still open: a delivered or cancelled parcel of an old order needs no history here.
+    write=False reads Shopify only and returns the counts (a dry run)."""
+    c = c or client()
+    now = now or datetime.now(timezone.utc)
+    gql = gql or _gql_for(store)
+    nodes = _orders_bulk(gql, None, timeout_s=1800, created_before=now - timedelta(days=FIRST_RUN_DAYS),
+                         created_after=now - timedelta(days=BACKFILL_DAYS))
+    nodes = [n for n in nodes if "legacyResourceId" in n and "fulfillments" in n]   # orders only (bulk lines are flat)
+    ids = [i for i in (_num(n.get("legacyResourceId")) for n in nodes) if i]
+    have: set[int] = set()
+    for i in range(0, len(ids), 150):
+        part = ids[i:i + 150]
+        have |= {r["id"] for r in c.select("shopify_orders", [("select", "id"), ("id", "in.(" + ",".join(map(str, part)) + ")")],
+                                           limit=len(part)).rows}
+    new = [n for n in nodes if _num(n.get("legacyResourceId")) not in have]
+    open_f = [_num(f["legacyResourceId"]) for n in new for f in (n.get("fulfillments") or [])
+              if needs_detail(f) and (f.get("displayStatus") or "").upper() not in TERMINAL_DISPLAY]
+    out = {"store": store, "orders": len(nodes), "alreadyStored": len(have), "new": len(new),
+           "openFulfilments": len(open_f), "written": 0}
+    if not write:
+        return out
+    details = _details(gql, [x for x in open_f if x])
+    fetched_at = _iso(now)
+    rows = [order_row(store, n, [normalise_fulfillment(f, details.get(_num(f.get("legacyResourceId"))))
+                                 for f in n.get("fulfillments") or []], fetched_at) for n in new]
+    for i in range(0, len(rows), 100):
+        c.upsert("shopify_orders", rows[i:i + 100], on_conflict="id")
+    out["written"] = len(rows)
+    return out
 
 
 def sync_all(triggered_by: str) -> list[dict[str, Any]]:

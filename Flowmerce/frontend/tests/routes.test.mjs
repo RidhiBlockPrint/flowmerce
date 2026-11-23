@@ -16,7 +16,7 @@ test('the menu has exactly the agreed modules and pages, in order, with rarely u
     assert.deepEqual(NAV.map((e) => [e.label, e.kind === 'module' ? labels(e.items) : null, e.kind === 'module' ? labels(e.advanced) : null]), [
         ['Home', null, null],
         ['SEO & Blog', ['Overview', 'Articles', 'Content calendar', 'Publishing'], ['Write it yourself', 'Topics & keywords', 'SEO & traffic', 'Automation']],
-        ['Shipping', ['Overview', 'Shipments', 'Unfulfilled', 'Checks and exceptions'], ['Analytics']],
+        ['Shipping', ['Overview', 'Shipments', 'Hand checks'], ['Analytics']],
         ['Conversion (CRO)', ['Overview', 'Conversion', 'Landing pages', 'Cart & checkout', 'Products', 'Sales'], ['Site health', 'Recommendations', 'Experiments', 'Alarms', 'Change log']],
     ]);
     assert.deepEqual(SETTINGS.items.map((i) => i.label), ['Integrations', 'Brands', 'Data management', 'Audit log']);

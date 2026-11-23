@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { api, useApi } from '../lib/api';
 import { useApp } from '../lib/app';
 import { fmtDateTime, fmtInt, timeAgo } from '../lib/format';
-import { CAT, OUTCOME, SOURCE_TITLE, STAGE_LABEL, TEAM_LABEL, dayText, fmtMoney, missingParts, OUTCOMES } from '../lib/shipping';
+import { CAT, OUTCOME, SOURCE_TITLE, TEAM_LABEL, dayText, fmtMoney, missingParts, OUTCOMES } from '../lib/shipping';
 import { Button, Card, Empty, ErrorState, Kv, LoadingBlock, Pill } from './ui';
 import { Drawer, useToast } from './overlays';
 import { Icon } from './Icon';
@@ -82,12 +82,15 @@ export function ShopifyOrderLink({ url, label }) {
       aria-label={label ? undefined : 'Open this order in Shopify admin'}><Icon name="external" size="sm"/>{label ?? null}</a>);
 }
 
+/* the active sections: a parcel listed with the rest of its order shows its own section underneath */
+const SECTIONS = ['tracking_missing', 'invalid', 'checks', 'red', 'orange', 'yellow', 'on_track'];
+
 export function ShipmentsTable({ rows, onOpen, empty }) {
     if (!rows.length)
         return <Empty icon="truck" title="No shipments match">{empty ?? 'Nothing matches these filters.'}</Empty>;
     return (<div className="table-wrap">
       <table className="t compact">
-        <thead><tr><th>Order</th><th>Status</th><th className="hide-sm">Carrier</th><th className="hide-sm">Tracking</th><th>In stage</th><th className="hide-md">Last scan</th><th className="hide-md">Dispatched</th></tr></thead>
+        <thead><tr><th>Order</th><th>Status</th><th className="hide-sm">Carrier</th><th className="hide-sm">Tracking</th><th>Since update</th><th className="hide-md">Last scan</th><th className="hide-md">Dispatched</th></tr></thead>
         <tbody>
           {rows.map((r) => (<tr key={r.key}>
               <td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/>{r.packages > 1 ? <span className="faint xs"> · {r.packages} parcels</span> : null}</td>
@@ -95,11 +98,10 @@ export function ShipmentsTable({ rows, onOpen, empty }) {
                   <CatPill cat={r.cat} resolved={r.resolved}/>
                   {r.exception ? <Pill tone="crit">{r.exception.replace(/_/g, ' ')}</Pill> : null}
                   {r.flagged ? <Pill tone="info">Flagged</Pill> : null}
-                  {r.noMove ? <Pill tone="warn" title={`No carrier scan for ${r.scanAge} days`}>No movement</Pill> : null}
-                </div></td>
+                </div>{r.ownCat && r.ownCat !== r.cat && SECTIONS.includes(r.cat) ? <div className="faint xs">This parcel: {CAT[r.ownCat]?.label ?? r.ownCat}</div> : null}</td>
               <td className="hide-sm small">{r.carrier || <span className="faint">Unknown</span>}</td>
               <td className="hide-sm small mono">{r.missingTracking ? <span className="faint">Missing</span> : r.trackUrl ? <a href={r.trackUrl} target="_blank" rel="noreferrer">{r.tracking}</a> : r.tracking}</td>
-              <td className="small nowrap">{r.unconfirmed && r.cat !== 'lost' && r.cat !== 'failed' ? <span className="faint">No delivery data</span> : dayText(r.days)}<div className="faint xs">{STAGE_LABEL[r.stage] ?? r.stage}</div></td>
+              <td className="small nowrap" title="Days since the last carrier scan (since dispatch while there is no scan yet)">{dayText(r.days)}</td>
               <td className="hide-md small" title={r.lastScanAt ? fmtDateTime(r.lastScanAt) : ''}>{r.lastScanAt ? <>{timeAgo(r.lastScanAt)}<div className="faint xs ellipsis" style={{ maxWidth: 200 }}>{r.lastScan}</div></> : <span className="faint">No scan data</span>}</td>
               <td className="hide-md small nowrap">{r.dispatchedAt ? fmtDateTime(r.dispatchedAt) : <span className="faint">Not yet</span>}</td>
             </tr>))}
@@ -160,7 +162,8 @@ function OrderActions({ order, detail, setData, brand }) {
 
 const TEAM_MARKS = [['', 'Not checked'], ['in_transit', 'Still in transit'], ['delivered', 'Delivered'], ['lost', 'Lost'], ['failed', "Couldn't deliver"]];
 
-/** For a parcel with no carrier data (Amazon, unknown carrier, or tracking Shopify never received): a person checks it and records the outcome. */
+/** A person checks the parcel on the carrier page and records what they found. Delivered moves the whole order out
+ *  of every list; Lost and Couldn't deliver move the parcel to Resolved. */
 function TeamMark({ parcel, onSaved }) {
     const [mark, setMark] = useState(parcel.manual?.status ?? '');
     const [busy, setBusy] = useState(false);
@@ -203,11 +206,11 @@ function journeyIndex(p) {
 /** One parcel in the order drawer: key facts, the journey bar, the carrier timeline and the next step. */
 function ParcelPanel({ p, order, many, onSaved }) {
     const at = journeyIndex(p);
-    const bad = ['red', 'orange', 'lost', 'failed'].includes(p.cat) || p.exception || p.noMove;
+    const bad = ['red', 'orange', 'tracking_missing'].includes(p.cat);
     const warn = p.cat === 'yellow';
     const events = [...(p.events ?? [])].reverse();
     const extra = [
-        ...(p.resolved?.by === 'order' ? [['Delivered', p.resolved.detail]] : p.resolved ? [['Resolved', `${p.resolved.label} (${p.resolved.by === 'team' ? `team${p.resolved.who ? `: ${p.resolved.who}` : ''}` : `carrier: ${p.resolved.detail || 'last update'}`})${p.resolved.at ? ` · ${timeAgo(p.resolved.at)}` : ''}`]] : []),
+        ...(p.deliveredBy?.detail ? [['Delivered', p.deliveredBy.detail]] : p.resolved ? [['Resolved', `${p.resolved.label} (${p.resolved.by === 'team' ? `team${p.resolved.who ? `: ${p.resolved.who}` : ''}` : `carrier: ${p.resolved.detail || 'last update'}`})${p.resolved.at ? ` · ${timeAgo(p.resolved.at)}` : ''}`]] : []),
         ...(p.reshipped ? [['Reshipped', `${p.reshipped.detail}${p.reshipped.newOrder && p.reshipped.newOrder !== order ? ` New order ${p.reshipped.newOrder}.` : ''}${p.reshipped.newTracking ? ` New tracking ${p.reshipped.newTracking}.` : ''} Close this old parcel in Shopify / Amazon.`]] : []),
         ...(p.amazonStatus ? [['Amazon (MCF)', `${p.amazonStatus}${p.amazonAt ? ` · ${timeAgo(p.amazonAt)}` : ''}${p.amazonTracking && p.amazonTracking !== p.tracking ? ` · tracking ${p.amazonTracking}` : ''}`]] : []),
         ...(p.manual ? [['Team mark', `${TEAM_LABEL[p.manual.status] ?? p.manual.status}${p.manual.at ? ` · ${timeAgo(p.manual.at)}` : ''}`]] : []),
@@ -217,9 +220,9 @@ function ParcelPanel({ p, order, many, onSaved }) {
       <div className="parcel-head">
         <div style={{ minWidth: 0 }}>
           <div className="parcel-carrier">{p.carrier || 'Unknown carrier'}{many && p.tracking ? <span className="mono faint"> {p.tracking}</span> : null}</div>
-          <div className="row-wrap mt-4" style={{ gap: 4 }}><CatPill cat={p.cat} resolved={p.resolved}/>{p.noMove ? <Pill tone="warn">No movement</Pill> : null}{p.exception ? <Pill tone="crit">Exception</Pill> : null}</div>
+          <div className="row-wrap mt-4" style={{ gap: 4 }}><CatPill cat={p.cat} resolved={p.resolved}/>{p.exception ? <Pill tone="crit">{p.exception.replace(/_/g, ' ')}</Pill> : null}</div>
         </div>
-        <div className="parcel-days">{p.unconfirmed ? <span className="faint small">No delivery data</span> : <>{dayText(p.days)}<span>{STAGE_LABEL[p.stage] ?? p.stage}</span></>}</div>
+        <div className="parcel-days">{p.cat === 'delivered' ? <span>Delivered</span> : <>{dayText(p.days)}<span>since last update</span></>}</div>
       </div>
       <div className="parcel-meta">
         <div><small>Tracking</small><b className="mono">{p.missingTracking ? 'Missing' : p.trackUrl ? <a href={p.trackUrl} target="_blank" rel="noreferrer">{p.tracking}</a> : (p.tracking || '—')}</b></div>
@@ -244,7 +247,7 @@ function ParcelPanel({ p, order, many, onSaved }) {
       <div className="row-wrap mt-8">
         {p.trackUrl ? <a className="btn sm" href={p.trackUrl} target="_blank" rel="noreferrer">Track on carrier site <Icon name="external" size="sm"/></a> : null}
       </div>
-      {p.unconfirmed && p.trackingId ? <TeamMark parcel={p} onSaved={onSaved}/> : null}
+      {p.trackingId && !['delivered', 'resolved'].includes(p.cat) ? <TeamMark parcel={p} onSaved={onSaved}/> : null}
     </section>);
 }
 

@@ -22,7 +22,7 @@ test('every page endpoint answers', async () => {
 test('home is consistent with the module data', async () => {
   const home = await demoRequest('GET', '/home');
   assert.equal(home.articles.length, 2);
-  assert.ok(home.shipping.all.total > 0);
+  assert.ok(home.shipping.all.active > 0);
   assert.ok(home.metrics.every((m) => m.source.kind === 'demo'));
   const me = await demoRequest('GET', '/auth/me');
   assert.equal(me.livePublishing, true);

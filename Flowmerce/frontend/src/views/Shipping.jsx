@@ -17,8 +17,7 @@ import { ImportPreview, OrderDrawer, ShipmentsTable, ShopifyOrderLink, SourceGat
 const TABS = [
     { key: 'overview', label: 'Overview' },
     { key: 'shipments', label: 'Shipments' },
-    { key: 'unfulfilled', label: 'Unfulfilled' },
-    { key: 'checks', label: 'Checks and exceptions' },
+    { key: 'checks', label: 'Hand checks' },
     // Read now and then, not every day: behind the tab bar's "Advanced" toggle and the sidebar's Advanced group.
     { key: 'analytics', label: 'Analytics', advanced: true },
 ];
@@ -65,7 +64,6 @@ export default function Shipping() {
         {tab === 'shipments' ? <ShipmentsTab brand={brand} sp={sp} update={update} onOpen={setOpen}/>
             : tab === 'analytics' ? <AnalyticsTab brand={brand} update={update}/>
                 : tab === 'checks' ? <ChecksTab brand={brand} onOpen={setOpen}/>
-                : tab === 'unfulfilled' ? <UnfulfilledTab brand={brand} onOpen={setOpen}/>
                     : <OverviewTab brand={brand} update={update} onOpen={setOpen} onChanged={() => setRev((n) => n + 1)}/>}
       </div>
       {open ? <OrderDrawer order={open} brand={brand} onClose={() => setOpen(null)}/> : null}
@@ -90,14 +88,15 @@ function OverviewTab({ brand, update, onOpen, onChanged }) {
           </div>
           <JourneyStrip steps={d.journey ?? []} update={update}/>
           <Triage query={ck} onOpen={onOpen} update={update}/>
-          <More id="ship-overview" label="Show order checks and data source">
+          <More id="ship-overview" label="Show hand checks and data source">
             <div className="grid cols-2">
-              <Card title="Order checks" sub="Orders whose note says DONE but the shop shows them as not fulfilled">
-                {d.checks.mcf ? (<div className="row-wrap">
-                    <Pill tone="crit">{d.checks.mcf.critical} critical</Pill><Pill tone="warn">{d.checks.mcf.watch} watch</Pill><Pill tone="info">{d.checks.mcf.alert} alert</Pill>
-                  </div>) : <div className="muted small">Unavailable right now.</div>}
-                <div className="small mt-8">{fmtInt(d.checks.toVerify)} parcels with no carrier updates to verify{d.checks.missingTracking ? ` (${d.checks.missingTracking} without tracking)` : ''}.</div>
-                <div className="mt-8"><Button size="sm" onClick={() => update({ tab: 'checks' })}>Open checks</Button></div>
+              <Card title="Hand checks" sub="Orders a person has to look at, each in one list only">
+                <div className="row-wrap">
+                  <Pill tone="crit">{fmtInt(d.checks.tracking_missing ?? 0)} tracking missing</Pill>
+                  <Pill tone="info">{fmtInt(d.checks.invalid ?? 0)} invalid tracking</Pill>
+                  <Pill tone="warn">{fmtInt(d.checks.checks ?? 0)} fix in Shopify</Pill>
+                </div>
+                <div className="mt-8"><Button size="sm" onClick={() => update({ tab: 'checks' })}>Open hand checks</Button></div>
               </Card>
               <SyncCard source={d.source} onChanged={onChanged}/>
             </div>
@@ -166,11 +165,10 @@ function HeadlineNumbers({ d, an, update }) {
     </MiniGrid>);
 }
 
-/* Where each journey step and each problem tag leads. Steps without an exact list (no scan yet, delivered) are not links. */
-const STEP_LINK = { ordered: { tab: 'unfulfilled' }, in_transit: { tab: 'shipments', status: 'in_transit' }, out_for_delivery: { tab: 'shipments', status: 'out_for_delivery' } };
-const FLAG_LINK = { 'waiting 9+ days': { tab: 'unfulfilled' }, 'no tracking': { tab: 'checks' } };
+/* Where each journey step leads. Steps without an exact list (no scan yet, delivered) are not links. */
+const STEP_LINK = { in_transit: { tab: 'shipments', status: 'in_transit' }, out_for_delivery: { tab: 'shipments', status: 'out_for_delivery' } };
 
-/** Ordered → sent → in transit → out for delivery → delivered, with the problems sitting in each step. */
+/** Sent → in transit → out for delivery → delivered, with the sections sitting in each step. */
 function JourneyStrip({ steps, update }) {
     const go = (patch) => update({ cat: null, status: null, page: null, ...patch });
     return (<Journey label="Where orders are now" steps={steps.map((s) => ({
@@ -178,7 +176,7 @@ function JourneyStrip({ steps, update }) {
         calm: s.key === 'delivered' ? 'Left the active list' : 'Nothing stuck',
         onClick: STEP_LINK[s.key] ? () => go(STEP_LINK[s.key]) : undefined,
         flags: s.flags.map((f) => {
-            const fl = f.cat ? { tab: 'shipments', cat: f.cat } : FLAG_LINK[f.label];
+            const fl = f.cat ? { tab: 'shipments', cat: f.cat } : null;
             return { ...f, onClick: fl ? () => go(fl) : undefined };
         }),
     }))}/>);
@@ -187,20 +185,17 @@ function JourneyStrip({ steps, update }) {
 /* The one-click next step for each kind of problem. Shopify fixes open the order in Shopify admin; the rest open the drawer. */
 const NEXT_STEP = {
     missing_tracking: { label: 'Add tracking', shopify: true },
+    invalid_tracking: { label: 'Check number' },
     amazon_not_in_shopify: { label: 'Mark fulfilled', shopify: true },
     amazon_tracking_missing: { label: 'Add tracking', shopify: true },
     duplicate_tracking: { label: 'Fix tracking', shopify: true },
-    carrier_exception: { label: 'Review' },
-    stuck: { label: 'Check carrier' },
-    overdue: { label: 'Review' },
-    delivered_not_marked: { label: 'Review' },
 };
 
-/** Today's open checks, most urgent first, each with its next step. The full list lives on the Checks tab. */
+/** Today's hand checks, most urgent first, each with its next step. The full list lives on the Hand checks tab. */
 function Triage({ query, onOpen, update }) {
     const [kind, setKind] = useState('');
     const head = <SectionHead title="Today’s triage" note="Most urgent first. Each row has its next step; open an order for its full tracking."
-      action={<Button size="sm" onClick={() => update({ tab: 'checks' })}>All checks</Button>}/>;
+      action={<Button size="sm" onClick={() => update({ tab: 'checks' })}>All hand checks</Button>}/>;
     if (query.error)
         return <>{head}<Card><ErrorState error={query.error} onRetry={query.reload}/></Card></>;
     if (!query.data)
@@ -228,7 +223,7 @@ function TriageRow({ r, onOpen }) {
     const days = r.days ?? null;
     const tone = r.severity === 'high' ? 'crit' : 'warn';
     return (<div className="triage-row">
-      <span className={`triage-age tone-${tone}`} title={days === null ? 'No day count' : `${days} days in stage`}>{days === null ? '—' : `${days}d`}</span>
+      <span className={`triage-age tone-${tone}`} title={days === null ? 'No day count' : `${days} days since the last update`}>{days === null ? '—' : `${days}d`}</span>
       <div className="triage-order">
         <button type="button" className="triage-num" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</button>
         <span className="triage-meta">{r.carrier}{r.brand ? ` · ${r.brand === 'ridhi' ? 'Ridhi' : r.brand === 'cpc' ? 'CPC' : r.brand}` : ''}</span>
@@ -341,7 +336,7 @@ function ShipmentsTab({ brand, sp, update, onOpen }) {
             </div>)}>
             <ShipmentsTable rows={d.rows} onOpen={onOpen}/>
           </Card>
-          <div className="muted xs">Delivered orders and orders cancelled or refunded are not listed. Marketplace and unknown carriers have no delivery data, so they are checked by hand and never counted as critical.</div>
+          <div className="muted xs">Only dispatched parcels are listed. Delivered orders (by any source), orders not sent yet, and cancelled or refunded orders are not shown. Days count from the last carrier scan (from dispatch while there is none). Every order is in one section only.</div>
         </>)}
     </SourceGate>);
 }
@@ -359,8 +354,8 @@ function AnalyticsTab({ brand, update }) {
             <Tile label="Active shipments" value={k.active}/>
             <Tile label="Critical" value={`${fmtInt(k.critical)} (${k.criticalPct}%)`} tone="crit"/>
             <Tile label="On track share" value={`${k.onTrackPct}%`} tone="ok"/>
-            <Tile label="Average days in stage" value={k.avgDays === null ? '—' : `${k.avgDays} d`}/>
-            <Tile label="No movement" value={k.stuck} tone="warn"/>
+            <Tile label="Average days since update" value={k.avgDays === null ? '—' : `${k.avgDays} d`}/>
+            <Tile label="Hand checks" value={k.handChecks} tone="warn" onClick={() => update({ tab: 'checks' })}/>
             <Tile label="Carriers in use" value={k.carriersInUse}/>
             <Tile label="Value at risk" value={k.valueAtRisk.available ? (k.valueAtRisk.total === null ? '—' : fmtMoney(k.valueAtRisk.total, k.valueAtRisk.currency)) : ''} na={!k.valueAtRisk.available} foot={k.valueAtRisk.available ? 'Critical orders, once each' : k.valueAtRisk.reason}/>
           </div>
@@ -384,8 +379,8 @@ function AnalyticsTab({ brand, update }) {
           </div>
           <Card title="Carrier scorecard" flush>
             {d.carriersReport.scorecard.length ? (<div className="table-wrap"><table className="t compact">
-                <thead><tr><th>Carrier</th><th>Active</th><th>Critical</th><th className="hide-sm">Critical %</th><th>No movement</th><th className="hide-sm">Exceptions</th><th className="hide-sm">Avg days</th><th>Health</th></tr></thead>
-                <tbody>{d.carriersReport.scorecard.map((c) => (<tr key={c.carrier}><td><b>{c.carrier}</b></td><td>{fmtInt(c.active)}</td><td>{fmtInt(c.critical)}</td><td className="hide-sm">{c.criticalPct}%</td><td>{fmtInt(c.stuck)}</td><td className="hide-sm">{fmtInt(c.exceptions)}</td><td className="hide-sm">{c.avgDays === null ? '—' : `${c.avgDays} d`}</td>
+                <thead><tr><th>Carrier</th><th>Active</th><th>Critical</th><th className="hide-sm">Critical %</th><th>Hand checks</th><th className="hide-sm">Avg days</th><th>Health</th></tr></thead>
+                <tbody>{d.carriersReport.scorecard.map((c) => (<tr key={c.carrier}><td><b>{c.carrier}</b></td><td>{fmtInt(c.active)}</td><td>{fmtInt(c.critical)}</td><td className="hide-sm">{c.criticalPct}%</td><td>{fmtInt(c.handChecks)}</td><td className="hide-sm">{c.avgDays === null ? '—' : `${c.avgDays} d`}</td>
                     <td><Pill tone={c.health === 'bad' ? 'crit' : c.health === 'warn' ? 'warn' : 'ok'}>{c.healthLabel}</Pill></td></tr>))}</tbody>
               </table></div>) : <Empty icon="truck" title="No active shipments">Nothing to score yet.</Empty>}
           </Card>
@@ -437,7 +432,7 @@ function ReshippedCard({ rs, onOpen }) {
           <thead><tr><th>Order</th><th>Old parcel</th><th>How we know</th><th>Sent again as</th><th className="hide-sm">Next step</th></tr></thead>
           <tbody>{page.map((r) => (<tr key={r.key}>
               <td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/></td>
-              <td className="small">{r.carrier}{r.tracking ? <span className="mono faint"> {r.tracking}</span> : null}<div className="faint xs">{r.oldStatus.replace(/_/g, ' ') || '—'}{r.days !== null ? ` · ${dayText(r.days)} in stage` : ''}</div></td>
+              <td className="small">{r.carrier}{r.tracking ? <span className="mono faint"> {r.tracking}</span> : null}<div className="faint xs">{r.oldStatus.replace(/_/g, ' ') || '—'}{r.days !== null ? ` · ${dayText(r.days)} since update` : ''}</div></td>
               <td className="small"><Pill tone="info">{r.howLabel}</Pill><div className="faint xs">{r.detail}</div></td>
               <td className="small">{r.newOrder && r.newOrder !== r.order ? <Button size="xs" variant="ghost" onClick={() => onOpen(r.newOrder)}>{r.newOrder}</Button> : null}{r.newCarrier ? <div className="faint xs">{r.newCarrier}{r.newTracking ? ` ${r.newTracking}` : ''}{r.newStatus ? ` · ${CAT[r.newStatus]?.label ?? r.newStatus}` : ''}</div> : <div className="faint xs">not dispatched yet</div>}</td>
               <td className="small hide-sm">{r.action}</td>
@@ -446,45 +441,19 @@ function ReshippedCard({ rs, onOpen }) {
     </Card>);
 }
 
-/* ------------------------------------------------------------------ Unfulfilled */
-const BAND_TONE = { '9+': 'crit', '6-8': 'warn', '4-5': 'warn', '0-3': 'neutral' };
-function UnfulfilledTab({ brand, onOpen }) {
-    const q = useApi(`/shipping/unfulfilled${qs({ brand })}`);
-    const [band, setBand] = useState('');
-    return (<SourceGate query={q}>
-      {(d) => {
-            const shown = d.rows.filter((r) => !band || r.band === band);
-            return (<Card title="Unfulfilled orders" sub={`${d.rule} ${fmtInt(d.total)} orders${d.withAmazon ? `, ${fmtInt(d.withAmazon)} of them with Amazon` : ''}.`}
-              actions={<select className="select sm" style={{ width: 'auto' }} value={band} onChange={(e) => setBand(e.target.value)} aria-label="Waiting time">
-                <option value="">All ({d.total})</option>{d.bands.map((b) => <option key={b.key} value={b.key}>Waiting {b.label} ({d.counts[b.key]})</option>)}</select>} flush>
-              {!shown.length ? <Empty icon="checkCircle" title="No unfulfilled orders">Every order has been sent.</Empty> : (<Paged rows={shown} resetKey={band}>{(page) => (<div className="table-wrap"><table className="t compact">
-                  <thead><tr><th>Order</th><th>Ordered</th><th>Waiting</th><th className="hide-sm">Amazon</th><th>Next step</th></tr></thead>
-                  <tbody>{page.map((r) => (<tr key={`${r.brand}|${r.order}`}>
-                      <td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/>{r.flagged ? <Pill tone="warn">Flagged</Pill> : null}</td>
-                      <td className="small nowrap">{r.placedAt ? fmtDateTime(r.placedAt) : '—'}</td>
-                      <td><Pill tone={BAND_TONE[r.band]}>{dayText(r.days ?? 0)}</Pill></td>
-                      <td className="small hide-sm">{r.amazon || <span className="faint">—</span>}</td>
-                      <td className="small">{r.action}</td></tr>))}</tbody>
-                </table></div>)}</Paged>)}
-            </Card>);
-        }}
-    </SourceGate>);
-}
-
 /* ------------------------------------------------------------------ Checks */
 function ChecksTab({ brand, onOpen }) {
     const q = useApi(`/shipping/checks${qs({ brand })}`);
-    const toast = useToast();
     const [kind, setKind] = useState('');
     return (<SourceGate query={q}>
       {(d) => {
             const ex = d.exceptions;
             const shown = ex.rows.filter((r) => !kind || (r.types || [r.type]).includes(kind));
             return (<>
-          <Card title="Exceptions and data problems" sub={`${fmtInt(ex.total)} open. Click an order to see its tracking and decide the next step.`}
-            actions={<select className="select sm" style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Type of exception">
+          <Card title="Hand checks" sub={`${fmtInt(ex.total)} orders: tracking missing, invalid tracking, or a fix needed in Shopify. Each order is listed once, and is not in the Critical / Orange / Yellow lists. Click an order to see its tracking.`}
+            actions={<select className="select sm" style={{ width: 'auto' }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Type of check">
               <option value="">All types ({ex.total})</option>{ex.types.map((t) => <option key={t.key} value={t.key}>{t.label} ({ex.counts[t.key]})</option>)}</select>} flush>
-            {!shown.length ? <Empty icon="checkCircle" title="Nothing to review">No exceptions of this type.</Empty> : (<Paged rows={shown} resetKey={kind}>{(page) => (<div className="table-wrap"><table className="t compact">
+            {!shown.length ? <Empty icon="checkCircle" title="Nothing to check">No orders of this type.</Empty> : (<Paged rows={shown} resetKey={kind}>{(page) => (<div className="table-wrap"><table className="t compact">
                 <thead><tr><th>Order</th><th>Type</th><th className="hide-sm">Carrier</th><th>What is wrong</th></tr></thead>
                 <tbody>{page.map((r) => {
                     const issues = r.issues || [r];
@@ -497,32 +466,7 @@ function ChecksTab({ brand, onOpen }) {
                 })}</tbody>
               </table></div>)}</Paged>)}
           </Card>
-<Card title="Marked DONE by the team, but Shopify shows not fulfilled" sub={d.mcf.available ? `${d.mcf.rule}${d.mcf.amazonKnown === false ? ' (Amazon status needs supabase/108_flow_board_amazon.sql.)' : ` ${d.mcf.withAmazonRecord} of ${d.mcf.rows.length} have an Amazon record.`}` : undefined} flush>
-            {!d.mcf.available ? <div className="card-body"><div className="callout warn"><Icon name="alert"/><div>Unavailable: {d.mcf.reason} The list is not shown rather than shown empty.</div></div></div>
-                : !d.mcf.rows.length ? <Empty icon="checkCircle" title="No mismatches">Every order marked DONE in its note is fulfilled, or is under 5 days old.</Empty>
-                    : (<Paged rows={d.mcf.rows}>{(page) => (<div className="table-wrap"><table className="t compact">
-                        <thead><tr><th>Order</th><th>Age</th><th>Fulfilment status</th><th>Amazon says</th><th>Level</th></tr></thead>
-                        <tbody>{page.map((r) => (<tr key={r.order}><td className="nowrap"><Button size="xs" variant="ghost" onClick={() => onOpen(r.order)} title="Open this order">{r.order}</Button><ShopifyOrderLink url={r.shopifyUrl}/></td><td>{dayText(r.age)}</td><td className="small">{r.status.replace(/_/g, ' ')}</td>
-                            <td className="small">{r.amazon ? <>{r.amazon}{r.amazonTracking ? <div className="faint xs mono">{r.amazonTracking}</div> : null}</> : <span className="faint">No Amazon record</span>}</td>
-                            <td><Pill tone={r.level === 'critical' ? 'crit' : r.level === 'watch' ? 'warn' : 'info'}>{r.level}</Pill></td></tr>))}</tbody>
-                      </table></div>)}</Paged>)}
-          </Card>
           <ReshippedCard rs={d.reshipped} onOpen={onOpen}/>
-          <Card title="Marketplace / unknown carriers to verify" sub="No carrier delivery data exists for these parcels, so a person checks them."
-            actions={<Button size="sm" icon="download" onClick={() => download(`/shipping/export/verify${qs({ brand })}`).catch(toast.error)}>Verify list (CSV)</Button>}>
-            <div className="kpis">
-              <Tile label="To verify" value={d.verify.total} tone="info"/>
-              <Tile label="Tracking missing" value={d.verify.missingTracking} tone="crit"/>
-              {d.verify.team ? (<>
-                  <Tile label="Marked delivered" value={d.verify.team.delivered} tone="ok"/>
-                  <Tile label="Marked lost" value={d.verify.team.lost} tone="crit"/>
-                  <Tile label="Couldn't deliver" value={d.verify.team.failed} tone="warn"/>
-                  <Tile label="Still in transit" value={d.verify.team.inTransit}/>
-                  <Tile label="Not checked yet" value={d.verify.team.notChecked}/>
-                </>) : <Tile label="Team marks" value="" na foot={d.verify.teamReason}/>}
-            </div>
-            <div className="muted xs mt-8">Team marks are recorded in the order drawer (open an order, then Team mark).</div>
-          </Card>
           <ImportPreview brand={brand}/>
         </>);
         }}

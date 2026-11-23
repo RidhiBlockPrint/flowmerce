@@ -26,8 +26,7 @@ export const NAV = [
     { id: 'shipping', kind: 'module', label: 'Shipping', to: '/shipping', icon: 'truck', items: [
         { to: '/shipping', tab: 'overview', label: 'Overview', icon: 'overview' },
         { to: '/shipping', tab: 'shipments', label: 'Shipments', icon: 'truck' },
-        { to: '/shipping', tab: 'unfulfilled', label: 'Unfulfilled', icon: 'inbox' },
-        { to: '/shipping', tab: 'checks', label: 'Checks and exceptions', icon: 'alert' },
+        { to: '/shipping', tab: 'checks', label: 'Hand checks', icon: 'alert' },
     ], advanced: [
         { to: '/shipping', tab: 'analytics', label: 'Analytics', icon: 'analytics' },
     ] },

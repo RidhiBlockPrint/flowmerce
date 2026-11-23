@@ -2,6 +2,42 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-23 (Shipping: one section per order, clock from the last scan, dispatched parcels only)
+
+Owner request 2026-11-23, after reviewing every separation rule of the Shipping page: stop tracking orders that are not
+sent yet; a carrier scan resets the clock; an order must appear in one list only (checking Critical, No movement and
+Exceptions meant checking the same order several times); "Carrier unconfirmed" was confusing (it listed parcels with a
+carrier and a tracking number), so it becomes "Tracking missing", and a number no carrier ever reported on is "Invalid
+tracking"; delivered by any source means delivered. Decided with the owner: every band (Critical included) counts from
+the last scan; strict one place per order; orders older than 60 days are loaded from Shopify, and the board tracks open
+parcels dispatched in the last 120 days (a no-limit dry run would have added ~1,775 open parcels back to 2022).
+Verified: 114 shipping unit tests, the full Python suite (781 passed; the one failure, `app/login` existing, is from
+the 18 Nov sign-in commit and unrelated), and the board built from the live Supabase data (501 active parcels: 117 on
+track, 288 yellow, 3 orange, 8 critical, 9 tracking missing, 30 invalid tracking, 46 fix in Shopify).
+
+- **Changed** The clock: days since the last carrier scan (since dispatch while there is none). On track 0-3, Yellow 4-5,
+  Orange 6-8, Critical 9+. The Grey band (orders not sent) is gone.
+- **Changed** One section per order, first that applies to any of its parcels: Tracking missing > Invalid tracking (a
+  number with no carrier status or scan 3+ days after dispatch, whatever the carrier) > Fix in Shopify (Amazon shipped
+  but Shopify unfulfilled, an Amazon parcel the Shopify order does not list, a tracking number on two parcels) >
+  Critical > Orange > Yellow > On track. The order's other parcels are listed with it ("this parcel: ..." in the label).
+- **Changed** Delivered by any evidence (status, a last scan saying "Delivered", Amazon's word on the order, a team mark
+  or outcome, another parcel, a shared number) is plain Delivered: in no list, never under Resolved.
+- **Changed** Team marks (Delivered / Lost / Couldn't deliver / Still in transit) can be recorded on any open parcel;
+  Lost and Couldn't deliver move it to Resolved.
+- **Changed** "Checks and exceptions" tab is now "Hand checks": one row per order in the three hand-check sections.
+  Home's "Delivery problems" = Critical + hand checks.
+- **Removed** The Unfulfilled tab and `/api/shipping/unfulfilled`; orders not sent yet (Shopify unfulfilled, or with
+  Amazon but not shipped, or a cancelled / unfulfillable Amazon order) are not shown anywhere.
+- **Removed** No movement, Carrier exceptions, Carrier unconfirmed, Scan missing, Past promised date and Delivered but
+  not marked (filters, KPIs, check types); the "Marked DONE but not fulfilled" list; the verify list and
+  `/api/shipping/export/verify`; the "Stuck first" sort.
+- **Added** `shopify_source.backfill_store()` and `scripts/shipping_backfill.py` (dry run by default, `--write` to store):
+  loads each store's orders placed 60 to 120 days ago once (both store apps hold `read_all_orders`). Open parcels of
+  orders older than 60 days are re-read from Shopify once a day (newer ones every 2 hours, as before). A dry run on
+  23 Nov found 2,810 (RBP) and 1,331 (CPC) such orders not yet stored, 449 of their parcels not delivered in Shopify.
+- **Changed** Open parcels dispatched more than 120 days ago (`board.TRACK_DAYS`) are not listed.
+
 ## 2026-11-23 (Fix: hosted app crashing out of memory)
 
 The live app on Render showed "Request failed (503)". Render's events: since the 2026-11-21 18:56 deploy the instance

@@ -25,7 +25,7 @@ export const IS_DEMO = DATA_SOURCE === 'demo';
 const MODULES = [core, content, automation, settings, shipping, cro, blog];
 const STORAGE_KEY = 'flowmerce.demo.v1';
 /** Bump when seed data shapes change, so an old browser snapshot is discarded instead of breaking pages. */
-const SNAPSHOT_VERSION = 3;   // 2: CRO demo data added; 3: automatic blog slots (db.blog)
+const SNAPSHOT_VERSION = 4;   // 2: CRO demo data added; 3: automatic blog slots (db.blog); 4: shipping sections (23 Nov)
 
 let db = null;
 let routes = null;

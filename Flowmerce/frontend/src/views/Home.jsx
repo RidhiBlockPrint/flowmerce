@@ -89,7 +89,7 @@ export default function Home() {
             meta: 'Automation run failed', detail: `Started ${ago(j.startedAt, 'at an unknown time')}. Last success: ${ago(j.lastSuccessAt, 'none recorded')}.`, action: 'Check run', tag: 'Automation' })),
         ...(ship?.top ?? []).map((s) => ({ id: `sh-${s.trackingId}`, tone: 'warn', icon: 'truck', title: `${s.order} · ${s.carrier}`,
             to: `/shipping?tab=shipments&q=${encodeURIComponent(s.order ?? '')}`, brand: s.brand, meta: 'Delivery problem',
-            detail: `${s.days ?? '?'} day${s.days === 1 ? '' : 's'} since dispatch${s.place ? `, last seen ${s.place}` : ''}.`, action: 'Open order', tag: 'Shipping' })),
+            detail: `${s.days ?? '?'} day${s.days === 1 ? '' : 's'} since the last carrier update${s.label ? ` (${s.label})` : ''}${s.place ? `, last seen ${s.place}` : ''}.`, action: 'Open order', tag: 'Shipping' })),
     ];
     const severity = { crit: 0, warn: 1, info: 2 };
     todo.sort((a, b) => (severity[a.tone] ?? 3) - (severity[b.tone] ?? 3));
@@ -202,11 +202,11 @@ function ShippingSnapshot({ ship, summary, note, loading, showBrand, brands, nav
             <div className={`stat ${ship.problems ? 'alert' : ''}`}><div className="v">{fmtInt(ship.problems)}</div><div className="l">Delivery problems</div></div>
           </div>
           <div className="ship-snap-list">
-            <div className="ship-snap-head"><span>Oldest delivery problems</span>{ship.problems ? <Link className="link" href="/shipping?tab=checks">All {fmtInt(ship.problems)}</Link> : null}</div>
+            <div className="ship-snap-head"><span>Oldest delivery problems</span>{ship.problems ? <Link className="link" href="/shipping">All {fmtInt(ship.problems)}</Link> : null}</div>
             {top.length ? top.slice(0, 5).map((s) => (<Link key={s.trackingId} className="ship-row" href={`/shipping?tab=shipments&q=${encodeURIComponent(s.order ?? '')}`}>
                 <span className="o">{s.order}</span>
                 <span className="d">{s.days ?? '?'} d</span>
-                <span className="m">{s.carrier}{s.place ? ` · last seen ${s.place}` : ''}{showBrand && s.brand ? ` · ${brands.find((b) => b.id === s.brand)?.short ?? s.brand}` : ''}</span>
+                <span className="m">{s.label ? `${s.label} · ` : ''}{s.carrier}{s.place ? ` · last seen ${s.place}` : ''}{showBrand && s.brand ? ` · ${brands.find((b) => b.id === s.brand)?.short ?? s.brand}` : ''}</span>
               </Link>)) : <div className="muted small">No delivery problems right now.</div>}
           </div>
         </>) : <Empty icon="truck" title={note}>{loading ? 'Shipping figures are being read and will show here shortly.' : 'Supabase is not set up or could not be reached. Open Shipping for details.'}</Empty>}

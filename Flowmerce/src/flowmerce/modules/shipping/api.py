@@ -6,8 +6,6 @@ connection_failed) so the page can explain what to do. /summary never fails: it 
 so a Shipping outage cannot break Home."""
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Body, Request, Response
 
 from ..seo.audit import audit
@@ -122,18 +120,8 @@ def checks(request: Request, brand: str = "all"):
     try:
         ds = _dataset(brand)
     except SupabaseError as e:
-        return {**_unavailable(brand, e), "mcf": None, "verify": None}
+        return {**_unavailable(brand, e), "exceptions": None, "reshipped": None}
     return board.envelope(ds, **board.checks(ds))
-
-
-@shipping.get("/unfulfilled")
-def unfulfilled(request: Request, brand: str = "all") -> dict[str, Any]:
-    require_perm(request, "view")
-    try:
-        ds = _dataset(brand)
-    except SupabaseError as e:
-        return {**_unavailable(brand, e), "total": 0, "rows": []}
-    return board.envelope(ds, **board.unfulfilled_report(ds))
 
 
 @shipping.get("/export/{kind}")
@@ -150,8 +138,6 @@ def export_kind(request: Request, kind: str, brand: str = "all", q: str = "", ca
         body, n, name = board.csv_shipments(rows), len(rows), "shipments.csv"
     elif kind == "escalation":
         (body, n), name = board.csv_escalation(ds), "escalation-list.csv"
-    elif kind == "verify":
-        (body, n), name = board.csv_verify(ds), "parcels-to-verify.csv"
     else:
         raise HttpError(404, "Unknown export.", "not_found")
     audit(user, "shipping.export", "shipping", kind, "" if brand == "all" else brand, summary=f"{n} rows")

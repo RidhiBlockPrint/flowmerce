@@ -1,22 +1,21 @@
 """The Shipping page: one cached snapshot of ops.flow_board, turned into every figure the page shows.
 
-Rules (agreed with operations, ported from the original tracker so the numbers match):
-  * Not dispatched yet: the clock starts at the ORDER date (grey 2-3, yellow 4-5, orange 6-8, red 9+ days).
-    Dispatched: the clock starts at the DISPATCH date (on track 0-3, yellow 4-5, orange 6-8, red 9+).
-    A carrier scan never resets the clock. Delivered parcels leave the active queue.
-  * Cancelled and refunded orders are left out of every figure.
-  * "Carrier unconfirmed": no carrier update at all. Amazon / unknown carrier: as soon as it is dispatched (Amazon
-    never tells Shopify). A named carrier (USPS, DHL, UPS, FedEx...): once NO_SCAN_GRACE_DAYS have passed since dispatch
-    without a single scan (Shopify never received its tracking; e.g. # RBP7437, USPS delivered the day before the
-    number was entered). There is no delivery data, so a person checks these by hand; they are never counted
-    critical or stuck. Parcels that do have carrier updates follow the normal rules. Also unconfirmed: an order older
-    than Shopify's 60-day window whose only status is the hub copy's "failure" (no carrier events to show whether it
-    came after a delivery, e.g. #4434 delivered by DHL on 9 Oct).
-  * Resolved: an order the team marked Delivered / Lost / Returned / Refunded (Shopify does not know), or a parcel the
-    carrier reports lost (e.g. DHL "request ... to dispose of the shipment") or returned (Amazon UNDELIVERABLE,
-    "returned to sender"). Resolved parcels leave Critical and every active / delay figure; they are listed under
-    "Resolved". Delivered parcels, cancelled and fully refunded orders were already left out.
-  * No movement: the last carrier scan is 5+ days old (no scan at all is "no scan", not "no movement").
+Rules (agreed with operations on 23 Nov 2026):
+  * Only DISPATCHED parcels are tracked, and only those dispatched in the last TRACK_DAYS (120) days: an open parcel
+    sent longer ago is not listed (agreed 23 Nov: older history would flood Critical). Orders not sent yet (Shopify unfulfilled, or with Amazon but not shipped)
+    are not shown anywhere, and neither are cancelled or refunded orders (nor cancelled Amazon MCF orders).
+  * Delivered by ANY evidence (Shopify, the carrier, Amazon's MCF data or its word on the order, a last scan saying
+    "Delivered", a team mark or outcome, another parcel of the order, a shared tracking number): the whole order is
+    delivered and leaves every list; it only counts in the delivery figures.
+  * The clock: days since the last carrier scan, or since dispatch while there is no scan yet. A scan resets it.
+    On track 0-3, Yellow 4-5, Orange 6-8, Critical 9+.
+  * Every active order is in exactly ONE section, the first that applies to any of its parcels:
+    Tracking missing (dispatched without a tracking number) > Invalid tracking (a number that never got any carrier
+    status or scan, NO_SCAN_GRACE_DAYS after dispatch) > Fix in Shopify (Amazon shipped but Shopify shows it
+    unfulfilled, an Amazon parcel the Shopify order does not list, a tracking number used on two parcels) >
+    Critical > Orange > Yellow > On track. All of the order's active parcels are listed in that section.
+  * Outside the active sections: Reshipped (an old parcel that was sent again) and Resolved (lost, returned, refunded
+    or couldn't deliver, by the team or the carrier's own words).
   * Shopify's "delivered" is shown as delivered but is not carrier-confirmed (see rules.status_view).
   * Missing data is reported as unavailable with a reason, never as zero.
 
@@ -51,12 +50,10 @@ UTC = timezone.utc
 IST = timezone(timedelta(hours=5, minutes=30))     # India has no daylight saving: a fixed offset is exact
 DAY = 86400
 
-THRESH = {"grey": 2, "yellow": 4, "orange": 6, "red": 9}
-NO_MOVE_DAYS = 5
-HUB_SCAN_PREFIX = "Shopify shipment status: "   # the one "scan" 105 writes for a hub-only order (no carrier events)
-NO_SCAN_GRACE_DAYS = 3          # a named carrier's first scan normally reaches Shopify within 1-2 days of dispatch
-PRE_DISPATCH_DAYS = 60          # undispatched orders older than this are not tracked here (see 107_flow_board.sql)
+THRESH = {"yellow": 4, "orange": 6, "red": 9}
+NO_SCAN_GRACE_DAYS = 3          # a carrier's first scan normally reaches Shopify within 1-2 days of dispatch
 DELIVERED_KEEP_DAYS = 100       # delivered parcels kept in the snapshot (delivery performance looks back 90 days)
+TRACK_DAYS = 120                # open parcels dispatched longer ago than this are not tracked here
 CACHE_SECONDS = 20 * 60        # the data changes only when a refresh runs (every 15 min); each refresh reloads it
 BUILT_SECONDS = 5 * 60          # a built board (every figure of the page) is reused this long for the same snapshot
 STALE_HOURS = 2                 # the refresh runs every 15 minutes; 2 hours without success is stale
@@ -64,40 +61,41 @@ STALE_HOURS = 2                 # the refresh runs every 15 minutes; 2 hours wit
 BRAND_STORE = {"ridhi": "RBP", "cpc": "CPC"}
 STORE_BRAND = {v: k for k, v in BRAND_STORE.items()}
 
-RANK = {"red": 0, "orange": 1, "yellow": 2, "grey": 3, "no_scan": 4, "on_track": 5, "unconfirmed": 5,
-        "lost": 5, "failed": 5, "delivered": 6}
-LABELS = {"on_track": "On track", "grey": "Grey 2-3 days", "yellow": "Yellow 4-5 days", "orange": "Orange 6-8 days",
-          "red": "Critical 9+ days", "no_scan": "No scan data", "delivered": "Delivered",
-          "unconfirmed": "Carrier unconfirmed", "lost": "Lost (team confirmed)",
-          "failed": "Couldn't deliver (team confirmed)"}
-ACTIONS = {"on_track": "Continue monitoring.", "grey": "Continue monitoring.",
+# The active sections, first wins: an order is listed in the first one that applies to any of its parcels
+SECTIONS = ("tracking_missing", "invalid", "checks", "red", "orange", "yellow", "on_track")
+RANK = {k: i for i, k in enumerate(SECTIONS)}
+LABELS = {"on_track": "On track 0-3 days", "yellow": "Yellow 4-5 days", "orange": "Orange 6-8 days",
+          "red": "Critical 9+ days", "tracking_missing": "Tracking missing", "invalid": "Invalid tracking",
+          "checks": "Fix in Shopify", "delivered": "Delivered"}
+ACTIONS = {"on_track": "Continue monitoring.",
            "yellow": "Review if the carrier or the promised delivery date shows a problem.",
            "orange": "Prioritise for investigation.", "red": "Add to the urgent escalation list.",
-           "no_scan": "Verify the tracking details or wait for the first carrier scan.",
+           "tracking_missing": "Add the tracking number in Shopify.",
+           "invalid": "The carrier has never reported anything on this number: check it on the carrier page, correct it in "
+                      "Shopify if it is wrong, then record a team mark.",
            "delivered": "None. Delivered."}
-# "Unconfirmed" (no carrier reports on it: Amazon or an unnamed carrier) has no age band, but it is part of the active
-# total, so the age charts list it and their bars add up to the active shipments
-AGING_KEYS = ("red", "orange", "yellow", "grey", "on_track", "unconfirmed", "no_scan")
-AGING_LABELS = {"red": "Critical 9+", "orange": "Orange 6-8", "yellow": "Yellow 4-5", "grey": "Grey 2-3",
-                "on_track": "On track", "unconfirmed": "Unconfirmed", "no_scan": "No scan"}
-MCF_LEVELS = ((10, "critical"), (7, "watch"), (5, "alert"))
+# every active section; the age charts list them all, so their bars add up to the active shipments
+AGING_KEYS = SECTIONS
+AGING_LABELS = {"red": "Critical 9+", "orange": "Orange 6-8", "yellow": "Yellow 4-5", "on_track": "On track",
+                "tracking_missing": "Tracking missing", "invalid": "Invalid tracking", "checks": "Fix in Shopify"}
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 TEAM_STATES = ("delivered", "lost", "failed", "in_transit")
-OUTCOMES = {"delivered": "Delivered", "lost": "Lost", "returned": "Returned", "refunded": "Refunded"}
+OUTCOMES = {"delivered": "Delivered", "lost": "Lost", "returned": "Returned", "refunded": "Refunded",
+            "failed": "Couldn't deliver"}
+TEAM_OUTCOMES = ("delivered", "lost", "returned", "refunded")       # what the team can set on a whole order
 LOST_RE = re.compile(r"\bdispos(?:e|al|ed)\b|\bdestroy(?:ed)?\b|\blost\b", re.I)
 RETURN_RE = re.compile(r"return(?:ed|ing)?\s+to\s+(?:the\s+)?(?:sender|shipper|seller|origin|amazon)|\brts\b", re.I)
 RETURN_RAW = {"RETURNED", "RETURNING", "RETURNED_TO_SENDER", "RETURN_TO_SENDER", "UNDELIVERABLE"}
+# The hand checks: every order in the Tracking missing, Invalid tracking or Fix in Shopify section, one row each
 EXC_TYPES = {
-    "carrier_exception": {"label": "Carrier exception", "severity": "high"},
-    "stuck": {"label": "No movement", "severity": "high"},
-    "missing_tracking": {"label": "Dispatched without tracking number", "severity": "high"},
-    "overdue": {"label": "Past promised date", "severity": "medium"},
-    "delivered_not_marked": {"label": "Delivered but not marked", "severity": "medium"},
-    "duplicate_tracking": {"label": "Duplicate tracking number", "severity": "medium"},
-    "amazon_not_in_shopify": {"label": "Shipped by Amazon, unfulfilled in Shopify", "severity": "medium"},
-    "amazon_tracking_missing": {"label": "Amazon parcel not on the Shopify order", "severity": "medium"},
+    "missing_tracking": {"label": "Tracking missing", "severity": "high", "section": "tracking_missing"},
+    "invalid_tracking": {"label": "Invalid tracking", "severity": "high", "section": "invalid"},
+    "amazon_not_in_shopify": {"label": "Shipped by Amazon, unfulfilled in Shopify", "severity": "medium", "section": "checks"},
+    "amazon_tracking_missing": {"label": "Amazon parcel not on the Shopify order", "severity": "medium", "section": "checks"},
+    "duplicate_tracking": {"label": "Duplicate tracking number", "severity": "medium", "section": "checks"},
 }
-SORTS = ("priority", "stuck", "order", "oldest")
+SORTS = ("priority", "order", "oldest")
+HAND_CHECKS = ("tracking_missing", "invalid", "checks")
 COLUMNS = ("row_kind,row_id,tracking_id,shipment_id,store,order_id,order_name,placed_at,kind,carrier_name,tracking_number,track_url,"
            "status,raw_status,source,shipped_at,last_scan_at,last_scan_place,last_scan_text,delivered_at,eta,"
            "last_check_ok_at,team_mark,team_mark_at,open_exceptions,total,currency,financial_status,"
@@ -142,22 +140,22 @@ def unconfirmed_carrier(name: str) -> bool:
     return c in ("", "unknown", "unknown carrier") or "amazon" in c
 
 
-def flow_category(created: datetime | None, dispatched: datetime | None, now: datetime,
+def band(days: int) -> str:
+    t = THRESH
+    return "red" if days >= t["red"] else "orange" if days >= t["orange"] else "yellow" if days >= t["yellow"] else "on_track"
+
+
+def flow_category(dispatched: datetime | None, last_scan: datetime | None, now: datetime,
                   delivered: bool) -> tuple[str, int | None, str]:
-    """(category, days in stage, stage)."""
+    """(category, days on the clock, stage). The clock runs from the last carrier scan, or from dispatch while there is
+    no scan yet: a scan resets it."""
     if delivered:
         return "delivered", None, "delivered"
-    t = THRESH
     if dispatched is None:
-        d = whole_days(created, now)
-        if d is None:
-            return "no_scan", None, "pre_dispatch"
-        cat = "red" if d >= t["red"] else "orange" if d >= t["orange"] else "yellow" if d >= t["yellow"] \
-            else "grey" if d >= t["grey"] else "on_track"
-        return cat, d, "pre_dispatch"
-    d = whole_days(dispatched, now) or 0
-    cat = "red" if d >= t["red"] else "orange" if d >= t["orange"] else "yellow" if d >= t["yellow"] else "on_track"
-    return cat, d, "dispatched"
+        return "", None, "pre_dispatch"           # not sent yet: not tracked on this page
+    since = max(dispatched, last_scan) if last_scan else dispatched
+    d = whole_days(since, now) or 0
+    return band(d), d, "dispatched"
 
 
 def brand_stores(brand: str | None) -> tuple[str, ...]:
@@ -436,15 +434,14 @@ def apply_mark(tracking_id: str, mark: str | None) -> None:
 # ------------------------------------------------------------------------------------------------ enrichment
 @dataclass
 class Dataset:
-    rows: list[dict[str, Any]]          # after exclusions (cancelled, refunded) and without reshipped parcels
-    everything: list[dict[str, Any]]    # before exclusions (order detail)
+    rows: list[dict[str, Any]]          # dispatched parcels: active (one section each) and delivered
+    everything: list[dict[str, Any]]    # every dispatched parcel, before exclusions (order detail)
     now: datetime
     brand: str
     snap: Snapshot
     marks: dict[tuple[str, int], dict[str, Any]]
     reshipped: list[dict[str, Any]] = None  # type: ignore[assignment]  # old parcels the team sent again
-    resolved: list[dict[str, Any]] = None   # type: ignore[assignment]  # delivered / lost / returned / refunded
-    unfulfilled: list[dict[str, Any]] = None  # type: ignore[assignment]  # orders not dispatched yet (own tab)
+    resolved: list[dict[str, Any]] = None   # type: ignore[assignment]  # lost / returned / refunded / couldn't deliver
     memo: dict[tuple[Any, ...], Any] = field(default_factory=dict, repr=False)  # figures already worked out (_memoized)
 
     @property
@@ -452,40 +449,40 @@ class Dataset:
         return [r for r in self.rows if r["cat"] != "delivered"]
 
 
+DELIVERED_SCAN = re.compile(r"^\s*delivered", re.I)
+
+
 def _enrich(s: dict[str, Any], now: datetime) -> dict[str, Any] | None:
+    """One dispatched parcel with its clock and the facts the sections are decided from. None for a row this page does
+    not track: an order not sent yet, or tracking that closed without an outcome."""
     status = (s.get("status") or "").lower()
     if status == "expired":
         return None                     # tracking closed without an outcome: nothing to act on
     carrier = s.get("carrier_name") or ""
     tracking = s.get("tracking_number") or ""
     created, shipped = ts(s.get("placed_at")), ts(s.get("shipped_at"))
+    if s["row_kind"] == "order":
+        shipped = None
     last_scan, delivered_at = ts(s.get("last_scan_at")), ts(s.get("delivered_at"))
-    delivered = status == "delivered"
-    cat, days, stage = flow_category(created, shipped if s["row_kind"] != "order" else None, now, delivered)
-    no_data = status in ("", "pending") and last_scan is None
-    # No carrier data: Amazon (or an unnamed carrier) tells neither Shopify nor Flowmerce about delivery, so a person
-    # checks it. A named carrier whose first scan never reached Shopify after NO_SCAN_GRACE_DAYS is the same case: the
-    # delay clock would call it critical with no evidence. Only once dispatched: a package not shipped yet keeps its clock.
-    via_amazon = unconfirmed_carrier(carrier) or s.get("kind") == "mcf" or s["row_kind"] == "amazon"
-    never_scanned = s["row_kind"] == "tracking" and (whole_days(shipped, now) or 0) >= NO_SCAN_GRACE_DAYS
-    # Orders older than Shopify's 60-day window reach Flowmerce only through the hub's copy: one status word, no carrier
-    # events. A lone "failure" there cannot be told apart from DHL's stray FAILURE after delivery (e.g. #4434: DHL
-    # delivered 9 Oct, Shopify's last word "failure" on 25 Oct), so it is checked by hand, never counted critical.
-    hub_failure = (status == "exception" and s["row_kind"] == "tracking"
-                   and (s.get("last_scan_text") or "").startswith(HUB_SCAN_PREFIX))
-    unconfirmed = stage == "dispatched" and ((no_data and (via_amazon or never_scanned)) or hub_failure)
-    scan_age = whole_days(last_scan, now)
-    no_move = cat != "delivered" and not unconfirmed and scan_age is not None and scan_age >= NO_MOVE_DAYS
-    exc = ""
-    if status in ("exception", "returned") and not (unconfirmed and hub_failure):
-        exc = (s.get("raw_status") or status).lower()
-    shown = "unconfirmed" if cat != "delivered" and unconfirmed else cat
-    manual = None
     mark = (s.get("team_mark") or "").lower()
-    if unconfirmed and mark in TEAM_STATES:
-        manual = {"status": mark, "at": s.get("team_mark_at")}
-        shown = {"delivered": "delivered", "lost": "lost", "failed": "failed"}.get(mark, shown)
+    manual = {"status": mark, "at": s.get("team_mark_at")} if mark in TEAM_STATES else None
+    # delivered by the parcel's own evidence: its status, a last scan that says so, or the team's mark
+    scan_says = bool(DELIVERED_SCAN.match(s.get("last_scan_text") or ""))
+    delivered = status == "delivered" or scan_says or mark == "delivered"
+    if delivered and not delivered_at and scan_says:
+        delivered_at = last_scan
+    cat, days, stage = flow_category(shipped, last_scan, now, delivered)
+    if stage == "pre_dispatch":
+        return None                     # not sent yet: not tracked on this page
+    if not delivered and (whole_days(shipped, now) or 0) > TRACK_DAYS:
+        return None                     # sent more than TRACK_DAYS ago and never confirmed: out of this page's window
+    exc = (s.get("raw_status") or status).lower() if status in ("exception", "returned") else ""
     fin = (s.get("financial_status") or "").upper()
+    missing = s["row_kind"] in ("shipment", "tracking", "amazon") and not tracking
+    # a number no carrier has said anything about (no status, no scan) after the grace days: the number is wrong,
+    # or was never handed to the carrier. Any status or scan at all means the number is real.
+    invalid = (not delivered and not missing and status in ("", "pending") and last_scan is None
+               and (whole_days(shipped, now) or 0) >= NO_SCAN_GRACE_DAYS)
     return {
         **s,
         "brand": STORE_BRAND.get(s.get("store") or "", s.get("store")),
@@ -493,12 +490,12 @@ def _enrich(s: dict[str, Any], now: datetime) -> dict[str, Any] | None:
         "carrier_name": carrier,
         "tracking_number": tracking,
         "normalized_tracking_status": status,
-        "created": created, "shipped": None if s["row_kind"] == "order" else shipped,
+        "created": created, "shipped": shipped,
         "lastScan": last_scan, "deliveredAt": delivered_at, "expected": day_end(s.get("eta")),
-        "cat": shown, "agingCat": cat, "days": days, "stage": stage, "scanAge": scan_age, "noMove": no_move,
-        "unconfirmed": unconfirmed, "hubFailure": unconfirmed and hub_failure, "exc": exc, "manual": manual,
+        "cat": cat, "band": cat, "agingCat": cat, "days": days, "stage": stage, "scanAge": whole_days(last_scan, now),
+        "exc": exc, "manual": manual, "invalid": invalid, "issues": [],
         # a fulfilment row with a number shares another order's parcel (two orders sent in one box), so it has tracking
-        "missingTracking": s["row_kind"] in ("shipment", "tracking", "amazon") and not tracking,
+        "missingTracking": missing,
         "excluded": "cancelled" if s.get("cancelled_at") else "refunded" if fin == "REFUNDED" else None,
         "key": f"{s['row_kind']}:{s['row_id']}",
     }
@@ -537,11 +534,12 @@ def _mark_resolved(everything: list[dict[str, Any]], marks: dict[tuple[str, int]
             m = marks.get((r.get("store") or "", int(r.get("order_id") or 0)))
         except (TypeError, ValueError):
             m = None
-        if m and m.get("outcome") in OUTCOMES:
+        if m and m.get("outcome") in TEAM_OUTCOMES:
             r["resolved"] = {"outcome": m["outcome"], "label": OUTCOMES[m["outcome"]], "by": "team",
                              "who": m.get("outcome_by"), "at": m.get("outcome_at"), "detail": ""}
-        elif r["manual"] and r["manual"]["status"] == "lost":
-            r["resolved"] = {"outcome": "lost", "label": "Lost", "by": "team", "who": None, "at": r["manual"].get("at"),
+        elif r["manual"] and r["manual"]["status"] in ("lost", "failed"):
+            o = r["manual"]["status"]
+            r["resolved"] = {"outcome": o, "label": OUTCOMES[o], "by": "team", "who": None, "at": r["manual"].get("at"),
                              "detail": "Team mark on the parcel."}
         else:
             o = carrier_outcome(r)
@@ -550,7 +548,9 @@ def _mark_resolved(everything: list[dict[str, Any]], marks: dict[tuple[str, int]
                                  "at": iso(r["lastScan"]), "detail": r.get("last_scan_text") or r.get("raw_status") or ""}
 
 
-DELIVERED_SCAN = re.compile(r"^\s*delivered", re.I)
+def _amazon_says_delivered(r: dict[str, Any]) -> bool:
+    amazon = r.get("amazon_status") or ""
+    return bool(AMAZON_DELIVERED.search(amazon) and not AMAZON_NOT_DELIVERED.search(amazon))
 
 
 def _mark_order_delivered(everything: list[dict[str, Any]], numbers: dict[str, set[str]] | None = None) -> None:
@@ -584,12 +584,15 @@ def _mark_order_delivered(everything: list[dict[str, Any]], numbers: dict[str, s
                                         f"Sent together with order {x['order_number']}: {parcel} was delivered{on}, and "
                                         f"this order's Shopify fulfilment lists that number.")}
     for parcels in by.values():
-        for r in parcels:            # the carrier's own last word is "Delivered ..." but the status never caught up
-            if r["cat"] != "delivered" and not r.get("resolved") and DELIVERED_SCAN.match(r.get("last_scan_text") or ""):
-                r["resolved"] = {"outcome": "delivered", "label": "Delivered", "by": "order", "who": None,
-                                 "at": iso(r["lastScan"]),
-                                 "detail": f"The carrier's last scan says \"{(r.get('last_scan_text') or '')[:80]}\"."}
         done = [r for r in parcels if r["cat"] == "delivered" or (r.get("resolved") or {}).get("outcome") == "delivered"]
+        word = next((r for r in parcels if _amazon_says_delivered(r)), None)
+        if not done and word is not None:   # Amazon's own word on the order ("Package delivered near the front door")
+            for r in parcels:
+                if r["cat"] != "delivered" and not r.get("resolved"):
+                    r["resolved"] = {"outcome": "delivered", "label": "Delivered", "by": "order", "who": None,
+                                     "at": word.get("amazon_at"),
+                                     "detail": f"Amazon says \"{(word.get('amazon_status') or '')[:80]}\"."}
+            continue
         if not done:
             continue
         delivered_by = {(r["tracking_number"] or "").upper(): r for r in done if r["tracking_number"]}
@@ -621,14 +624,54 @@ def build(brand: str | None, now: datetime | None = None, snap: Snapshot | None 
     _mark_reshipped(everything, snap)
     _mark_resolved(everything, marks)
     _mark_order_delivered(everything, snap.numbers)
+    for r in everything:                  # delivered by any evidence: delivered, never "resolved"
+        if (r.get("resolved") or {}).get("outcome") == "delivered":
+            r["deliveredBy"] = r.pop("resolved")
+            r["cat"] = "delivered"
     rows = [r for r in everything if not r["excluded"] and not r.get("reshipped") and not r.get("resolved")]
-    # not dispatched yet (Shopify unfulfilled, or with Amazon but not shipped): listed on their own Unfulfilled tab,
-    # never in Critical or any delay figure of the shipments
-    unfulfilled = [r for r in rows if r["stage"] == "pre_dispatch"]
-    rows = [r for r in rows if r["stage"] != "pre_dispatch"]
-    reshipped = [r for r in everything if not r["excluded"] and r.get("reshipped") and not r.get("resolved")]
+    _assign_sections(rows, now)
+    reshipped = [r for r in everything if not r["excluded"] and r.get("reshipped") and not r.get("resolved")
+                 and r["cat"] != "delivered"]
     resolved = [r for r in everything if not r["excluded"] and r.get("resolved")]
-    return Dataset(rows, everything, now, brand or "all", snap, marks, reshipped, resolved, unfulfilled)
+    return Dataset(rows, everything, now, brand or "all", snap, marks, reshipped, resolved)
+
+
+def _assign_sections(rows: list[dict[str, Any]], now: datetime) -> None:
+    """Each active parcel's own section, then every active parcel of an order moves to the order's first section, so
+    an order is listed (and checked) once."""
+    active = [r for r in rows if r["cat"] != "delivered"]
+    dup = Counter(r["tracking_number"].upper() for r in active if r["tracking_number"])
+    for r in active:
+        issues: list[tuple[str, str]] = []
+        if r["missingTracking"]:
+            issues.append(("missing_tracking", f"Dispatched {whole_days(r['shipped'], now) or 0} days ago with no tracking "
+                           f"number. Add it in Shopify."))
+        elif r["invalid"]:
+            issues.append(("invalid_tracking", f"{r['carrier_name'] or 'The carrier'} has reported nothing on "
+                           f"{r['tracking_number']} since it was dispatched {whole_days(r['shipped'], now) or 0} days ago. "
+                           f"Check the number."))
+        if r["row_kind"] == "amazon" and r.get("amazon_extra"):
+            issues.append(("amazon_tracking_missing", f"Amazon (MCF) sent a parcel"
+                           f"{' (tracking ' + r['tracking_number'] + ')' if r['tracking_number'] else ''} that is not on the "
+                           f"Shopify order, which lists {', '.join(r['amazon_extra'])}. Check whether the order was split or "
+                           f"sent twice, and add the Amazon tracking number to the Shopify order."))
+        elif r["row_kind"] == "amazon":
+            issues.append(("amazon_not_in_shopify", f"Amazon shipped it {whole_days(r['shipped'], now) or 0} days ago"
+                           f"{' (tracking ' + r['tracking_number'] + ')' if r['tracking_number'] else ''}; Shopify still shows "
+                           f"the order unfulfilled. Mark it fulfilled in Shopify."))
+        if r["tracking_number"] and dup[r["tracking_number"].upper()] > 1:
+            issues.append(("duplicate_tracking", f"Tracking number {r['tracking_number']} is used on "
+                           f"{dup[r['tracking_number'].upper()]} parcels."))
+        r["issues"] = issues
+        own = min((EXC_TYPES[k]["section"] for k, _ in issues), key=RANK.__getitem__, default=r["band"])
+        r["ownCat"] = r["cat"] = own
+    by: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in active:
+        by.setdefault((r.get("store") or "", _digits(r["order_number"])), []).append(r)
+    for parcels in by.values():
+        top = min((r["cat"] for r in parcels), key=RANK.__getitem__)
+        for r in parcels:
+            r["cat"] = top
 
 
 def _digits(name: str) -> str:
@@ -824,94 +867,25 @@ AMAZON_NOT_DELIVERED = re.compile(r"\b(not|un)\s*deliver|undeliverable|out for d
 
 
 def delivered_orders(ds: Dataset) -> set[tuple[str, str]]:
-    """(store, order number digits) of every order that has arrived, by any source: a delivered parcel (Shopify, the
-    carrier or Amazon's MCF data), a parcel resolved as Delivered, or Amazon's own word on the order ("Package
-    delivered near the front door"). A delivered order is never listed as a problem anywhere."""
-    out: set[tuple[str, str]] = set()
-    for r in ds.everything:
-        amazon = r.get("amazon_status") or ""
-        if (r["cat"] == "delivered" or (r.get("resolved") or {}).get("outcome") == "delivered"
-                or (AMAZON_DELIVERED.search(amazon) and not AMAZON_NOT_DELIVERED.search(amazon))):
-            out.add((r.get("store") or "", _digits(r["order_number"])))
-    return out
-
-
-def mcf_report(ds: Dataset) -> dict[str, Any]:
-    seen: set[str] = set()
-    rows = []
-    arrived = delivered_orders(ds)
-    for r in (ds.unfulfilled or []) + ds.rows:
-        o = r["order_number"]
-        if o in seen or not r.get("note_done"):
-            continue
-        seen.add(o)
-        if (r.get("fulfillment_status") or "").upper() == "FULFILLED":
-            continue
-        if (r.get("store") or "", _digits(o)) in arrived:
-            continue                     # delivered (often by Amazon) even though Shopify was never updated
-        age = whole_days(r["created"], ds.now)
-        level = next((lv for d, lv in MCF_LEVELS if age is not None and age >= d), None)
-        if level:
-            rows.append({"order": o, "age": age, "status": (r.get("fulfillment_status") or "NOT FULFILLED").upper(),
-                         "level": level, "brand": r["brand"], "amazon": r.get("amazon_status"), "shopifyUrl": shopify_url(r),
-                         "amazonTracking": r.get("amazon_tracking")})
-    rows.sort(key=lambda x: -(x["age"] or 0))
-    return {"available": True, "rows": rows, "counts": {lv: sum(1 for x in rows if x["level"] == lv) for _, lv in MCF_LEVELS},
-            "amazonKnown": ds.snap.amazon,
-            "withAmazonRecord": sum(1 for x in rows if x["amazon"]),
-            "rule": "DONE in the order note is the team's note that the shipping team has handled the order. Shopify still "
-                    "shows these as not fulfilled 5+ days after the order, so someone must check how it was sent and mark it "
-                    "fulfilled with its tracking number. The Amazon column is the hub's latest Amazon (MCF) status, where one exists."}
-
-
-def verify_report(ds: Dataset) -> dict[str, Any]:
-    group = [r for r in ds.rows if r["unconfirmed"]]
-    # the team's results include parcels a "lost" mark has moved to Resolved, but not a parcel whose order was
-    # delivered after the mark (# RBP7010: marked "still in transit", then delivered): that one is no longer in transit
-    st = Counter((r["manual"] or {}).get("status", "") for r in group + [x for x in ds.resolved or [] if x["unconfirmed"] and x["manual"]
-                                                                       and (x.get("resolved") or {}).get("by") == "team"])
-    return {"total": len(group), "missingTracking": sum(1 for r in group if r["missingTracking"]),
-            "team": {"delivered": st["delivered"], "lost": st["lost"], "failed": st["failed"],
-                     "inTransit": st["in_transit"], "notChecked": st[""]}, "teamReason": ""}
+    """(store, order number digits) of every order that has arrived, by any source. Every parcel of such an order is
+    already delivered on the board (build); this is the same fact as a set, for checks from outside."""
+    return {(r.get("store") or "", _digits(r["order_number"])) for r in ds.everything if r["cat"] == "delivered"}
 
 
 def exception_rows(ds: Dataset) -> list[dict[str, Any]]:
+    """Every hand-check issue of the parcels in the Tracking missing, Invalid tracking and Fix in Shopify sections."""
     out: list[dict[str, Any]] = []
-
-    def add(r: dict[str, Any], kind: str, detail: str) -> None:
-        t = EXC_TYPES[kind]
-        out.append({"order": r["order_number"], "key": r["key"], "type": kind, "label": t["label"], "severity": t["severity"],
-                    "detail": detail, "carrier": r["carrier_name"] or "Unknown",
-                    "tracking": "" if r["missingTracking"] else r["tracking_number"], "days": r["days"], "brand": r["brand"],
-                    "shopifyUrl": shopify_url(r)})
-
-    dup = Counter(r["tracking_number"] for r in ds.active if r["tracking_number"])
-    for r in ds.rows:
-        if r["exc"]:
-            add(r, "carrier_exception", f"{r['exc'].replace('_', ' ')}{': ' + r['last_scan_text'] if r.get('last_scan_text') else ''}")
     for r in ds.active:
-        if r["row_kind"] == "amazon" and r.get("amazon_extra"):
-            add(r, "amazon_tracking_missing", f"Amazon (MCF) sent a parcel"
-                f"{' (tracking ' + r['tracking_number'] + ')' if r['tracking_number'] else ''} that is not on the Shopify order, "
-                f"which lists {', '.join(r['amazon_extra'])}. Check whether the order was split or sent twice, and add the "
-                f"Amazon tracking number to the Shopify order.")
-        elif r["row_kind"] == "amazon" and r["shipped"]:
-            add(r, "amazon_not_in_shopify", f"Amazon shipped it {r['days'] or 0} days ago"
-                f"{' (tracking ' + r['tracking_number'] + ')' if r['tracking_number'] else ''}; Shopify still shows the order unfulfilled. Mark it fulfilled in Shopify.")
-        if r["row_kind"] == "shipment" and r["missingTracking"]:
-            add(r, "missing_tracking", f"Dispatched {r['days'] or 0} days ago with no tracking number. Add it in Shopify.")
-        if r["noMove"]:
-            add(r, "stuck", f"No carrier scan for {r['scanAge']} days (last: {r.get('last_scan_text') or 'no description'}).")
-        if (r["stage"] == "dispatched" and not r["unconfirmed"] and r["expected"] and not r["noMove"] and not r["exc"]
-                and (ds.now - r["expected"]).total_seconds() >= DAY):
-            late = int((ds.now - r["expected"]).total_seconds() // DAY)
-            add(r, "overdue", f"Promised {r['expected'].date().isoformat()}, now {late} day(s) late.")
-        if re.match(r"^\s*delivered", r.get("last_scan_text") or "", re.I):
-            add(r, "delivered_not_marked", f"Last scan says \"{r['last_scan_text'][:80]}\" but the parcel is not marked delivered.")
-        if r["tracking_number"] and dup[r["tracking_number"]] > 1:
-            add(r, "duplicate_tracking", f"Tracking number {r['tracking_number']} is used on {dup[r['tracking_number']]} parcels.")
+        if r["cat"] not in HAND_CHECKS:
+            continue
+        for kind, detail in r["issues"]:
+            t = EXC_TYPES[kind]
+            out.append({"order": r["order_number"], "key": r["key"], "type": kind, "label": t["label"],
+                        "severity": t["severity"], "detail": detail, "carrier": r["carrier_name"] or "Unknown",
+                        "tracking": "" if r["missingTracking"] else r["tracking_number"], "days": r["days"],
+                        "brand": r["brand"], "shopifyUrl": shopify_url(r), "section": r["cat"]})
     sev = {"high": 0, "medium": 1}
-    out.sort(key=lambda x: (sev[x["severity"]], -(x["days"] or 0), x["order"]))
+    out.sort(key=lambda x: (RANK[x["section"]], sev[x["severity"]], -(x["days"] or 0), x["order"]))
     return out
 
 
@@ -919,7 +893,7 @@ def exception_orders(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One row per order: its issues (one tag each, most severe first) across all its parcels. Keeps the first
     issue's fields at the top level so a row still reads like a single issue."""
     by: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for x in issues:                         # issues arrive sorted: severity, then age
+    for x in issues:                         # issues arrive sorted: section, severity, then age
         by.setdefault((x["brand"] or "", x["order"]), []).append(x)
     out = []
     for xs in by.values():
@@ -942,26 +916,26 @@ def exception_orders(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 @_memoized
 def checks(ds: Dataset) -> dict[str, Any]:
-    mcf, ver, issues = mcf_report(ds), verify_report(ds), exception_rows(ds)
+    issues = exception_rows(ds)
     rows = exception_orders(issues)
-    return {"mcf": mcf, "verify": ver, "reshipped": reshipped_report(ds),
-            "counts": {"mcf": mcf["counts"], "toVerify": ver["total"], "missingTracking": ver["missingTracking"]},
+    return {"reshipped": reshipped_report(ds),
+            "counts": {s: len({(r["brand"], r["order_number"]) for r in ds.active if r["cat"] == s}) for s in HAND_CHECKS},
             # total = orders (one row each); counts = orders with that type, so an order with two tags counts in both
             "exceptions": {"total": len(rows), "issues": len(issues),
                            "counts": {k: sum(1 for r in rows if k in r["types"]) for k in EXC_TYPES},
-                           "types": [{"key": k, **v} for k, v in EXC_TYPES.items()], "rows": rows}}
+                           "types": [{"key": k, "label": v["label"], "severity": v["severity"]} for k, v in EXC_TYPES.items()],
+                           "rows": rows}}
 
 
 def kpis(ds: Dataset) -> list[dict[str, Any]]:
     active = ds.active
     counts = Counter(r["cat"] for r in active)
-    values = {"": len(active), "exception": sum(1 for r in ds.rows if r["exc"]), "nomove": sum(1 for r in ds.rows if r["noMove"]),
-              "reshipped": len(ds.reshipped or []), "unfulfilled": len(unfulfilled_orders(ds))}
     spec = (("", "Total active shipments", "neutral"), ("on_track", "On track (0-3 days)", "good"),
-            ("grey", "Grey 2-3 days", "muted"), ("yellow", "Yellow 4-5 days", "warn"), ("orange", "Orange 6-8 days", "orange"),
-            ("red", "Red 9+ days", "bad"), ("unconfirmed", "Carrier unconfirmed (no carrier updates)", "info"),
-            ("exception", "Carrier exceptions", "bad"), ("nomove", f"No movement ({NO_MOVE_DAYS}+ days)", "orange"),
-            ("reshipped", "Reshipped, old parcel still open", "info"), ("unfulfilled", "Unfulfilled orders (not sent yet)", "warn"))
+            ("yellow", "Yellow 4-5 days", "warn"), ("orange", "Orange 6-8 days", "orange"),
+            ("red", "Critical 9+ days", "bad"), ("tracking_missing", "Tracking missing", "bad"),
+            ("invalid", "Invalid tracking", "info"), ("checks", "Fix in Shopify", "warn"),
+            ("reshipped", "Reshipped, old parcel still open", "info"))
+    values = {"": len(active), "reshipped": len(ds.reshipped or [])}
     return [{"key": k, "label": label, "value": values[k] if k in values else counts.get(k, 0), "tone": tone}
             for k, label, tone in spec]
 
@@ -976,9 +950,9 @@ def reshipped_report(ds: Dataset) -> dict[str, Any]:
     rows = []
     for r in sorted(ds.reshipped or [], key=lambda r: -(r["days"] or 0)):
         rs = r["reshipped"]
-        rows.append({"order": r["order_number"], "key": r["key"], "brand": r["brand"], "carrier": r["carrier_name"] or "—", "shopifyUrl": shopify_url(r),
-                     "tracking": "" if r["missingTracking"] else r["tracking_number"], "oldCat": r["agingCat"],
-                     "oldStatus": r["normalized_tracking_status"] or ("not dispatched" if r["stage"] == "pre_dispatch" else ""),
+        rows.append({"order": r["order_number"], "key": r["key"], "brand": r["brand"], "carrier": r["carrier_name"] or "—",
+                     "shopifyUrl": shopify_url(r), "tracking": "" if r["missingTracking"] else r["tracking_number"],
+                     "oldCat": r["band"], "oldStatus": r["normalized_tracking_status"] or "",
                      "lastScan": r.get("last_scan_text") or "", "days": r["days"], "stage": r["stage"],
                      "how": rs["how"], "howLabel": RESHIP_HOW.get(rs["how"], rs["how"]), "detail": rs["detail"],
                      "newOrder": rs.get("newOrder"), "newTracking": rs.get("newTracking"), "newCarrier": rs.get("newCarrier"),
@@ -987,52 +961,8 @@ def reshipped_report(ds: Dataset) -> dict[str, Any]:
     return {"total": len(rows), "rows": rows,
             "counts": {k: sum(1 for x in rows if x["how"] == k) for k in RESHIP_HOW},
             "rule": "A parcel that never arrived but was sent again: a replacement order names it, a later parcel of the same "
-                    "order carries the same items, the order note says it was reshipped, or another carrier delivered "
-                    "the order. These are left out of every "
-                    "delay figure."}
-
-
-def unfulfilled_orders(ds: Dataset) -> list[dict[str, Any]]:
-    """One row per order not dispatched yet, longest waiting first."""
-    best: dict[tuple[str, str], dict[str, Any]] = {}
-    for r in ds.unfulfilled or []:
-        k = (r["brand"] or "", r["order_number"])
-        if k not in best or (r["days"] or 0) > (best[k]["days"] or 0):
-            best[k] = r
-    return sorted(best.values(), key=lambda r: (-(r["days"] or 0), r["order_number"]))
-
-
-UNFULFILLED_BANDS = (("9+", "9+ days", 9), ("6-8", "6-8 days", 6), ("4-5", "4-5 days", 4), ("0-3", "0-3 days", 0))
-
-
-@_memoized
-def unfulfilled_report(ds: Dataset) -> dict[str, Any]:
-    rows = []
-    for r in unfulfilled_orders(ds):
-        days = r["days"] or 0
-        band = next(k for k, _, low in UNFULFILLED_BANDS if days >= low)
-        with_amazon = r["row_kind"] == "amazon"
-        amazon = r.get("amazon_status") or (r.get("last_scan_text") if with_amazon else None)
-        if with_amazon:
-            action = "Amazon has the request but has not shipped it yet. Check the order in Amazon Seller Central."
-        elif amazon:
-            action = f"Amazon: {amazon}. Send it another way or cancel it in Shopify."
-        elif r.get("note_done"):
-            action = "The note says DONE but Shopify shows no fulfilment: add the tracking number in Shopify."
-        else:
-            action = "Not sent yet. Send it (or fulfil it in Shopify with its tracking number)."
-        rows.append({"order": r["order_number"], "key": r["key"], "brand": r["brand"], "shopifyUrl": shopify_url(r),
-                     "placedAt": iso(r["created"]), "days": r["days"], "band": band, "agingCat": r["agingCat"],
-                     "withAmazon": with_amazon, "amazon": amazon, "noteDone": bool(r.get("note_done")),
-                     "fulfillment": (r.get("fulfillment_status") or "UNFULFILLED").upper(),
-                     "total": float(r["total"]) if r.get("total") is not None else None, "currency": r.get("currency") or "",
-                     "flagged": flagged(ds, r), "action": action})
-    return {"total": len(rows), "rows": rows,
-            "counts": {k: sum(1 for x in rows if x["band"] == k) for k, _, _ in UNFULFILLED_BANDS},
-            "bands": [{"key": k, "label": label} for k, label, _ in UNFULFILLED_BANDS],
-            "withAmazon": sum(1 for x in rows if x["withAmazon"]),
-            "rule": "Orders with no parcel sent yet: Shopify shows them unfulfilled, or Amazon has the request but has not "
-                    "shipped it. They are kept out of Critical and the shipment delay figures; days count from the order date."}
+                    "order carries the same items, the order note says it was reshipped, a second Amazon order was sent, "
+                    "or another parcel delivered the order. These are left out of every delay figure."}
 
 
 HOME_TOP = 4
@@ -1041,20 +971,25 @@ HOME_TOP = 4
 def home_figures(ds: Dataset, brands: list[str]) -> dict[str, Any]:
     """Shipping figures for the Home page, from the same board the Shipping page shows (so the two always agree):
     the selected brands together (`all`), each brand on its own (`byBrand`, never added across brands by mistake) and
-    the parcels with a carrier exception, longest in stage first."""
+    the problems (Critical, or waiting for a hand check), longest on the clock first."""
     since = ds.now - timedelta(days=30)
+
+    def problem(r: dict[str, Any]) -> bool:
+        return r["cat"] == "red" or r["cat"] in HAND_CHECKS
 
     def figures(rows: list[dict[str, Any]]) -> dict[str, Any]:
         active = [r for r in rows if r["cat"] != "delivered"]
-        return {"active": len(active), "inTransit": sum(1 for r in active if r["stage"] == "dispatched"),
+        return {"active": len(active), "inTransit": len(active),
                 "delivered30d": sum(1 for r in rows if r["cat"] == "delivered" and r["deliveredAt"] and r["deliveredAt"] >= since),
-                "problems": sum(1 for r in active if r["exc"]), "unverified": sum(1 for r in active if r["unconfirmed"])}
+                "problems": sum(1 for r in active if problem(r)), "critical": sum(1 for r in active if r["cat"] == "red"),
+                "handChecks": sum(1 for r in active if r["cat"] in HAND_CHECKS)}
 
     rows = [r for r in ds.rows if r["brand"] in brands]
-    top = sorted((r for r in rows if r["cat"] != "delivered" and r["exc"]), key=lambda r: (-(r["days"] or 0), r["key"]))[:HOME_TOP]
+    top = sorted((r for r in rows if r["cat"] != "delivered" and problem(r)), key=lambda r: (-(r["days"] or 0), r["key"]))[:HOME_TOP]
     allv = {**figures(rows), "asOf": iso(ds.now),
             "top": [{"order": r["order_number"], "brand": r["brand"], "carrier": r["carrier_name"] or "Unknown", "days": r["days"],
-                     "place": r.get("last_scan_place") or "", "trackingId": r.get("tracking_id") or r["key"]} for r in top]}
+                     "place": r.get("last_scan_place") or "", "trackingId": r.get("tracking_id") or r["key"],
+                     "label": LABELS.get(r["cat"], r["cat"])} for r in top]}
     return {"all": allv, "byBrand": {b: figures([r for r in rows if r["brand"] == b]) for b in brands}}
 
 
@@ -1062,11 +997,10 @@ AWAITING_SCAN = ("", "pending", "info_received")
 
 
 def journey(ds: Dataset) -> list[dict[str, Any]]:
-    """Where every order is, left to right, for the Overview journey strip. Ordered counts each unsent order once;
-    the three parcel stages split the active (dispatched, not delivered) parcels by their tracking status, so they add
-    up to the active total. `flags` are the problems sitting in that stage; `cat`/`status` say which list to open."""
-    unf = unfulfilled_orders(ds)
-    sent = [r for r in ds.active if r["stage"] == "dispatched"]
+    """Where every dispatched parcel is, left to right, for the Overview journey strip. The three parcel stages split
+    the active parcels by their tracking status, so they add up to the active total. `flags` are the sections sitting
+    in that stage; `cat`/`status` say which list to open."""
+    sent = ds.active
     waiting = [r for r in sent if (r["normalized_tracking_status"] or "") in AWAITING_SCAN]
     out = [r for r in sent if r["normalized_tracking_status"] == "out_for_delivery"]
     moving = [r for r in sent if (r["normalized_tracking_status"] or "") not in (*AWAITING_SCAN, "out_for_delivery")]
@@ -1074,17 +1008,15 @@ def journey(ds: Dataset) -> list[dict[str, Any]]:
     def flag(label: str, n: int, tone: str, cat: str = "") -> list[dict[str, Any]]:
         return [{"label": label, "value": n, "tone": tone, "cat": cat}] if n else []
 
+    def flags(lst: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return (flag("tracking missing", sum(1 for r in lst if r["cat"] == "tracking_missing"), "crit", "tracking_missing")
+                + flag("invalid tracking", sum(1 for r in lst if r["cat"] == "invalid"), "info", "invalid")
+                + flag("critical", sum(1 for r in lst if r["cat"] == "red"), "crit", "red"))
+
     return [
-        {"key": "ordered", "label": "Ordered, not sent", "value": len(unf),
-         "flags": flag("waiting 9+ days", sum(1 for r in unf if (r["days"] or 0) >= 9), "warn")},
-        {"key": "dispatched", "label": "Sent, no carrier scan yet", "value": len(waiting),
-         "flags": flag("no tracking", sum(1 for r in waiting if r["missingTracking"]), "crit")
-         + flag("unconfirmed", sum(1 for r in waiting if r["unconfirmed"]), "info", "unconfirmed")},
-        {"key": "in_transit", "label": "In transit", "value": len(moving),
-         "flags": flag("no movement", sum(1 for r in moving if r["noMove"]), "crit", "nomove")
-         + flag("exceptions", sum(1 for r in moving if r["exc"]), "warn", "exception")},
-        {"key": "out_for_delivery", "label": "Out for delivery", "value": len(out),
-         "flags": flag("critical", sum(1 for r in out if r["cat"] == "red"), "crit", "red")},
+        {"key": "dispatched", "label": "Sent, no carrier scan yet", "value": len(waiting), "flags": flags(waiting)},
+        {"key": "in_transit", "label": "In transit", "value": len(moving), "flags": flags(moving)},
+        {"key": "out_for_delivery", "label": "Out for delivery", "value": len(out), "flags": flags(out)},
         # same rule as delivery_report(ds, 30), so it matches the Overview's "Delivered, last 30 days"
         {"key": "delivered", "label": "Delivered, last 30 days",
          "value": sum(1 for r in ds.rows if r["cat"] == "delivered" and r["deliveredAt"] and r["shipped"]
@@ -1104,13 +1036,11 @@ def summary(ds: Dataset) -> dict[str, Any]:
                        "withPromisedDate": dr["withPromisedDate"]},
         "kpis": kpis(ds), "activeTotal": len(active), "critical": critical,
         "delivered": sum(1 for r in ds.rows if r["cat"] == "delivered"),
-        "unfulfilled": len(unfulfilled_orders(ds)),
-        "stage": {"preDispatch": len(unfulfilled_orders(ds)),
-                  "dispatched": sum(1 for r in active if r["stage"] == "dispatched"),
-                  "delivered": sum(1 for r in ds.rows if r["cat"] == "delivered")},
-        "banner": f"CRITICAL: {critical} shipment(s) are {THRESH['red']}+ days in stage. Escalate today." if critical else "",
+        "stage": {"dispatched": len(active), "delivered": sum(1 for r in ds.rows if r["cat"] == "delivered")},
+        "banner": (f"CRITICAL: {critical} shipment(s) have had no carrier update for {THRESH['red']}+ days. Escalate today."
+                   if critical else ""),
         "valueAtRisk": value_at_risk(ds), "checks": c["counts"], "exceptions": c["exceptions"]["total"],
-        "thresholds": {**THRESH, "noMove": NO_MOVE_DAYS},
+        "thresholds": {**THRESH, "noScanGrace": NO_SCAN_GRACE_DAYS},
         "totals": {"shipments": len(ds.everything), "afterExclusions": len(ds.rows)},
         "deliveredWindowDays": DELIVERED_KEEP_DAYS,
     }
@@ -1118,26 +1048,21 @@ def summary(ds: Dataset) -> dict[str, Any]:
 
 def carriers_report(ds: Dataset) -> dict[str, Any]:
     by: dict[str, dict[str, Any]] = {}
-    for r in ds.rows:
-        c = by.setdefault(r["carrier_name"] or "Unknown", {"n": 0, "crit": 0, "stuck": 0, "exc": 0, "days": [], "cats": Counter()})
-        if r["cat"] != "delivered":
-            c["n"] += 1
-            c["cats"][r["cat"]] += 1
-            if r["days"] is not None:
-                c["days"].append(r["days"])
-            if r["noMove"]:
-                c["stuck"] += 1
+    for r in ds.active:
+        c = by.setdefault(r["carrier_name"] or "Unknown", {"n": 0, "crit": 0, "hand": 0, "days": [], "cats": Counter()})
+        c["n"] += 1
+        c["cats"][r["cat"]] += 1
+        if r["days"] is not None:
+            c["days"].append(r["days"])
         if r["cat"] == "red":
             c["crit"] += 1
-        if r["exc"]:
-            c["exc"] += 1
+        if r["cat"] in HAND_CHECKS:
+            c["hand"] += 1
     scored = []
     for name, c in sorted(by.items(), key=lambda kv: -kv[1]["n"]):
-        if not c["n"]:
-            continue
         pct = round(c["crit"] / c["n"] * 100)
-        scored.append({"carrier": name, "active": c["n"], "critical": c["crit"], "criticalPct": pct, "stuck": c["stuck"],
-                       "exceptions": c["exc"], "avgDays": round(sum(c["days"]) / len(c["days"])) if c["days"] else None,
+        scored.append({"carrier": name, "active": c["n"], "critical": c["crit"], "criticalPct": pct, "handChecks": c["hand"],
+                       "avgDays": round(sum(c["days"]) / len(c["days"])) if c["days"] else None,
                        "health": "bad" if pct > 50 else "warn" if pct > 20 else "ok",
                        "healthLabel": "Needs action" if pct > 50 else "Watch" if pct > 20 else "Healthy",
                        "cats": {k: c["cats"].get(k, 0) for k in AGING_KEYS}})
@@ -1193,7 +1118,7 @@ def delivery_report(ds: Dataset, period: int) -> dict[str, Any]:
 def analytics(ds: Dataset, period: int) -> dict[str, Any]:
     active = ds.active
     crit = sum(1 for r in active if r["cat"] == "red")
-    stuck = sum(1 for r in active if r["noMove"])
+    hand = sum(1 for r in active if r["cat"] in HAND_CHECKS)
     day_list = [r["days"] for r in active if r["days"] is not None]
     count = Counter(r["cat"] for r in active)
     weeks = Counter(_week(r["created"]) for r in active if r["created"])
@@ -1208,31 +1133,30 @@ def analytics(ds: Dataset, period: int) -> dict[str, Any]:
         if r["cat"] == "red":
             dispatch_crit[d] += 1
     labels = [d for d in WEEKDAYS if dispatch[d]] + (["No date"] if dispatch["No date"] else [])
-    exc = sum(1 for r in ds.rows if r["exc"])
     tips: list[str] = []
     if crit:
-        tips.append(f"{crit} active shipments are {THRESH['red']}+ days in stage. Escalate these first (filter: Critical).")
+        tips.append(f"{crit} active shipments have had no carrier update for {THRESH['red']}+ days. Escalate these first "
+                    "(filter: Critical).")
     worst = max(car, key=lambda c: c["critical"], default=None)
     if worst and worst["critical"]:
         tips.append(f"{worst['carrier']} has the most critical shipments ({worst['critical']}). Check them with this carrier first.")
-    if stuck:
-        tips.append(f"{stuck} shipments have had no carrier scan for {NO_MOVE_DAYS}+ days. These may be stuck or lost.")
-    if exc:
-        tips.append(f"{exc} carrier exception(s) need a decision (failed delivery, delay or return).")
-    unconf = count["unconfirmed"]
-    if unconf:
-        tips.append(f"{unconf} parcels have no carrier update at all (Amazon, or tracking Shopify never received). Check them by hand (Checks tab).")
+    if count["tracking_missing"]:
+        tips.append(f"{count['tracking_missing']} parcels were dispatched without a tracking number. Add it in Shopify.")
+    if count["invalid"]:
+        tips.append(f"{count['invalid']} parcels have a tracking number no carrier has reported anything on. Check the numbers.")
+    if count["checks"]:
+        tips.append(f"{count['checks']} parcels need a fix in Shopify (Amazon shipments Shopify does not know about, or a "
+                    "tracking number used twice).")
     return {
         "kpis": {"active": len(active), "critical": crit, "criticalPct": round(crit / len(active) * 100) if active else 0,
                  "onTrackPct": round(count["on_track"] / len(active) * 100) if active else 0,
-                 "avgDays": round(sum(day_list) / len(day_list)) if day_list else None, "stuck": stuck,
-                 "carriersInUse": len({r["carrier_name"] or "Unknown" for r in active if r["stage"] != "pre_dispatch"}),
+                 "avgDays": round(sum(day_list) / len(day_list)) if day_list else None, "handChecks": hand,
+                 "carriersInUse": len({r["carrier_name"] or "Unknown" for r in active}),
                  "valueAtRisk": value_at_risk(ds)},
         "aging": [{"key": k, "label": AGING_LABELS[k], "value": count[k]} for k in AGING_KEYS],
         "weeks": [{"week": w, "value": n} for w, n in week_rows],
         "carriers": [{"carrier": c["carrier"], "critical": c["critical"], "other": c["active"] - c["critical"]} for c in car],
-        "stage": [{"label": "Not dispatched (Unfulfilled tab)", "value": len(unfulfilled_orders(ds))},
-                  {"label": "Dispatched (active)", "value": sum(1 for r in active if r["stage"] == "dispatched")},
+        "stage": [{"label": "Dispatched (active)", "value": len(active)},
                   {"label": f"Delivered (last {DELIVERED_KEEP_DAYS} days)", "value": sum(1 for r in ds.rows if r["cat"] == "delivered")}],
         "dispatchDay": [{"day": d, "critical": dispatch_crit[d], "other": dispatch[d] - dispatch_crit[d]} for d in labels],
         "insights": tips, "carriersReport": cr, "delivery": delivery_report(ds, period),
@@ -1245,8 +1169,7 @@ def _sort_key(sort: str) -> Any:
         d = "".join(ch for ch in n if ch.isdigit())
         return int(d) if d else 0
     return {
-        "priority": lambda r: (0 if r["exc"] else 1, 0 if r["noMove"] else 1, RANK.get(r["cat"], 9), -(r["days"] or 0)),
-        "stuck": lambda r: (0 if r["noMove"] else 1, -(r["scanAge"] or 0)),
+        "priority": lambda r: (RANK.get(r["cat"], 9), -(r["days"] or 0)),
         "order": lambda r: (order_digits(r["order_number"]), r["order_number"]),
         "oldest": lambda r: (-(r["days"] if r["days"] is not None else -1),),
     }[sort if sort in SORTS else "priority"]
@@ -1257,24 +1180,14 @@ def select_rows(ds: Dataset, q: str = "", carrier: str = "", cat: str = "", stat
     needle = q.strip().lower()
     cutoff = ds.now - timedelta(days=days) if days else None
     out = []
-    source = ((ds.reshipped or []) if cat == "reshipped" else (ds.resolved or []) if cat == "resolved"
-              else (ds.unfulfilled or []) if cat == "unfulfilled" else ds.rows)
+    source = (ds.reshipped or []) if cat == "reshipped" else (ds.resolved or []) if cat == "resolved" else ds.rows
     for r in source:
         if r["cat"] == "delivered":
             continue
         if cutoff and (not r["created"] or r["created"] < cutoff):
             continue
-        if cat in ("reshipped", "resolved", "unfulfilled"):
+        if cat in ("reshipped", "resolved"):
             pass                                     # the whole list, filtered only by the fields below
-        elif cat == "nomove":
-            if not r["noMove"]:
-                continue
-        elif cat == "noscan":
-            if r["lastScan"] or r["stage"] == "pre_dispatch":
-                continue
-        elif cat == "exception":
-            if not r["exc"]:
-                continue
         elif cat == "flagged":
             if not flagged(ds, r):
                 continue
@@ -1324,26 +1237,29 @@ def _amazon_parcel(r: dict[str, Any]) -> bool:
 
 def public_row(ds: Dataset, r: dict[str, Any], packages: dict[str, int]) -> dict[str, Any]:
     """What the browser receives for one parcel. No note text, no customer data beyond city and state."""
-    order_done = (r.get("resolved") or {}).get("by") == "order"      # the order arrived through its other parcels
     amazon = _amazon_parcel(r)
+    cat = ("delivered" if r["cat"] == "delivered" else "resolved" if r.get("resolved")
+           else "reshipped" if r.get("reshipped") else r["cat"])
+    own = r.get("ownCat") or r["band"]
+    label = (LABELS["delivered"] if cat == "delivered" else f"Resolved: {r['resolved']['label']}" if cat == "resolved"
+             else "Reshipped (old parcel)" if cat == "reshipped" else LABELS.get(cat, cat))
+    if cat in SECTIONS and own != cat:      # listed with the rest of its order
+        label += f" (this parcel: {LABELS.get(own, own)})"
     return {
         "key": r["key"], "order": r["order_number"], "tracking": r["tracking_number"], "carrier": r["carrier_name"],
-        "cat": ("delivered" if order_done else "resolved" if r.get("resolved")
-                else "reshipped" if r.get("reshipped") and r["cat"] != "delivered" else r["cat"]),
-        "agingCat": r["agingCat"],
-        "label": (LABELS["delivered"] if order_done else f"Resolved: {r['resolved']['label']}" if r.get("resolved")
-                  else LABELS.get(r["cat"], r["cat"])), "days": r["days"],
-        "stage": r["stage"], "exception": r["exc"], "noMove": r["noMove"], "scanAge": r["scanAge"],
+        "cat": cat, "band": r["band"], "ownCat": own, "agingCat": r["band"], "label": label, "days": r["days"],
+        "stage": r["stage"], "exception": r["exc"], "scanAge": r["scanAge"],
         "status": r["normalized_tracking_status"], "orderCreatedAt": iso(r["created"]), "dispatchedAt": iso(r["shipped"]),
         "lastScanAt": iso(r["lastScan"]), "lastScan": r.get("last_scan_text") or "", "expectedAt": r.get("eta"),
         "trackUrl": r.get("track_url") or "", "shopifyUrl": shopify_url(r), "manual": r["manual"],
         "packages": packages.get(r["order_number"], 1), "missingTracking": r["missingTracking"],
-        "unconfirmed": r["unconfirmed"], "flagged": flagged(ds, r), "brand": r["brand"],
+        "invalid": r["invalid"], "flagged": flagged(ds, r), "brand": r["brand"],
         "city": r.get("ship_city"), "state": r.get("ship_state"), "trackingId": r.get("tracking_id"),
         "kind": r.get("kind"), "rowKind": r["row_kind"],
         "amazonStatus": r.get("amazon_status") if amazon else None, "amazonAt": r.get("amazon_at") if amazon else None,
         "amazonRef": r.get("amazon_ref") if amazon else None, "amazonTracking": r.get("amazon_tracking") if amazon else None,
-        "reshipped": r.get("reshipped"), "resolved": r.get("resolved"),
+        "reshipped": r.get("reshipped"), "resolved": r.get("resolved"), "deliveredBy": r.get("deliveredBy"),
+        "issues": [{"type": k, "label": EXC_TYPES[k]["label"], "detail": d} for k, d in r.get("issues") or []],
     }
 
 
@@ -1403,7 +1319,7 @@ def annotation(store: str, order_id: int) -> dict[str, Any]:
                      store, order_id)
     return {"reviewedAt": m.get("reviewed_at"), "reviewedBy": m.get("reviewed_by"), "flagged": bool(m.get("flagged")),
             "flaggedAt": m.get("flagged_at"), "notes": notes,
-            "outcome": m.get("outcome") if m.get("outcome") in OUTCOMES else None,
+            "outcome": m.get("outcome") if m.get("outcome") in TEAM_OUTCOMES else None,
             "outcomeLabel": OUTCOMES.get(m.get("outcome") or ""), "outcomeAt": m.get("outcome_at"), "outcomeBy": m.get("outcome_by")}
 
 
@@ -1412,37 +1328,24 @@ def order_detail(ds: Dataset, order: str) -> dict[str, Any] | None:
     if not pkgs:
         return None
     first = pkgs[0]
-    parcels = [p for p in pkgs if p["row_kind"] != "order"] or pkgs
+    parcels = pkgs
     ev = _events([p["tracking_id"] for p in parcels if p.get("tracking_id")])
     counts = {order: len(parcels)}
 
     def action(r: dict[str, Any]) -> str:
         if r["cat"] == "delivered":
-            return ACTIONS["delivered"]
-        if r.get("resolved") and r["resolved"]["by"] == "order":
-            return (f"Delivered: {r['resolved']['detail']} This parcel was not needed, so it is out of Critical and the "
-                    "delay figures. If Amazon or Shopify still shows it open, close or cancel it there.")
+            by = r.get("deliveredBy")
+            return f"Delivered. {by['detail']}" if by and by.get("detail") else ACTIONS["delivered"]
         if r.get("resolved"):
             rs = r["resolved"]
-            who = f"the team{' (' + rs['who'] + ')' if rs.get('who') else ''}" if rs["by"] == "team" else f"the carrier ({rs.get('detail') or 'last update'})"
+            who = (f"the team{' (' + rs['who'] + ')' if rs.get('who') else ''}" if rs["by"] == "team"
+                   else f"the carrier ({rs.get('detail') or 'last update'})")
             return f"Resolved as {rs['label'].lower()} by {who}, so it is out of Critical and the delay figures. Nothing more to do here."
-        if r["exc"]:
-            return f"Carrier exception ({r['exc'].replace('_', ' ')}): review the reason and decide the next step."
-        if r["row_kind"] == "amazon":
-            if r["shipped"]:
-                return ("Amazon shipped this, but Shopify still shows the order unfulfilled. Mark it fulfilled in Shopify"
-                        + (f" with tracking {r['tracking_number']}" if r["tracking_number"] else "") + ", then check delivery on the carrier page.")
-            return "Amazon has the request but has not shipped it yet. Check the order in Amazon Seller Central."
-        if r["missingTracking"] and r["row_kind"] == "shipment":
-            return "Add the tracking number in Shopify."
-        if r.get("hubFailure"):
-            return ("Shopify's only word for this older order is \"failed delivery\", with no carrier history (DHL often adds "
-                    "a stray failure after delivering). Check the parcel on the carrier page, then record a team mark.")
-        if r["unconfirmed"]:
-            return "Sent through Amazon, which does not report delivery. Check the parcel on the carrier page, then record a team mark."
-        if r["stage"] == "pre_dispatch":
-            return "Not dispatched yet. " + ACTIONS.get(r["agingCat"], "Review manually.")
-        return ACTIONS.get(r["agingCat"], "Review manually.")
+        if r.get("reshipped"):
+            return f"Sent again: {r['reshipped']['detail']} Close the old fulfilment in Shopify so it stops showing as open."
+        if r.get("issues"):
+            return " ".join(d for _, d in r["issues"])
+        return ACTIONS.get(r["band"], "Review manually.")
 
     return {
         "order": order, "excluded": first["excluded"], "brand": first["brand"], "shopifyUrl": shopify_url(first),
@@ -1489,8 +1392,8 @@ def annotate(ds: Dataset, order: str, action: str, text: str, by: str) -> dict[s
         run("INSERT INTO shipping_order_notes (store, order_id, at, by, text) VALUES (?,?,?,?,?)", store, oid, at, by, t[:500])
     elif action == "outcome":
         outcome = (text or "").strip().lower()
-        if outcome not in OUTCOMES:
-            raise HttpError(400, f"Outcome must be one of: {', '.join(OUTCOMES)}.", "bad_request")
+        if outcome not in TEAM_OUTCOMES:
+            raise HttpError(400, f"Outcome must be one of: {', '.join(TEAM_OUTCOMES)}.", "bad_request")
         run("UPDATE shipping_order_marks SET outcome = ?, outcome_at = ?, outcome_by = ? WHERE store = ? AND order_id = ?",
             outcome, at, by, store, oid)
     elif action == "clear_outcome":
@@ -1500,8 +1403,8 @@ def annotate(ds: Dataset, order: str, action: str, text: str, by: str) -> dict[s
         raise HttpError(400, "Unknown action.", "bad_request")
     if action in ("outcome", "clear_outcome"):    # the outcome moves parcels between lists: rebuild them
         fresh = build(ds.brand, now=ds.now, snap=ds.snap)
-        ds.rows, ds.everything, ds.marks, ds.reshipped, ds.resolved, ds.unfulfilled = (
-            fresh.rows, fresh.everything, fresh.marks, fresh.reshipped, fresh.resolved, fresh.unfulfilled)
+        ds.rows, ds.everything, ds.marks, ds.reshipped, ds.resolved = (
+            fresh.rows, fresh.everything, fresh.marks, fresh.reshipped, fresh.resolved)
     else:
         ds.marks = _marks(brand_stores(ds.brand))
     ds.memo.clear()                      # this board changed in place: its figures must be worked out again
@@ -1529,35 +1432,21 @@ def to_csv(header: list[str], rows: list[list[Any]]) -> str:
 
 
 def csv_shipments(rows: list[dict[str, Any]]) -> str:
-    return to_csv(["brand", "order_number", "carrier_name", "tracking_number", "category", "days_in_stage", "stage", "exception",
-                   "no_movement", "tracking_status", "order_created_at", "dispatched_at", "last_scan_at", "last_scan",
+    return to_csv(["brand", "order_number", "carrier_name", "tracking_number", "section", "days_since_last_update",
+                   "tracking_status", "order_created_at", "dispatched_at", "last_scan_at", "last_scan",
                    "promised_delivery", "tracking_url"],
-                  [[r["brand"], r["order_number"], r["carrier_name"], r["tracking_number"], r["cat"], r["days"], r["stage"], r["exc"],
-                    "yes" if r["noMove"] else "", r["normalized_tracking_status"], r["created"], r["shipped"], r["lastScan"],
+                  [[r["brand"], r["order_number"], r["carrier_name"], r["tracking_number"], r["cat"], r["days"],
+                    r["normalized_tracking_status"], r["created"], r["shipped"], r["lastScan"],
                     r.get("last_scan_text"), r.get("eta"), r.get("track_url")] for r in rows])
 
 
 def csv_escalation(ds: Dataset) -> tuple[str, int]:
-    rows = sorted((r for r in ds.active if r["cat"] == "red" or r["noMove"] or flagged(ds, r)), key=lambda r: -(r["days"] or 0))
-
-    def reason(r: dict[str, Any]) -> str:
-        if r["cat"] == "red" and r["noMove"]:
-            return "critical + stuck"
-        return "critical" if r["cat"] == "red" else "stuck" if r["noMove"] else "flagged by team"
-    return to_csv(["brand", "order_number", "carrier_name", "tracking_number", "days_in_stage", "stage", "reason", "last_scan_at",
-                   "last_scan_description", "tracking_url"],
-                  [[r["brand"], r["order_number"], r["carrier_name"], r["tracking_number"], r["days"], r["stage"], reason(r),
+    rows = sorted((r for r in ds.active if r["cat"] == "red" or flagged(ds, r)), key=lambda r: -(r["days"] or 0))
+    return to_csv(["brand", "order_number", "carrier_name", "tracking_number", "days_since_last_update", "reason",
+                   "last_scan_at", "last_scan_description", "tracking_url"],
+                  [[r["brand"], r["order_number"], r["carrier_name"], r["tracking_number"], r["days"],
+                    "critical" if r["cat"] == "red" else "flagged by team",
                     r["lastScan"], r.get("last_scan_text"), r.get("track_url")] for r in rows]), len(rows)
-
-
-def csv_verify(ds: Dataset) -> tuple[str, int]:
-    rows = sorted((r for r in ds.rows if r["cat"] == "unconfirmed"), key=lambda r: (not r["missingTracking"], -(r["days"] or 0)))
-    return to_csv(["brand", "action", "order_number", "carrier_name", "tracking_number", "dispatched", "days_in_stage",
-                   "last_scan_at", "team_status", "track_url"],
-                  [[r["brand"], "ADD TRACKING NUMBER IN SHOPIFY" if r["missingTracking"] else "Check carrier page", r["order_number"],
-                    r["carrier_name"], "" if r["missingTracking"] else r["tracking_number"], r["shipped"], r["days"], r["lastScan"],
-                    (r["manual"] or {}).get("status", "not checked"), "" if r["missingTracking"] else r.get("track_url")]
-                   for r in rows]), len(rows)
 
 
 # ------------------------------------------------------------------------------------------------ import preview
