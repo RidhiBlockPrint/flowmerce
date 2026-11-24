@@ -79,7 +79,8 @@ def decorate(a: Row) -> Row:
         # Policy: an article that was published here but is hidden in Shopify is never demoted automatically.
         # It is flagged so a person decides (republish, or edit and send back through review).
         "unpublished_in_shopify": linked and not a.get("shopify_published") and a.get("status") == "published",
-        "has_shopify_draft": linked and not a.get("shopify_published"),
+        # A Flowmerce-scheduled article is also hidden in Shopify until its date, but it is a schedule, not a draft.
+        "has_shopify_draft": linked and not a.get("shopify_published") and a.get("status") != "scheduled",
         "live_differs": bool(a.get("shopify_published")) and bool(a.get("live_hash")) and a.get("live_hash") != a.get("content_hash"),
         "approval_current": bool(a.get("approved_hash")) and a.get("approved_hash") == a.get("content_hash"),
         "next_action": next_action(a),
@@ -159,7 +160,9 @@ def create_article(user: dict | None, brand_id: str, inp: dict, origin: str = "a
         )
         snapshot(r.last_id, 1, c, user["id"] if user else None, "Created" if origin == "app" else f"Imported ({origin})")
         audit(user, "article.create", "article", r.last_id, brand_id, c["title"], {"origin": origin})
-        return get_article(r.last_id)
+        made = get_article(r.last_id)
+    _queue_image_prompt(made)
+    return made
 
 
 def save_article(user: dict | None, aid: int, inp: dict, note: str = "") -> Row:
@@ -207,7 +210,15 @@ def save_article(user: dict | None, aid: int, inp: dict, note: str = "") -> Row:
         snapshot(aid, version, c, user["id"] if user else None, note or f"Edited {', '.join(changed)}")
         audit(user, "article.edit", "article", aid, a["brand_id"], f"v{version}: {', '.join(changed)}",
               {"fields": changed, "statusBefore": a["status"], "statusAfter": status, "cancelledRequests": cancelled})
-        return get_article(aid)
+        saved = get_article(aid)
+    _queue_image_prompt(saved)
+    return saved
+
+
+def _queue_image_prompt(a: Row) -> None:
+    """Every article written from now on gets an AI image prompt once it has enough text (services/image_prompts.py)."""
+    from . import image_prompts   # imported here: image_prompts is not needed to save an article
+    image_prompts.maybe_queue_new(a)
 
 
 def submit_for_review(user: dict, aid: int) -> Row:

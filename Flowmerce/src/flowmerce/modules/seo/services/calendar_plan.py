@@ -321,7 +321,7 @@ def run_due(limit: int = 50) -> int:
                     tid = t["id"]
                     run("UPDATE content_schedule SET topic_id = ? WHERE id = ?", tid, e["id"])
                 ap = autopilot.start_from_topic(e["created_by"], e["brand_id"], tid, f"calendar drafting task for {e['event_name'] or e['run_on']}")
-                _finish(e["id"], "done", "Writing the draft; it will be approved and saved as a hidden Shopify draft.", ap["draft_job_id"])
+                _finish(e["id"], "done", "Writing the draft; it will be approved and kept in Flowmerce until it is scheduled.", ap["draft_job_id"])
                 done += 1
                 continue
             _finish(e["id"], "done", "AI job started", job["id"])

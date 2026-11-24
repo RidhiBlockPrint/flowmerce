@@ -57,9 +57,9 @@ export function Shell({ children }) {
           <button type="button" className="btn ghost icon-only sidebar-close" aria-label="Close navigation" onClick={() => setNavOpen(false)}><Icon name="close"/></button>
           {inSettings ? (<SettingsNav can={can}/>) : (<nav aria-label="Modules">
             <Suspense fallback={null}>
-              {NAV.map((e) => (e.kind === 'module'
-                  ? <ModuleNav key={e.id} entry={e} can={can} count={pendingPublish} alert={failedPublish}/>
-                  : <NavItem key={e.id} to={e.to} icon={e.icon} end={e.end} module={e.id}>{e.label}</NavItem>))}
+              {NAV.filter((e) => e.kind !== 'module').map((e) => <HomeNav key={e.id} entry={e}/>)}
+              <div className="nav-label nav-modules">Modules</div>
+              {NAV.filter((e) => e.kind === 'module').map((e) => <ModuleNav key={e.id} entry={e} can={can} count={pendingPublish} alert={failedPublish}/>)}
             </Suspense>
           </nav>)}
           <div className="sidebar-foot">
@@ -110,10 +110,29 @@ function BackButton() {
     };
     return <Button variant="ghost" size="sm" icon="chevronLeft" onClick={back} aria-label="Go back" title="Back to the previous page">Back</Button>;
 }
+/** A module's head in the sidebar: its colour tile with the icon, its name, and its one-line description. */
+function ModuleHead({ entry }) {
+    return (<>
+      <span className="nav-tile" aria-hidden="true"><Icon name={entry.icon}/></span>
+      <span className="nav-text">
+        <span className="nav-name">{entry.label}</span>
+        {entry.blurb ? <span className="nav-blurb">{entry.blurb}</span> : null}
+      </span>
+    </>);
+}
+/** Home, drawn like a module so the sidebar reads as one set of places. */
+function HomeNav({ entry }) {
+    const pathname = usePathname() ?? '/';
+    const active = pathMatches(pathname, entry.to, entry.end);
+    return (<Link href={entry.to} className={`nav-item nav-parent nav-home ${active ? 'active' : ''}`} data-mod={entry.id} aria-current={active ? 'page' : undefined}>
+      <ModuleHead entry={entry}/>
+    </Link>);
+}
 /**
  * A module entry that expands to its everyday pages and, below them, a collapsed "Advanced" group (pages and tabs that
  * are set up once or opened now and then). It opens by itself when one of its pages is open and closes in other
- * modules. A module that is one page with tabs (Shipping, CRO) opens that page from its own entry too.
+ * modules. A module that is one page with tabs (Shipping, CRO, Ads) opens that page from its own entry too. Each module
+ * has its own colour (globals.css, .nav-module[data-mod]); the open module is a tinted panel holding its pages.
  */
 function ModuleNav({ entry, can, count, alert }) {
     const pathname = usePathname() ?? '/';
@@ -132,12 +151,11 @@ function ModuleNav({ entry, can, count, alert }) {
     const listId = `nav-${entry.id}`;
     const item = (i) => (<li key={hrefOf(i)}><NavItem to={hrefOf(i)} icon={i.icon} count={badgeCount(i)} alert={alert} active={itemActive(i, pathname, tab)}>{i.label}</NavItem></li>);
     const head = (<>
-      <Icon name={entry.icon}/>
-      {entry.label}
+      <ModuleHead entry={entry}/>
       {!open && count && (items.some((i) => i.badge) || advanced.some((i) => i.badge)) ? <span className={`count ${alert ? 'alert' : ''}`} aria-label={`${count} publishing items need attention`}>{count}</span> : null}
       <Icon name={open ? 'chevronDown' : 'chevronRight'} size="sm" className="nav-chevron"/>
     </>);
-    return (<div className="nav-module">
+    return (<div className={`nav-module${here ? ' here' : ''}${open ? ' open' : ''}`} data-mod={entry.id}>
       {entry.to && !here ? <Link href={entry.to} className="nav-item nav-parent" aria-controls={listId}>{head}</Link>
           : (<button type="button" className={`nav-item nav-parent ${here ? 'parent-active' : ''}`} aria-expanded={open} aria-controls={listId} onClick={() => setOpen((o) => !o)}>{head}</button>)}
       {open ? (<ul id={listId} className="nav-sub">

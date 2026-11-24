@@ -16,16 +16,17 @@ import * as automation from './modules/automation.js';
 import * as settings from './modules/settings.js';
 import * as shipping from './modules/shipping.js';
 import * as cro from './modules/cro.js';
+import * as ads from './modules/ads.js';
 import * as blog from './modules/blog.js';
 
 // Flowmerce Main runs on real data. Synthetic demo data only when NEXT_PUBLIC_FLOWMERCE_DATA_SOURCE=demo is set on purpose.
 export const DATA_SOURCE = process.env.NEXT_PUBLIC_FLOWMERCE_DATA_SOURCE === 'demo' ? 'demo' : 'live';
 export const IS_DEMO = DATA_SOURCE === 'demo';
 
-const MODULES = [core, content, automation, settings, shipping, cro, blog];
+const MODULES = [core, content, automation, settings, shipping, cro, ads, blog];
 const STORAGE_KEY = 'flowmerce.demo.v1';
 /** Bump when seed data shapes change, so an old browser snapshot is discarded instead of breaking pages. */
-const SNAPSHOT_VERSION = 4;   // 2: CRO demo data added; 3: automatic blog slots (db.blog); 4: shipping sections (23 Nov)
+const SNAPSHOT_VERSION = 5;   // 2: CRO demo data added; 3: automatic blog slots (db.blog); 4: shipping sections (23 Nov); 5: Ads (db.ads)
 
 let db = null;
 let routes = null;

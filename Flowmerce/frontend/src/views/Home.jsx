@@ -60,11 +60,15 @@ export default function Home() {
     const common = { brands, showBrand };
     const oneBrand = brand !== 'all';
     if (loading || error) {
+        // The sales card sits where it sits once loaded (same parent, same place), so React keeps it instead of
+        // building it again and asking /api/cro/home a second time when the rest of Home arrives.
         return (<>
           <PageHead title="Home" sub={<>{brandLabel(brand, brands)} · last {data?.window?.days ?? 28} days</>}/>
-          <SalesDashboard brand={brand !== 'all' ? brand : undefined} brands={me.brands}/>
-          <div className="mt-16"><ErrorState error={error} onRetry={reload}/></div>
-          {loading ? <LoadingBlock rows={6}/> : null}
+          {null}
+          <div className="grid main-side home-top">
+            <SalesDashboard brand={oneBrand ? brand : undefined} brands={brands}/>
+            <div>{error ? <ErrorState error={error} onRetry={reload}/> : <LoadingBlock rows={6}/>}</div>
+          </div>
         </>);
     }
     const clicks = (b) => data.metrics.find((m) => m.brand === b && m.key === 'gsc_clicks');

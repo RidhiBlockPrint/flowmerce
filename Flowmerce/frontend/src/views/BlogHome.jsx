@@ -6,7 +6,7 @@
  * GET /api/blog/overview; projections say what they are based on, and show "—" when there is not enough history.
  */
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { api, qs, useApi } from '../lib/api';
 import { useApp, useBrandParam } from '../lib/app';
 import { useNavigate } from '../lib/nav';
@@ -16,10 +16,13 @@ import { Icon } from '../components/Icon';
 import { MiniGrid, MiniStat, RingCard, SectionHead } from '../components/dash';
 import { ProgressRing } from '../components/motion';
 import { useToast } from '../components/overlays';
+import { ImagePromptBackfill } from '../components/ImagePrompt';
+import { AutoBlogSwitch } from '../components/claude';
+import { MonthNav, ScheduleDialog, WEEKDAYS, addDays, addMonths, monthDays, monthTitle, useWheelMonths } from '../components/calendar';
 
 /** How each slot state reads and is coloured. */
 export const SLOT = {
-    ready: { label: 'Ready', long: 'Hidden Shopify draft, waiting for a reviewer', tone: 'ok', color: 'var(--ok)' },
+    ready: { label: 'Ready', long: 'Written and approved, in Flowmerce; waiting for a reviewer to authorize it', tone: 'ok', color: 'var(--ok)' },
     writing: { label: 'Writing', long: 'Claude is writing it', tone: 'info', color: 'var(--info)' },
     planned: { label: 'Planned', long: 'Topic chosen 5 days before', tone: 'neutral', color: '#c9c0b5' },
     failed: { label: 'Stopped', long: 'The automatic run stopped', tone: 'crit', color: 'var(--crit)' },
@@ -39,27 +42,18 @@ export default function BlogHome() {
     const brand = useBrandParam();
     const { can, me } = useApp();
     const q = useApi(`/blog/overview${qs({ brand })}`);
-    const toast = useToast();
-    const [busy, setBusy] = useState(false);
-    const toggle = async (enabled) => {
-        setBusy(true);
-        try { await api.patch('/blog/autopilot', { enabled }); toast.ok(enabled ? 'Automatic blogs are on. The next one starts 5 days before its day.' : 'Automatic blogs are paused. Nothing new will start.'); q.reload(); }
-        catch (e) { toast.error(e); } finally { setBusy(false); }
-    };
     const d = q.data;
     return (<>
       <PageHead title="SEO & Blog" sub="Blogs Flowmerce plans, writes and schedules by itself."
         actions={<>
-          {d && can('workflow:run') ? <Button icon={d.settings.enabled ? 'pause' : 'play'} loading={busy} onClick={() => toggle(!d.settings.enabled)}
-            title={d.settings.enabled ? 'Stop new automatic blogs from starting (anything already written stays)' : 'Let Flowmerce write the planned blogs (about $2 of Claude each; saved as hidden Shopify drafts)'}>
-            {d.settings.enabled ? 'Pause automatic blogs' : 'Start automatic blogs'}</Button> : null}
-          <Link className="btn secondary" href="/write"><Icon name="edit"/>Write it yourself</Link>
+          <AutoBlogSwitch enabled={d?.settings.enabled} onChanged={q.reload}/>
+          <Link className="btn secondary" href="/pipeline"><Icon name="edit"/>Blog pipeline</Link>
         </>}/>
-      {q.error ? <ErrorState error={q.error} onRetry={q.reload}/> : !d ? <LoadingBlock rows={6}/> : <Overview d={d} onChanged={q.reload} canRun={can('workflow:run')} brands={me.brands}/>}
+      {q.error ? <ErrorState error={q.error} onRetry={q.reload}/> : !d ? <LoadingBlock rows={6}/> : <Overview d={d} onChanged={q.reload} canRun={can('workflow:run')} brands={me.brands} brand={brand}/>}
     </>);
 }
 
-function Overview({ d, onChanged, canRun, brands }) {
+function Overview({ d, onChanged, canRun, brands, brand }) {
     const nav = useNavigate();
     const c = d.counts;
     const p = d.projection;
@@ -73,7 +67,7 @@ function Overview({ d, onChanged, canRun, brands }) {
           pill={{ tone: 'info', label: `${d.settings.weekdayNames.join(' & ')} · 10:00` }}/>
         <MiniGrid>
           <MiniStat label="Waiting for a reviewer" value={fmtInt(c.waitingForReviewer)} tone={c.waitingForReviewer ? 'warn' : undefined}
-            foot="Hidden drafts to authorize" onClick={() => nav('/publishing')} title="Open Publishing to authorize them"/>
+            foot="Blogs to authorize" onClick={() => nav('/publishing')} title="Open Publishing to authorize them"/>
           <MiniStat label="Live in the last 30 days" value={fmtInt(c.liveLast30)} foot="Articles published on Shopify"/>
           <MiniStat label="Average quality" value={p.averageQuality === null ? '—' : `${p.averageQuality}/100`} tone={p.averageQuality === null ? undefined : scoreTone(p.averageQuality)}
             foot="Fields, SEO, AEO, GEO, LLMO">
@@ -90,53 +84,117 @@ function Overview({ d, onChanged, canRun, brands }) {
           </MiniStat>
         </MiniGrid>
       </div>
-      <SectionHead title="Blog calendar" note="Each blog goes live only after a reviewer authorizes it." action={<Link className="small" href="/calendar">Content calendar</Link>}/>
-      <BlogCalendar d={d} brands={brands}/>
+      <SectionHead title="Blog calendar" note="Scroll or pick any month; click a day to see its blogs, cancel one or put a blog on it."/>
+      <OverviewCalendar brand={brand} brands={brands} canRun={canRun} today={d.today} onChanged={onChanged}/>
       <SectionHead title="Coming up" note="What each blog is, and how its quality check came out."/>
       <ComingUp d={d} onChanged={onChanged} canRun={canRun} brands={brands}/>
+      <SectionHead title="Featured images" note="One AI image prompt per article, sized for the store's blog."/>
+      <ImagePromptBackfill brand={brand} canRun={canRun}/>
     </>);
 }
 
-/** Five weeks from this Monday, a cell per day, the brand's slots and calendar events in each. */
-function BlogCalendar({ d, brands }) {
-    const today = new Date(`${d.today}T00:00:00`);
-    const monday = new Date(today.getTime() - ((today.getDay() + 6) % 7) * DAY_MS);
-    const days = Array.from({ length: 35 }, (_, i) => isoOf(new Date(monday.getTime() + i * DAY_MS)));
+/**
+ * The overview's blog calendar, interactive (owner request 2026-11-24: "a full-fledged calendar, not a static one"):
+ * move to any month and year (arrows, the month picker, Today, or scrolling over the month), click a day to see its
+ * blogs and events beside the month, cancel or stop a blog, open its article, or put a blog on that day.
+ * Reads GET /calendar for the six weeks shown, so any month shows its blogs and events.
+ */
+function OverviewCalendar({ brand, brands, canRun, today, onChanged }) {
+    const toast = useToast();
+    const [month, setMonthState] = useState(today.slice(0, 7));
+    const [sel, setSel] = useState(today);
+    const [adding, setAdding] = useState(null);
+    const gridRef = useRef(null);
+    const days = monthDays(month);
+    const cal = useApi(`/calendar${qs({ brand, from: days[0], to: days[41] })}`);
+    const setMonth = (m) => { setMonthState(m); setSel(m === today.slice(0, 7) ? today : `${m}-01`); };
+    useWheelMonths(gridRef, (n) => setMonth(addMonths(month, n)), !!cal.data);
     const bySlot = new Map();
-    for (const s of d.slots) bySlot.set(s.publish_on, [...(bySlot.get(s.publish_on) ?? []), s]);
-    const byEvent = new Map(d.events.map((e) => [e.date, e]));
-    return (<div className="blogcal" role="grid" aria-label="Blog calendar, five weeks">
-      {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((w) => <div key={w} className="blogcal-head" role="columnheader">{w}</div>)}
-      {days.map((day, i) => {
-          const slots = bySlot.get(day) ?? [];
-          const ev = byEvent.get(day);
-          const past = day < d.today;
-          return (<div key={day} role="gridcell" className={`blogcal-day${day === d.today ? ' today' : ''}${past ? ' past' : ''}`} style={{ animationDelay: `${Math.min(i, 20) * 12}ms` }}>
-            <span className="blogcal-date">{day.slice(8) === '01' || i === 0 ? fmtDate(day, { day: 'numeric', month: 'short' }) : Number(day.slice(8))}</span>
-            {ev ? <span className="blogcal-event" title={ev.name}><Icon name="star" size="sm"/>{ev.name}</span> : null}
-            {slots.map((s) => {
-                const info = SLOT[s.status] ?? SLOT.planned;
-                const title = slotTitle(s, brands);
-                const body = (<>
+    for (const s of cal.data?.slots ?? [])
+        if (s.status !== 'skipped')
+            bySlot.set(s.publish_on, [...(bySlot.get(s.publish_on) ?? []), s]);
+    const byEvent = new Map();
+    for (const e of cal.data?.events ?? [])
+        byEvent.set(e.date, [...(byEvent.get(e.date) ?? []), e]);
+    const reload = () => { cal.reload(); onChanged(); };
+    const cancel = async (s) => {
+        try {
+            await api.post(`/blog/slots/${s.id}/cancel`);
+            toast.ok(s.status === 'writing' ? 'Stopped. Claude will not write a blog for this day.' : 'Cancelled. Claude will not write a blog for this day.');
+            reload();
+        }
+        catch (e) {
+            toast.error(e);
+        }
+    };
+    const selSlots = bySlot.get(sel) ?? [];
+    const selEvents = byEvent.get(sel) ?? [];
+    return (<>
+      <div className="ovcal-head">
+        <MonthNav month={month} today={today} onChange={setMonth} onToday={() => { setMonthState(today.slice(0, 7)); setSel(today); }}/>
+        <span className="spacer"/>
+        {canRun ? <Button size="sm" variant="primary" icon="plus" onClick={() => setAdding({ action: 'blog', run_on: sel > today ? sel : addDays(today, 7) })}>Blog on a day</Button> : null}
+        <Link className="btn ghost sm" href="/calendar">Content calendar</Link>
+      </div>
+      <div className="ovcal">
+        <div className="blogcal" role="grid" aria-label={`Blog calendar, ${monthTitle(month)}`} ref={gridRef} title="Scroll over the calendar to move to the next or previous month">
+          {WEEKDAYS.map((w) => <div key={w} className="blogcal-head" role="columnheader">{w}</div>)}
+          {days.map((day, i) => {
+              const slots = bySlot.get(day) ?? [];
+              const evs = byEvent.get(day) ?? [];
+              return (<button type="button" key={day} role="gridcell" onClick={() => setSel(day)} aria-pressed={day === sel}
+                className={`blogcal-day${day === today ? ' today' : ''}${day < today ? ' past' : ''}${day.slice(0, 7) !== month ? ' other' : ''}${day === sel ? ' sel' : ''}`}
+                style={{ animationDelay: `${Math.min(i, 20) * 12}ms` }}>
+                <span className="blogcal-date">{day.slice(8) === '01' ? fmtDate(day, { day: 'numeric', month: 'short' }) : Number(day.slice(8))}</span>
+                {evs.slice(0, 1).map((e) => <span key={e.key} className="blogcal-event" title={e.name}><Icon name="star" size="sm"/>{e.name}</span>)}
+                {slots.map((s) => (<span key={s.id} className={`blogcal-slot st-${s.status}`} title={`${(SLOT[s.status] ?? SLOT.planned).label}: ${slotTitle(s, brands)}`}>
                   <span className={`brand-dot ${s.brand_id}`}/>
-                  <span className="blogcal-title">{title}</span>
+                  <span className="blogcal-title">{slotTitle(s, brands)}</span>
                   {s.checks?.score !== null && s.checks?.score !== undefined ? <span className={`blogcal-score tone-${scoreTone(s.checks.score)}`}>{s.checks.score}</span> : null}
-                </>);
-                return s.article_id
-                    ? <Link key={s.id} href={`/articles/${s.article_id}`} className={`blogcal-slot st-${s.status}`} title={`${info.label}: ${title}`}>{body}</Link>
-                    : <span key={s.id} className={`blogcal-slot st-${s.status}`} title={`${info.label}: ${info.long}`}>{body}</span>;
+                </span>))}
+              </button>);
+          })}
+        </div>
+        <aside className="ovcal-side" aria-label="The selected day"><div className="ovcal-side-in">
+          <h3 className="dayside-title">{new Date(`${sel}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h3>
+          {canRun && sel > today ? <Button size="sm" variant="primary" icon="plus" className="mt-8" onClick={() => setAdding({ action: 'blog', run_on: sel })}>Blog on this day</Button> : null}
+          {!selSlots.length && !selEvents.length ? <div className="daypanel-empty mt-8">{sel > today ? 'Nothing planned. Put a blog on this day.' : 'Nothing on this day.'}</div> : null}
+          <div className="mt-8">
+            {selEvents.map((e) => (<div key={e.key} className="ovcal-item">
+              <div className="row-wrap" style={{ gap: 6 }}><Icon name="star" size="sm"/><span className="strong">{e.name}</span>{e.builtin ? null : <Pill tone="info">Your event</Pill>}</div>
+              <div className="small muted">Publish an article for it by {fmtDate(e.publish_by)}.{e.note ? ` ${e.note}` : ''}</div>
+            </div>))}
+            {selSlots.map((s) => {
+                const info = SLOT[s.status] ?? SLOT.planned;
+                return (<div key={s.id} className="ovcal-item">
+                  <div className="row-wrap" style={{ gap: 6 }}><span className={`brand-dot ${s.brand_id}`}/><Pill tone={info.tone} dot={s.status === 'writing'}>{info.label}</Pill>
+                    {s.scheduled_topic ? <Pill tone="outline">Your topic</Pill> : null}</div>
+                  <div className="strong mt-4">{slotTitle(s, brands)}</div>
+                  <div className="small muted">{s.message || (s.status === 'planned' ? `Claude writes it on ${pickDay(s, 5)}; it goes live at 10:00 once you authorize it.` : info.long)}</div>
+                  {s.checks?.score !== null && s.checks?.score !== undefined ? <div className="small">Quality check: {s.checks.score}/100</div> : null}
+                  <div className="row-wrap mt-4" style={{ gap: 6 }}>
+                    {s.article_id ? <Link className="btn ghost xs" href={`/articles/${s.article_id}`}>Open article</Link> : null}
+                    {canRun && ['planned', 'writing'].includes(s.status) ? <Button size="xs" variant="secondary" icon="x" onClick={() => cancel(s)}>{s.status === 'writing' ? 'Stop writing' : 'Cancel this blog'}</Button> : null}
+                  </div>
+                </div>);
             })}
-          </div>);
-      })}
-    </div>);
+          </div>
+        </div></aside>
+      </div>
+      {adding ? <ScheduleDialog initial={adding} upcoming={cal.data?.upcoming ?? []} onClose={() => setAdding(null)} onSaved={() => { setAdding(null); reload(); }}/> : null}
+    </>);
 }
 
-/** The next blogs, nearest first: status, quality by group, and Skip for one that has not started. */
+/** The next blogs, nearest first: status, quality by group, and Cancel for one that is planned or being written. */
 function ComingUp({ d, onChanged, canRun, brands }) {
     const toast = useToast();
     const rows = d.slots.filter((s) => s.publish_on >= d.today && s.status !== 'skipped').slice(0, 8);
     const skip = async (s) => {
-        try { await api.post(`/blog/slots/${s.id}/skip`); toast.ok(`The ${fmtDate(s.publish_on, { day: 'numeric', month: 'short' })} blog is skipped.`); onChanged(); }
+        try {
+            await api.post(`/blog/slots/${s.id}/cancel`);
+            toast.ok(`The ${fmtDate(s.publish_on, { day: 'numeric', month: 'short' })} blog is cancelled.${s.status === 'writing' ? ' Claude has stopped writing it.' : ''}`);
+            onChanged();
+        }
         catch (e) { toast.error(e); }
     };
     if (!rows.length)
@@ -170,7 +228,8 @@ function ComingUp({ d, onChanged, canRun, brands }) {
               </>) : <span className="muted xs">Checked after writing</span>}
             </div>
             <div className="blog-row-act">
-              {s.status === 'planned' && canRun ? <Button size="sm" variant="ghost" onClick={() => skip(s)} title="Do not write a blog for this day">Skip</Button> : null}
+              {['planned', 'writing'].includes(s.status) && canRun ? <Button size="sm" variant="ghost" icon="x" onClick={() => skip(s)}
+                title={s.status === 'writing' ? 'Stop Claude writing this blog; no blog for this day' : 'Do not write a blog for this day'}>{s.status === 'writing' ? 'Stop' : 'Cancel'}</Button> : null}
             </div>
           </div>);
       })}

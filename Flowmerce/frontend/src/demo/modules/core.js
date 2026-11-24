@@ -14,7 +14,7 @@ import { brandSettingsFor } from './settings.js';
 
 const ROLE_PERMS = {
   admin: ALL_PERMISSIONS,
-  seo_manager: ['view', 'topic:write', 'topic:decide', 'article:write', 'article:submit', 'shopify:draft', 'publish:request', 'workflow:run', 'analytics:sync', 'data:import', 'audit:view'],
+  seo_manager: ['view', 'topic:write', 'topic:decide', 'article:write', 'article:submit', 'publish:request', 'workflow:run', 'analytics:sync', 'data:import', 'audit:view'],
   reviewer: ['view', 'article:review', 'publish:authorize', 'analytics:sync', 'audit:view'],
 };
 const WINDOW_DAYS = 28;

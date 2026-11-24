@@ -16,6 +16,7 @@ Files: `Dockerfile`, `.dockerignore`, `deploy/litestream.yml`, `scripts/run_host
 - The app **sleeps after about 15 minutes without visits**; the next visit waits about a minute while it wakes.
 - Background jobs (scheduler, shipping refresh) only run while it is awake.
 - 512 MB memory, shared CPU. Enough for one person; heavy imports may be slow.
+- Ads (2026-11-24): the Meta keys (`RIDHI_/CPC_META_AD_ACCOUNT_ID`, `RIDHI_/CPC_META_ACCESS_TOKEN`) come over with "Add from .env"; add them by hand if the Environment tab was filled earlier. Ads keeps little in memory (totals are added up in Supabase, and a sync holds 7 days of rows at a time). It keeps at most 24 page answers for 5 minutes (a few MB, about 30 MB at most; `ads/data.py ANSWER_MAX`), cleared by every change and every Meta read. If both the hosted copy and this computer run the job, the database lock lets only one read an account at a time.
 - To fit in 512 MB the image sets `CRO_WARM_VIEWS=false`, `CRO_CACHE_MAX=500` and `MALLOC_ARENA_MAX=2`, so CRO tabs read Shopify when opened instead of being pre-read. If Render's Events show "Ran out of memory" again, lower `CRO_CACHE_MAX` or move to a plan with more memory.
 
 ## One-time setup

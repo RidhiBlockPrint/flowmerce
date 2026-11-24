@@ -1,5 +1,6 @@
-"""The automatic blog pipeline: blogs with no person involved, up to a reviewed hidden Shopify draft. Owner request and
-decisions of 2026-11-20 (two blogs a week per brand; they stay HIDDEN Shopify drafts until a reviewer authorizes them).
+"""The automatic blog pipeline: blogs with no person involved, up to an approved blog with a publish request on the
+calendar. Owner request and decisions of 2026-11-20 (two blogs a week per brand); since 2026-11-24 the written blog stays in
+Flowmerce and reaches Shopify only when a reviewer authorizes its publish request (hidden until its publish time).
 
 Every 15 minutes (services/scheduler.py) and whenever a Claude job finishes (services/ai_jobs.py runner):
   plan       keeps the calendar filled: one slot per brand on each publishing weekday (Tuesday and Friday) for the next
@@ -10,11 +11,12 @@ Every 15 minutes (services/scheduler.py) and whenever a Claude job finishes (ser
   images     a featured image and up to 3 product photos inside the body, each with alt text (no Claude cost).
   check      services/answer_checks.py: required fields, SEO, AEO, GEO and LLMO. What Claude can fix goes back to Claude
              once as a revision request.
-  schedule   the draft is approved as "Flowmerce (auto)", saved to Shopify as a HIDDEN draft, and a publish request for the
-             slot's day is placed on the content calendar. It goes live only when a reviewer authorizes that request.
+  schedule   the draft is approved as "Flowmerce (auto)" (it stays in Flowmerce) and a publish request for the slot's day
+             is placed on the content calendar. It goes to Shopify only when a reviewer authorizes that request.
 
-A slot whose day passes before its blog was written (Claude limit used up, automation paused) is marked missed. A slot can
-be skipped by a person; nothing else is ever deleted. Pausing automation for a brand stops new slots from starting.
+A slot whose day passes before its blog was written (Claude limit used up, automation paused) is marked missed. A person
+can cancel a slot (cancel()): one not started yet is skipped, one being written is stopped (autopilot.stop) and skipped.
+Nothing else is ever deleted. Pausing automation for a brand stops new slots from starting.
 
 The pipeline is OFF until an admin switches it on (SEO & Blog overview, "Start automatic blogs"): this computer's copy and
 the hosted copy each keep their own database, and only one of them should write blogs.
@@ -31,7 +33,7 @@ from urllib.parse import urlparse
 from ..audit import audit
 from ..config import BRAND_IDS, is_brand
 from ..db import all_rows, get, now, run
-from ..util import HttpError, page_path, s, similarity
+from ..util import HttpError, norm_keyword, page_path, s, similarity
 from . import ai_budget, answer_checks
 from .articles import content_of, hash_content
 from .brands import brand
@@ -108,20 +110,23 @@ def _set(slot_id: int, **cols: Any) -> None:
 
 def start_due(today: date | None = None) -> int:
     """Start writing the next slot of each brand whose writing day has come. One blog per brand at a time; a slot that
-    does not fit today's Claude limit waits for a later tick. Returns how many started."""
+    does not fit today's Claude limit waits for a later tick. Returns how many started.
+
+    Two kinds of slot: an automatic one (no topic: Claude researches and picks one; runs only while automatic blogs are
+    switched on) and one a person put on the calendar for a topic (topic_id set; runs whatever that switch says, since a
+    person asked for it). Both wait while automation is paused for the brand."""
     from . import autopilot, workflow   # imported here: autopilot imports this module
     st = settings()
     t = today or _today()
     for r in all_rows("SELECT id FROM auto_blogs WHERE status = 'planned' AND publish_on <= ?", t.isoformat()):
         _set(r["id"], status="missed", message="Not written in time (the Claude limit was used up or automation was paused).")
-    if not st["enabled"]:
-        return 0
     started = 0
     for b in BRAND_IDS:
         if workflow.is_paused(b) or get("SELECT 1 FROM auto_blogs WHERE brand_id = ? AND status = 'writing'", b):
             continue
-        slot = get("""SELECT * FROM auto_blogs WHERE brand_id = ? AND status = 'planned' AND publish_on > ? AND publish_on <= ?
-                      ORDER BY publish_on LIMIT 1""", b, t.isoformat(), (t + timedelta(days=int(st["leadDays"]))).isoformat())
+        slot = get(f"""SELECT * FROM auto_blogs WHERE brand_id = ? AND status = 'planned' AND publish_on > ? AND publish_on <= ?
+                      {'' if st['enabled'] else 'AND topic_id IS NOT NULL'} ORDER BY publish_on LIMIT 1""",
+                   b, t.isoformat(), (t + timedelta(days=int(st["leadDays"]))).isoformat())
         if not slot:
             continue
         user = autopilot._acting_user(None)
@@ -129,15 +134,110 @@ def start_due(today: date | None = None) -> int:
             _set(slot["id"], message="Waiting: no active admin to record the work against.")
             continue
         try:
-            r = autopilot.start(user, b, "", source="auto")
+            r = _start_topic(slot, user) if slot["topic_id"] else autopilot.start(user, b, "", source="auto")
         except HttpError as e:
             _set(slot["id"], message=f"Waiting: {e.message}")
             continue
+        if r is None:   # the topic already had an article: put forward for this day instead of written again
+            continue
         run("UPDATE autopilot_runs SET slot_id = ? WHERE id = ?", slot["id"], r["id"])
-        _set(slot["id"], status="writing", run_id=r["id"], message="Claude is choosing a topic.")
+        _set(slot["id"], status="writing", run_id=r["id"],
+             message="Claude is writing the draft." if slot["topic_id"] else "Claude is choosing a topic.")
         audit(None, "auto_blog.start", "auto_blog", slot["id"], b, f"for {slot['publish_on']}")
         started += 1
     return started
+
+
+def _start_topic(slot: Row, user: Row) -> Row | None:
+    """Write the blog for a slot a person scheduled for a topic: the same chain as an automatic blog (draft, images,
+    quality check, one revision, approval, publish request for the slot's day), starting from that topic. If the topic
+    already has an article (someone drafted it by hand meanwhile), that article is put forward for this day instead."""
+    from . import autopilot, calendar_plan
+    a = get("SELECT * FROM articles WHERE topic_id = ? ORDER BY id LIMIT 1", slot["topic_id"])
+    if a:
+        if not get("SELECT 1 FROM content_schedule WHERE article_id = ? AND action = 'publish' AND status = 'planned'", a["id"]):
+            calendar_plan.add_entry(user, {"brand": slot["brand_id"], "action": "publish", "run_on": slot["publish_on"], "article_id": a["id"]})
+        _set(slot["id"], status="ready", article_id=a["id"],
+             message="This topic was already written; it is put forward for this day once approved, and a reviewer authorizes it.")
+        return None
+    if get("SELECT 1 FROM autopilot_runs WHERE brand_id = ? AND status = 'running'", slot["brand_id"]):
+        raise HttpError(409, "another blog is being written for this brand; this one starts after it.", "already_running")
+    autopilot._check_money(("content_generation",))
+    return autopilot.start_from_topic(user["id"], slot["brand_id"], int(slot["topic_id"]),
+                                      f"scheduled on the content calendar for {slot['publish_on']}", source="auto")
+
+
+# ---------------------------------------------------------------- a person schedules a topic for a day
+
+def schedule_topic(user: Row, body: dict[str, Any]) -> Row:
+    """Put a blog on the calendar: a topic (an existing one, or a new title and keyword) and the day it should go live.
+    Flowmerce writes it `leadDays` before that day (at once if the day is sooner), checks and approves it, and makes a
+    publish request for 10:00 that day; a reviewer authorizes it (owner decision 2026-11-24: one click, not automatic)."""
+    brand_id = str(body.get("brand") or "")
+    if not is_brand(brand_id):
+        raise HttpError(400, "Pick a brand.")
+    day = str(body.get("publish_on") or "")[:10]
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        raise HttpError(400, "Pick the day the blog should go live.") from None
+    if d <= _today():
+        raise HttpError(400, "Pick tomorrow or a later day: Flowmerce needs time to write and check the blog.")
+    topic = _topic_for(user, brand_id, body)
+    if get("SELECT 1 FROM articles WHERE topic_id = ? AND status IN ('publish_requested','scheduled','published')", topic["id"]):
+        raise HttpError(409, "This topic's article is already scheduled or live.", "already_published")
+    other = get("SELECT publish_on FROM auto_blogs WHERE topic_id = ? AND status IN ('planned','writing','ready')", topic["id"])
+    if other:
+        raise HttpError(409, f"This topic is already on the calendar for {other['publish_on']}.", "already_scheduled")
+    slot = get("SELECT * FROM auto_blogs WHERE brand_id = ? AND publish_on = ?", brand_id, day)
+    if slot and (slot["status"] in ("writing", "ready") or (slot["topic_id"] and slot["status"] == "planned")):
+        raise HttpError(409, f"{day} already has a blog for this brand. Pick another day, or cancel that one first.", "day_taken")
+    ts = now()
+    msg = f"Scheduled by {user.get('name') or user.get('email') or 'a person'}."
+    if slot:   # an automatic slot (planned, skipped, missed or failed) becomes this topic's day
+        run("""UPDATE auto_blogs SET topic_id = ?, status = 'planned', run_id = NULL, article_id = NULL, checks_json = '{}',
+               message = ?, updated_at = ? WHERE id = ?""", topic["id"], msg, ts, slot["id"])
+        sid = slot["id"]
+    else:
+        sid = run("""INSERT INTO auto_blogs (brand_id, publish_on, status, topic_id, message, created_at, updated_at)
+                     VALUES (?, ?, 'planned', ?, ?, ?, ?)""", brand_id, day, topic["id"], msg, ts, ts).last_id
+    audit(user, "auto_blog.schedule_topic", "auto_blog", sid, brand_id, f"{topic['title']} on {day}")
+    if d <= _today() + timedelta(days=int(settings()["leadDays"])):
+        try:
+            start_due()   # due already: start writing now instead of at the next 15-minute tick
+        except Exception:  # noqa: BLE001 — the scheduler tries again on its next tick; the slot shows why it waits
+            log.exception("Starting the scheduled blog at once failed")
+    return slots_by_id([sid])[0]
+
+
+def _topic_for(user: Row, brand_id: str, body: dict[str, Any]) -> Row:
+    """The topic to write: the chosen one, or a new one from a title (and keyword) typed on the calendar. A typed title
+    whose keyword matches an existing topic uses that topic. A topic put on the calendar is approved by that person."""
+    if body.get("topic_id"):
+        t = get("SELECT * FROM topics WHERE id = ? AND brand_id = ?", int(body["topic_id"]), brand_id)
+        if not t:
+            raise HttpError(404, "That topic does not exist for this brand.")
+    else:
+        title = s(body.get("title"), 200).strip()
+        if len(title) < 5:
+            raise HttpError(400, "Write the blog topic (its working title).")
+        keyword = s(body.get("keyword"), 120).strip() or title
+        norm = norm_keyword(keyword)
+        t = get("SELECT * FROM topics WHERE brand_id = ? AND keyword_norm = ?", brand_id, norm)
+        if not t:
+            ts = now()
+            tid = run("""INSERT INTO topics (brand_id, title, primary_keyword, keyword_norm, status, source, notes, created_by,
+                                             created_at, updated_at, source_updated_at)
+                         VALUES (?, ?, ?, ?, 'approved', 'manual', ?, ?, ?, ?, ?)""", brand_id, title, keyword.lower(), norm,
+                      "Put on the content calendar.", user.get("id"), ts, ts, ts).last_id
+            audit(user, "topic.create", "topic", tid, brand_id, f"{title} (from the content calendar)")
+            return get("SELECT * FROM topics WHERE id = ?", tid)  # type: ignore[return-value]
+    if t["status"] == "rejected":
+        raise HttpError(409, "That topic was rejected. Reopen it under Topics & keywords first.")
+    if t["status"] in ("proposed", "validated"):
+        run("UPDATE topics SET status = 'approved', updated_at = ? WHERE id = ?", now(), t["id"])
+        audit(user, "topic.decision", "topic", t["id"], brand_id, f"Approved {t['title']} by putting it on the calendar")
+    return get("SELECT * FROM topics WHERE id = ?", t["id"])  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------- images
@@ -221,12 +321,12 @@ def after_draft(r: Row, article_id: int) -> str | None:
 
 
 def finish(r: Row, article_id: int) -> str:
-    """Approve, save as a hidden Shopify draft, and place the publish request for the slot's day on the calendar."""
+    """Approve (the blog stays in Flowmerce) and place the publish request for the slot's day on the calendar."""
     from . import autopilot, calendar_plan
     result = check_article(article_id)
     _record(r, article_id, result, "Final check")
     approved = autopilot.approve_article(article_id, f"written by the automatic blog pipeline (quality score {result['score']}/100)")
-    outcome = autopilot.save_hidden_draft(article_id, r["created_by"]) if approved else "Draft saved; not approved automatically because its status changed."
+    outcome = "Approved and kept in Flowmerce." if approved else autopilot.NOT_APPROVED
     slot = get("SELECT * FROM auto_blogs WHERE id = ?", r.get("slot_id")) if r.get("slot_id") else None
     if slot and approved:
         user = autopilot._acting_user(r["created_by"])
@@ -262,14 +362,23 @@ def tick() -> None:
 
 # ---------------------------------------------------------------- reads for the SEO & Blog overview
 
-def skip(user: Row, slot_id: int) -> Row:
+def cancel(user: Row, slot_id: int) -> Row:
+    """Cancel one automatic blog so Claude does not write it: a planned slot is skipped; a slot being written has its run
+    stopped (its unfinished Claude jobs are cancelled) and is skipped. A written blog is not undone here: it is an article."""
+    from . import autopilot
     slot = get("SELECT * FROM auto_blogs WHERE id = ?", slot_id)
     if not slot:
         raise HttpError(404, "That slot does not exist.")
-    if slot["status"] != "planned":
-        raise HttpError(409, "Only a slot that has not started can be skipped.")
-    _set(slot_id, status="skipped", message=f"Skipped by {user.get('name') or user.get('email') or 'a person'}.")
-    audit(user, "auto_blog.skip", "auto_blog", slot_id, slot["brand_id"], slot["publish_on"])
+    if slot["status"] == "writing" and slot["run_id"]:
+        run_row = get("SELECT status FROM autopilot_runs WHERE id = ?", slot["run_id"])
+        if run_row and run_row["status"] == "running":
+            autopilot.stop(user, slot["run_id"])   # also marks this slot skipped
+            audit(user, "auto_blog.cancel", "auto_blog", slot_id, slot["brand_id"], f"{slot['publish_on']} (stopped while writing)")
+            return get("SELECT * FROM auto_blogs WHERE id = ?", slot_id)  # type: ignore[return-value]
+    if slot["status"] not in ("planned", "writing"):
+        raise HttpError(409, "Only a blog that is planned or being written can be cancelled.")
+    _set(slot_id, status="skipped", message=f"Cancelled by {user.get('name') or user.get('email') or 'a person'}. No blog is written for this day.")
+    audit(user, "auto_blog.cancel", "auto_blog", slot_id, slot["brand_id"], slot["publish_on"])
     return get("SELECT * FROM auto_blogs WHERE id = ?", slot_id)  # type: ignore[return-value]
 
 
@@ -278,15 +387,27 @@ def slots(brand_id: str | None, start: str, end: str) -> list[Row]:
     if brand_id:
         where += " AND s.brand_id = ?"
         args.append(brand_id)
+    return _slot_rows(where, args)
+
+
+def slots_by_id(ids: list[int]) -> list[Row]:
+    return _slot_rows(f"s.id IN ({','.join('?' for _ in ids)})", list(ids)) if ids else []
+
+
+def _slot_rows(where: str, args: list[Any]) -> list[Row]:
+    """Slots with what they are about: the article once written, else the topic (a person's scheduled topic, or the one
+    Claude picked). `scheduled_topic` marks a slot a person put on the calendar for a topic."""
     rows = all_rows(f"""SELECT s.*, a.title AS article_title, a.status AS article_status, a.primary_keyword, a.shopify_article_id,
-                               a.image_url, t.title AS topic_title, r.step AS run_step, r.message AS run_message
+                               a.image_url, COALESCE(st.title, t.title) AS topic_title, r.step AS run_step, r.message AS run_message
                         FROM auto_blogs s LEFT JOIN articles a ON a.id = s.article_id LEFT JOIN autopilot_runs r ON r.id = s.run_id
-                        LEFT JOIN topics t ON t.id = r.topic_id WHERE {where} ORDER BY s.publish_on, s.brand_id""", *args)
+                        LEFT JOIN topics t ON t.id = r.topic_id LEFT JOIN topics st ON st.id = s.topic_id
+                        WHERE {where} ORDER BY s.publish_on, s.brand_id""", *args)
     for x in rows:
         try:
             chk = json.loads(x.pop("checks_json") or "{}")
         except ValueError:
             chk = {}
+        x["scheduled_topic"] = bool(x.get("topic_id"))
         x["checks"] = {"score": chk.get("score"), "groups": {k: g.get("score") for k, g in (chk.get("groups") or {}).items()},
                        "open": [c["label"] for c in chk.get("failures", [])][:8], "words": chk.get("words"), "images": chk.get("images")}
     return rows

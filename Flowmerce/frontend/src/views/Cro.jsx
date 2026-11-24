@@ -7,10 +7,11 @@ import { useEffect, useRef, useState } from 'react';
 import { api, qs, useApi } from '../lib/api';
 import { useBrandParam } from '../lib/app';
 import { useSearchParams } from '../lib/nav';
+import { tabLabel } from '../lib/routes.mjs';
 import { fmtDate, fmtDateTime, fmtDay, fmtInt, isoDay, timeAgo } from '../lib/format';
 import {
-    ADVICE_AREA, AREAS, EFFORT_TONE, IMPACT_TONE, PRIORITY_TONE, RANGE_PRESETS, RULE_KIND, STORES, TABS, storeTimezone,
-    RATING, VITALS, areaLabel, conversionScale, effectiveCompare, fmtVital, heatLevel, money, pct, presetRange, rangeDays, readable, seriesOf, shiftDay, signedPct,
+    ADVICE_AREA, AREAS, EFFORT_TONE, IMPACT_TONE, PRIORITY_TONE, RULE_KIND, STORES, TABS, storeTimezone,
+    RATING, VITALS, areaLabel, conversionScale, effectiveCompare, fmtVital, heatLevel, isRangeKey, money, pct, presetRange, rangeDays, readable, seriesOf, shiftDay, signedPct,
     signedPts, todayIn,
 } from '../lib/cro';
 import { LineChart } from '../components/charts';
@@ -20,7 +21,7 @@ import { Gauge } from '../components/motion';
 import { DayStrip, GaugeCard, HealthTile, HeatmapCard, JourneyCard, MoversCard, OrdersCard, SalesChart, SalesTile, TrendsRow, VisitsCard } from '../components/croOverview';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
-import { Button, Card, Field, LoadingBlock, PageHead, Paged, Pill, Skeleton, Tabs } from '../components/ui';
+import { Button, Card, Field, LoadingBlock, PageHead, Paged, Pill, Skeleton } from '../components/ui';
 
 const RANGE_TABS = ['overview', 'conversion', 'landing', 'checkout', 'products', 'sales', 'site'];
 
@@ -45,17 +46,21 @@ export default function Cro() {
         }
         setSp(next, { replace: true });
     };
-    const r = sp.get('r') === 'custom' || RANGE_PRESETS.some((p) => p.key === sp.get('r')) ? sp.get('r') : 'yesterday';
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v ?? '');
+    const r = isRangeKey(sp.get('r')) ? sp.get('r') : 'yesterday';
     let range = null;
     if (today) {
-        const fixed = r === 'custom' && /^\d{4}-\d{2}-\d{2}$/.test(sp.get('from') ?? '') && /^\d{4}-\d{2}-\d{2}$/.test(sp.get('to') ?? '')
-            ? { from: sp.get('from'), to: sp.get('to') } : presetRange(r, today);
-        const cmp = sp.get('cmp') || (rangeDays(fixed.from, fixed.to) === 1 ? (fixed.to < today ? '4week_avg' : 'last_week') : 'previous');
-        range = { r: r === 'custom' && !sp.get('from') ? 'yesterday' : r, ...fixed, cmp: effectiveCompare(cmp, fixed.from, fixed.to) };
+        const fixed = r === 'custom' && isDay(sp.get('from')) && isDay(sp.get('to')) ? { from: sp.get('from'), to: sp.get('to') } : presetRange(r, today);
+        const cmp = sp.get('cmp') || 'previous';   // Shopify's default: the previous period
+        const cfrom = isDay(sp.get('cfrom')) ? sp.get('cfrom') : null;
+        range = { r: r === 'custom' && !sp.get('from') ? 'yesterday' : r, ...fixed, cmp: effectiveCompare(cmp, fixed.from, fixed.to, cfrom), cfrom };
     }
+    // From the date picker ({ r, from, to }; a moving pick keeps only its key) or the comparison picker ({ cmp, cfrom }).
+    // The comparison the team chose stays when the dates change, as in Shopify.
     const setRange = (patch) => {
-        if (patch.r && patch.r !== 'custom') update({ r: patch.r === 'yesterday' ? null : patch.r, from: null, to: null, cmp: null });
-        else update({ ...patch, r: patch.r ?? sp.get('r') });
+        if ('cmp' in patch) update({ cmp: patch.cmp, cfrom: patch.cmp === 'custom' ? patch.cfrom : null });
+        else if (patch.r && patch.r !== 'custom') update({ r: patch.r === 'yesterday' ? null : patch.r, from: null, to: null });
+        else update({ r: 'custom', from: patch.from, to: patch.to });
     };
     const syncNow = async () => {
         setSyncing(true);
@@ -71,14 +76,13 @@ export default function Cro() {
             setSyncing(false);
         }
     };
-    const rq = range ? { brand, from: range.from, to: range.to, compare: range.cmp } : null;
+    const rq = range ? { brand, from: range.from, to: range.to, compare: range.cmp, cfrom: range.cmp === 'custom' ? range.cfrom : undefined } : null;
     return (<>
-      <PageHead title="Conversion (CRO)" sub="How visitors become orders, and what to do next."
+      <PageHead title={tab === 'overview' ? 'Conversion (CRO)' : tabLabel('/cro', tab)} crumbs={tab === 'overview' ? null : 'Conversion (CRO)'} sub="How visitors become orders, and what to do next."
         actions={<>
           {globalBrand ? null : <Seg label="Store" size="" options={STORES} value={brand} onChange={(s) => update({ store: s === 'ridhi' ? null : s })}/>}
           <Button icon="refresh" loading={syncing} onClick={syncNow} title="Read the latest orders for this store from Shopify now (it also runs every 15 minutes)">Sync now</Button>
         </>}/>
-      <Tabs value={tab} onChange={(t) => update({ tab: t === 'overview' ? null : t })} tabs={TABS}/>
       <div className="mt-16 col" style={{ gap: 16 }} key={`${brand}-${rev}`}>
         {RANGE_TABS.includes(tab) ? (settings.error ? <ExplainedError error={settings.error} onRetry={settings.reload}/>
             : range ? <RangeBar value={range} today={today} onChange={setRange}/> : <LoadingBlock rows={1}/>) : null}

@@ -7,7 +7,7 @@ import os
 import pytest
 
 os.environ["SCHEDULER"] = "false"
-os.environ.pop("ALLOW_LIVE_PUBLISH", None)
+os.environ["ALLOW_LIVE_PUBLISH"] = "false"   # beats a developer's .env (config never overrides a real variable): tests expect it off
 
 from flowmerce.modules.seo.auth import hash_password  # noqa: E402
 from flowmerce.modules.seo.db import now, open_db, run  # noqa: E402

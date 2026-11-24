@@ -78,7 +78,7 @@ Names and order are from the product handoff (`docs/product/Flowmerce_Project_Ha
 |---|---|---|---|
 | 1 | SEO & Blog Content | `seo` | See A2 and A6 |
 | 2 | Shipping & Customer Experience | `ship` | **Planned** |
-| 3 | Meta & Google Ads Performance | `ads` | **Planned** |
+| 3 | Meta & Google Ads Performance | `ads` | **In progress** (owner, 2026-11-24): plan in `docs/plans/ads-module.md` (one Ads module, live Meta Ads and Google Ads API, both brands); phase 1 screens (`/ads`, 8 tabs) built and checked in demo mode on sample numbers; phase 2 (schema `ads`, Meta sync, rules, `/api/ads`) built and tested, checked read-only on both real Meta accounts, `115_ads.sql` not yet run in Supabase; phase 3 (Google Ads) not started; read-only access to both Meta accounts and Ridhi's Google Ads account checked 2026-11-24, CPC's Google Ads account ID still missing |
 | 4 | Creative Strategist | `creative` | **Planned** |
 | 5 | Landing Page Automation | `page` | **Planned** |
 | 6 | Conversion Rate Optimization (CRO) | `cro` | **In progress** (owner, 2026-11-19): phase 1 schema run in Supabase; phase 2 backend (`modules/cro/`, `/api/cro/*`, 113 order copy) written and unit-tested, not tested live; phase 3 frontend (`/cro` page, 6 tabs + 2 under Advanced, rings and funnel) built and checked in demo mode, not yet checked on live data; Claude's action plan on Recommendations (2026-11-20) unit-tested, not run against the live Claude API; phase 5 docs/ADR pending |

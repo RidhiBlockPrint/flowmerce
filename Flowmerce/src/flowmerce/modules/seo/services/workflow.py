@@ -1,6 +1,7 @@
 """The blogging pipeline, stage by stage. Each stage is either run by this server (Claude calls, checks,
-Shopify drafts, analytics syncs) or waits on a person. Stage health comes from real records: the last
-run, its error, and how many items are waiting at that stage."""
+analytics syncs) or waits on a person. Stage health comes from real records: the last run, its error, and how
+many items are waiting at that stage. There is no Shopify draft stage: drafts stay in Flowmerce until a publish
+request is authorized (owner decision 2026-11-24; runs recorded under the old "shopify_draft" stage stay in history)."""
 from __future__ import annotations
 
 import json
@@ -11,12 +12,11 @@ from urllib.parse import urlparse
 from ..audit import audit
 from ..config import config
 from ..db import all_rows, get, now, run, tx
-from ..integrations import claude, shopify
+from ..integrations import claude
 from ..integrations.google import ga4_configured, gsc_configured
 from ..util import HttpError, norm_keyword, s, similarity
 from .articles import content_of, create_article, hash_content
 from .brands import brand, brand_settings
-from .publishing import save_shopify_draft
 from .runs import last_run, record_run
 from .sync import sync_ga4, sync_gsc, sync_shopify
 
@@ -27,7 +27,6 @@ STAGES = [
     {"key": "content_generation", "label": "Content generation", "kind": "automated", "owner": "Claude", "description": "Claude writes a first draft for approved topics, with internal links to real products."},
     {"key": "content_approval", "label": "Content approval", "kind": "human", "owner": "Reviewer", "description": "A reviewer approves the draft or sends it back with notes."},
     {"key": "image_selection", "label": "Image selection", "kind": "automated", "owner": "Dashboard", "description": "Picks a featured image from the product a draft links to; editors can change it."},
-    {"key": "shopify_draft", "label": "Shopify draft", "kind": "automated", "owner": "Dashboard", "description": "Saves approved articles to Shopify as hidden drafts. Never publishes."},
     {"key": "publication_approval", "label": "Publication approval", "kind": "human", "owner": "Reviewer / Admin", "description": "An authorized person approves the publish request and confirms it."},
     {"key": "performance_tracking", "label": "Performance tracking", "kind": "automated", "owner": "Dashboard", "description": "Refreshes Shopify, Search Console and GA4 data."},
 ]
@@ -38,7 +37,6 @@ HUMAN_ACTION = {
     "content_generation": "Generate drafts for approved topics",
     "content_approval": "Review drafts waiting for approval",
     "image_selection": "Choose featured images",
-    "shopify_draft": "Save approved articles as Shopify drafts",
     "publication_approval": "Authorize or reject publish requests",
 }
 
@@ -58,13 +56,11 @@ def set_paused(user: dict, brand_id: str, paused: bool, reason: str) -> None:
 
 
 def _setup_gap(stage: str, brand_id: str) -> str | None:
-    b = brand(brand_id)
+    brand(brand_id)   # an unknown brand raises here
     if stage in AI_STAGES:
         from . import ai_jobs   # imported here: ai_jobs imports this module
         ps = ai_jobs.provider_status()
         return None if ps["state"] in ("ready", "unavailable") else ps["reason"]
-    if stage == "shopify_draft":
-        return None if shopify.configured(b) else f"Shopify Admin API token for {b.name} is not set."
     return None
 
 
@@ -75,7 +71,6 @@ def _pending(stage: str, brand_id: str) -> int:
         "content_generation": "SELECT COUNT(*) n FROM topics t WHERE brand_id = ? AND status = 'approved' AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.topic_id = t.id)",
         "content_approval": "SELECT COUNT(*) n FROM articles WHERE brand_id = ? AND status = 'in_review'",
         "image_selection": "SELECT COUNT(*) n FROM articles WHERE brand_id = ? AND status IN ('draft','changes_requested','in_review','approved') AND image_url = ''",
-        "shopify_draft": "SELECT COUNT(*) n FROM articles WHERE brand_id = ? AND status = 'approved' AND shopify_article_id IS NULL",
         "publication_approval": "SELECT COUNT(*) n FROM publish_requests WHERE brand_id = ? AND status IN ('pending','failed')",
     }.get(stage)
     return int(get(q, brand_id)["n"]) if q else 0
@@ -197,24 +192,6 @@ def _image_selection(brand_id: str) -> dict:
             "details": {"picked": picked, "considered": len(arts)}, "status": "waiting" if waiting else "succeeded"}
 
 
-def _shopify_drafts(brand_id: str, user: dict | None) -> dict:
-    arts = all_rows("SELECT id FROM articles WHERE brand_id = ? AND status = 'approved' AND approved_hash = content_hash AND shopify_published = 0", brand_id)
-    if not arts:
-        return {"message": "No approved articles waiting for a Shopify draft", "status": "skipped"}
-    if not user:
-        raise RuntimeError("Shopify drafts are only created when a person starts this stage.")
-    ok, errors = 0, []
-    for a in arts:
-        try:
-            save_shopify_draft(user, a["id"])
-            ok += 1
-        except Exception as e:  # noqa: BLE001
-            errors.append(getattr(e, "message", None) or str(e))
-    if errors and not ok:
-        raise RuntimeError(errors[0])
-    return {"message": f"{ok} hidden draft{'' if ok == 1 else 's'} saved to Shopify" + (f", {len(errors)} failed" if errors else ""), "details": {"ok": ok, "errors": errors}}
-
-
 def _performance_tracking(brand_id: str) -> dict:
     b = brand(brand_id)
     parts, errors = [], []
@@ -285,7 +262,6 @@ def run_stage(stage: str, brand_id: str, user: dict | None, trigger: str, topic_
     runners = {
         "keyword_validation": lambda: _keyword_validation(brand_id),
         "image_selection": lambda: _image_selection(brand_id),
-        "shopify_draft": lambda: _shopify_drafts(brand_id, user),
         "performance_tracking": lambda: _performance_tracking(brand_id),
     }
     return record_run(brand_id, stage, trigger, user, runners[stage], retry_of)

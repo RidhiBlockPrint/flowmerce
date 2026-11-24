@@ -3,34 +3,44 @@
  * Employees pick a business module first, then its functions. Each module owns its own pages:
  *   - every module entry expands to its everyday pages (`items`) and a collapsed "Advanced" group (`advanced`): pages and
  *     tabs that are set up once or opened now and then (owner decision 2026-11-20: declutter every module);
- *   - Shipping and Conversion (CRO) are one page each with tabs: their entries point at a tab (`tab`), and the module
+ *   - Shipping, Conversion (CRO) and Ads are one page each with tabs: their entries point at a tab (`tab`), and the module
  *     entry itself (`to`) opens the page.
  * New business modules are added here as one top-level entry. Integrations are never top-level: they live in SETTINGS.
+ * SEO & Blog lists its pages in the order a blog is built (owner request 2026-11-24): Overview, Blog pipeline (topic → draft →
+ * schedule on one page), Content calendar, Publishing, then all Articles.
+ *
+ * The sidebar is the only way between a module's pages and tabs (owner request 2026-11-24): pages do not repeat it as a
+ * tab strip. A page with tabs lists each tab here (`tab`); its first listed tab is the page's default (no ?tab=).
+ * `blurb` is the module's one-line description under its name in the sidebar; its colour is set in globals.css
+ * (.nav-module[data-mod]).
  *
  * `perm` hides an item from roles that cannot use it. `badge: 'publishing'` shows the number of publish requests that
  * need attention next to the item.
  */
 export const NAV = [
-    { id: 'home', kind: 'link', label: 'Home', to: '/', icon: 'home', end: true },
-    { id: 'seo', kind: 'module', label: 'SEO & Blog', icon: 'blogs', to: '/blog', items: [
+    { id: 'home', kind: 'link', label: 'Home', to: '/', icon: 'home', end: true, blurb: 'Today across every module' },
+    { id: 'seo', kind: 'module', label: 'SEO & Blog', icon: 'blogs', to: '/blog', blurb: 'Blogs and publishing', items: [
         { to: '/blog', label: 'Overview', icon: 'overview' },
-        { to: '/articles', label: 'Articles', icon: 'blogs' },
+        { to: '/pipeline', label: 'Blog pipeline', icon: 'edit' },
         { to: '/calendar', label: 'Content calendar', icon: 'calendar' },
         { to: '/publishing', label: 'Publishing', icon: 'publish', badge: 'publishing' },
+        { to: '/articles', label: 'Articles', icon: 'blogs' },
     ], advanced: [
-        { to: '/write', label: 'Write it yourself', icon: 'edit' },
-        { to: '/topics', label: 'Topics & keywords', icon: 'topics' },
-        { to: '/analytics', label: 'SEO & traffic', icon: 'analytics' },
+        { to: '/topics', tab: 'topics', label: 'Topics', icon: 'topics' },
+        { to: '/topics', tab: 'keywords', label: 'Keywords', icon: 'target' },
+        { to: '/analytics', tab: 'gsc', label: 'Search Console', icon: 'google' },
+        { to: '/analytics', tab: 'ga4', label: 'GA4 traffic', icon: 'analytics' },
+        { to: '/analytics', tab: 'articles', label: 'Traffic by article', icon: 'trend' },
         { to: '/automation', label: 'Automation', icon: 'automation' },
     ] },
-    { id: 'shipping', kind: 'module', label: 'Shipping', to: '/shipping', icon: 'truck', items: [
+    { id: 'shipping', kind: 'module', label: 'Shipping', to: '/shipping', icon: 'truck', blurb: 'Parcels on their way', items: [
         { to: '/shipping', tab: 'overview', label: 'Overview', icon: 'overview' },
         { to: '/shipping', tab: 'shipments', label: 'Shipments', icon: 'truck' },
         { to: '/shipping', tab: 'checks', label: 'Hand checks', icon: 'alert' },
     ], advanced: [
         { to: '/shipping', tab: 'analytics', label: 'Analytics', icon: 'analytics' },
     ] },
-    { id: 'cro', kind: 'module', label: 'Conversion (CRO)', to: '/cro', icon: 'target', items: [
+    { id: 'cro', kind: 'module', label: 'Conversion (CRO)', to: '/cro', icon: 'target', blurb: 'Visitors into orders', items: [
         { to: '/cro', tab: 'overview', label: 'Overview', icon: 'overview' },
         { to: '/cro', tab: 'conversion', label: 'Conversion', icon: 'target' },
         { to: '/cro', tab: 'landing', label: 'Landing pages', icon: 'link' },
@@ -44,16 +54,47 @@ export const NAV = [
         { to: '/cro', tab: 'alarms', label: 'Alarms', icon: 'clock' },
         { to: '/cro', tab: 'changes', label: 'Change log', icon: 'history' },
     ] },
+    // Meta and Google Ads in one module (owner decision 2026-11-24); a tab for one platform only shows that platform.
+    { id: 'ads', kind: 'module', label: 'Ads', to: '/ads', icon: 'trend', blurb: 'Meta and Google Ads', items: [
+        { to: '/ads', tab: 'overview', label: 'Overview', icon: 'overview' },
+        { to: '/ads', tab: 'campaigns', label: 'Campaigns', icon: 'list' },
+        { to: '/ads', tab: 'creatives', label: 'Creatives', icon: 'image' },
+        { to: '/ads', tab: 'funnel', label: 'Funnel', icon: 'filter' },
+        { to: '/ads', tab: 'actions', label: 'Actions', icon: 'tasks' },
+    ], advanced: [
+        { to: '/ads', tab: 'search', label: 'Search terms', icon: 'search' },
+        { to: '/ads', tab: 'gap', label: 'ABO to CBO gap', icon: 'link' },
+        { to: '/ads', tab: 'rules', label: 'Rules', icon: 'settings' },
+    ] },
 ];
 
+/** A page's default tab: the first of its tabs listed in the menu (shown when the address has no ?tab=). */
+export function defaultTab(to) {
+    for (const e of NAV)
+        for (const i of e.kind === 'module' ? [...e.items, ...(e.advanced ?? [])] : [])
+            if (i.to === to && i.tab)
+                return i.tab;
+    return 'overview';
+}
+
 /** Where a menu item goes: its page, plus `?tab=` for a tab other than the page's first one. */
-export const hrefOf = (item) => (item.tab && item.tab !== 'overview' ? `${item.to}?tab=${item.tab}` : item.to);
+export const hrefOf = (item) => (item.tab && item.tab !== defaultTab(item.to) ? `${item.to}?tab=${item.tab}` : item.to);
 
 /** Whether a menu item is the page (and tab) on screen. `tab` is the address's ?tab= value (none = the first tab). */
 export function itemActive(item, pathname, tab, end = false) {
     if (!pathMatches(pathname, item.to, end))
         return false;
-    return item.tab ? (tab || 'overview') === item.tab : true;
+    return item.tab ? (tab || defaultTab(item.to)) === item.tab : true;
+}
+
+/** The menu's name for a page's tab, so a page can say where you are now that it has no tab strip of its own. */
+export function tabLabel(to, tab) {
+    const want = tab || defaultTab(to);
+    for (const e of NAV)
+        for (const i of e.kind === 'module' ? [...e.items, ...(e.advanced ?? [])] : [])
+            if (i.to === to && i.tab === want)
+                return i.label;
+    return '';
 }
 
 /** A module's pages, everyday ones first, then its Advanced group. */
@@ -80,10 +121,10 @@ export const NAV_ITEMS = [
 export const RANGE_PATHS = ['/analytics', '/articles/'];
 
 /** Pages that do not search articles and topics, so the global search box is not shown there. */
-export const NO_SEARCH_PATHS = ['/settings', '/shipping', '/cro'];
+export const NO_SEARCH_PATHS = ['/settings', '/shipping', '/cro', '/ads'];
 
 export const pathMatches = (pathname, to, end = false) => (end ? pathname === to : pathname === to || pathname.startsWith(`${to}/`));
-/** Which business module a page belongs to: 'home', 'seo', 'shipping', 'cro', 'settings', or null for an unknown page. */
+/** Which business module a page belongs to: 'home', 'seo', 'shipping', 'cro', 'ads', 'settings', or null for an unknown page. */
 export function moduleOf(pathname) {
     if (pathMatches(pathname, SETTINGS.root))
         return 'settings';

@@ -40,7 +40,6 @@ export const STAGES = [
   { key: 'content_generation', label: 'Content generation', kind: 'automated', owner: 'Claude', description: 'Claude writes a first draft for approved topics, with internal links to real products.' },
   { key: 'content_approval', label: 'Content approval', kind: 'human', owner: 'Reviewer', description: 'A reviewer approves the draft or sends it back with notes.' },
   { key: 'image_selection', label: 'Image selection', kind: 'automated', owner: 'Dashboard', description: 'Picks a featured image from the product a draft links to; editors can change it.' },
-  { key: 'shopify_draft', label: 'Shopify draft', kind: 'automated', owner: 'Dashboard', description: 'Saves approved articles to Shopify as hidden drafts. Never publishes.' },
   { key: 'publication_approval', label: 'Publication approval', kind: 'human', owner: 'Reviewer / Admin', description: 'An authorized person approves the publish request and confirms it.' },
   { key: 'performance_tracking', label: 'Performance tracking', kind: 'automated', owner: 'Dashboard', description: 'Refreshes Shopify, Search Console and GA4 data.' },
 ];
@@ -50,7 +49,6 @@ const HUMAN_ACTION = {
   content_generation: 'Generate drafts for approved topics',
   content_approval: 'Review drafts waiting for approval',
   image_selection: 'Choose featured images',
-  shopify_draft: 'Save approved articles as Shopify drafts',
   publication_approval: 'Authorize or reject publish requests',
 };
 const AI_STAGES = ['topic_research', 'content_generation'];
@@ -97,8 +95,8 @@ export function seed(db) {
   db.automation = {
     pause: { ridhi: null, cpc: null },
     pending: {
-      ridhi: { keyword_validation: 2, topic_approval: 3, content_generation: 1, content_approval: 2, image_selection: 1, shopify_draft: 1, publication_approval: 1 },
-      cpc: { keyword_validation: 0, topic_approval: 2, content_generation: 2, content_approval: 1, image_selection: 2, shopify_draft: 0, publication_approval: 0 },
+      ridhi: { keyword_validation: 2, topic_approval: 3, content_generation: 1, content_approval: 2, image_selection: 1, publication_approval: 1 },
+      cpc: { keyword_validation: 0, topic_approval: 2, content_generation: 2, content_approval: 1, image_selection: 2, publication_approval: 0 },
     },
     resultSeq: 0,
   };
@@ -141,7 +139,6 @@ export function seed(db) {
   run({ brand_id: 'cpc', stage: 'performance_tracking', trigger_kind: 'scheduler', status: 'succeeded', started_at: t(5), finished_at: fin(5), message: 'Refreshed demo analytics for 24 pages (simulated; no Google or Shopify request was made).' });
   run({ brand_id: 'ridhi', stage: 'keyword_validation', trigger_kind: 'manual', user_id: 2, user_name: 'Asha Verma', status: 'succeeded', started_at: t(48), finished_at: fin(48), message: 'Checked 6 proposed topics: 4 validated, 2 need keyword volumes.' });
   run({ brand_id: 'cpc', stage: 'keyword_validation', trigger_kind: 'manual', user_id: 2, user_name: 'Asha Verma', status: 'succeeded', started_at: t(29), finished_at: fin(29), message: 'Checked 5 proposed topics: 5 validated.' });
-  run({ brand_id: 'ridhi', stage: 'shopify_draft', trigger_kind: 'manual', user_id: 1, user_name: admin.name, status: 'succeeded', started_at: t(15), finished_at: fin(15), message: 'Saved 1 approved article as a hidden draft (simulated; nothing was sent to Shopify).' });
   run({ brand_id: 'cpc', stage: 'image_selection', trigger_kind: 'manual', user_id: 3, user_name: 'Rohan Mehta', status: 'failed', started_at: t(11), finished_at: fin(11, 0.1), error: 'No product image matched 2 articles in the sample catalogue (simulated failure). Choose images in the editor, or retry.' });
   run({ brand_id: 'ridhi', stage: 'image_selection', trigger_kind: 'manual', user_id: 2, user_name: 'Asha Verma', status: 'succeeded', started_at: t(36), finished_at: fin(36), message: 'Picked featured images for 3 articles.' });
   run({ brand_id: 'ridhi', stage: 'performance_tracking', trigger_kind: 'scheduler', status: 'succeeded', started_at: t(29), finished_at: fin(29), message: 'Refreshed demo analytics for 38 pages (simulated).' });
@@ -315,7 +312,6 @@ function startAiJob(db, brand, taskType, input, user = admin) {
 const NON_AI_MESSAGES = {
   keyword_validation: (n) => `Checked ${3 + (n % 4)} proposed topics against sample keyword data: ${2 + (n % 3)} validated, 1 needs keyword volumes.`,
   image_selection: (n) => `Picked featured images for ${1 + (n % 3)} articles from the sample catalogue.`,
-  shopify_draft: (n) => `Saved ${1 + (n % 2)} approved article${n % 2 ? 's' : ''} as hidden drafts (simulated; nothing was sent to Shopify).`,
   performance_tracking: (n) => `Refreshed demo analytics for ${24 + (n % 20)} pages (simulated; no Google or Shopify request was made).`,
 };
 

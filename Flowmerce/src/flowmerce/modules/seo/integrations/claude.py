@@ -95,7 +95,8 @@ def _classify(e: Exception) -> ClaudeError:
     return ClaudeError(f"Unexpected Claude error: {type(e).__name__}", "server")
 
 
-def _structured(system: str | list[dict], prompt: str, schema: dict, effort: str, max_tokens: int = 32000) -> tuple[dict, str]:
+def _structured(system: str | list[dict], prompt: str | list[dict], schema: dict, effort: str, max_tokens: int = 32000) -> tuple[dict, str]:
+    """`prompt` is text, or a list of content blocks (text and images) for a request that shows Claude pictures."""
     import anthropic
     client = _get_client()
     extra: dict = {"output_config": {"effort": effort, "format": {"type": "json_schema", "schema": schema}}}
@@ -370,6 +371,137 @@ def assist(b: BrandConfig, v: dict, kind: str, context: dict, existing_titles: l
     else:
         raise ValueError(f"unknown assist kind {kind}")
     return _structured(_brand_system(b, v), "\n".join(p for p in parts if p), _ASSIST_SCHEMAS[kind], "low", max_tokens=16000)
+
+
+# ---------------------------------------------------------------- AI image prompts (services/image_prompts.py)
+
+def _image_system(b: BrandConfig, v: dict) -> str:
+    """A short system prompt for image work. The brand's writing documents are not sent: they are long and about words,
+    and the brand's look comes from its own photographs instead (the visual style below)."""
+    return "\n".join(p for p in [
+        f"You are the art director for {b.name} ({b.storefront_domain}), an online store selling hand block-printed cotton home textiles.",
+        "You write prompts that a person pastes into an AI image tool (Gemini, ChatGPT or any other) to make the featured banner of a blog article.",
+        "Brand rules you must keep:",
+        "- A real product may appear only when its real photo is attached as a reference, and the prompt must say to keep its print, colours "
+        "and proportions exactly as in that photo. Never ask the tool to invent a print and present it as the store's product.",
+        "- Without a reference photo, show the scene, room, table, hands at work, materials or mood the article is about, with textiles that read as "
+        "hand block-printed cotton in general, never a specific product.",
+        "- The image must look like a real photograph: no illustration, cartoon, 3D render or obvious AI gloss.",
+        "- No words, letters, numbers, logos, watermarks, borders, frames or collages in the image.",
+        f"Audience note from the dashboard: {v['audience']}" if v.get("audience") else "",
+        f"Never: {v['avoid']}" if v.get("avoid") else "",
+    ] if p)
+
+
+def _image_block(url: str) -> dict:
+    return {"type": "image", "source": {"type": "url", "url": url}}
+
+
+IMAGE_STYLE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["style"], "properties": {"style": {"type": "string"}}}
+
+
+def image_style(b: BrandConfig, v: dict, images: list[dict]) -> tuple[dict, str]:
+    """Read the store's own photographs and describe its look, for every later image prompt. `images`: [{url, label}].
+    The pictures are passed by link: Claude fetches them, so this server never holds them in memory."""
+    content: list[dict] = [{"type": "text", "text": f"These are {len(images)} photographs {b.name} already uses (product photos and blog banners)."}]
+    for i, im in enumerate(images, 1):
+        content += [{"type": "text", "text": f"Photo {i}: {im['label']}"}, _image_block(im["url"])]
+    content.append({"type": "text", "text": "\n".join([
+        "Describe this store's visual style so that new AI-made blog banners look like they belong with these photos.",
+        "Write 150-250 words of plain sentences under these labels, each on its own line: Light, Colour palette, Backgrounds and surfaces, "
+        "Props and styling, Composition and camera, Mood, Avoid.",
+        "Describe what you see across the set, not any one product. Do not name products.",
+    ])})
+    return _structured(_image_system(b, v), content, IMAGE_STYLE_SCHEMA, "low", max_tokens=8000)
+
+
+IMAGE_PROMPT_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["payoff", "concept", "scene", "pin_scene", "references", "alt_text", "file_name"],
+    "properties": {"payoff": {"type": "string"}, "concept": {"type": "string"}, "scene": {"type": "string"}, "pin_scene": {"type": "string"},
+                   "references": {"type": "array", "items": {"type": "integer"}},
+                   "alt_text": {"type": "string"}, "file_name": {"type": "string"}}}
+
+# How a professional blog editor judges a hero image (owner review 2026-11-23: the first banners were clean but read like
+# catalogue shots). Claude is held to these, in this order.
+EDITORIAL_RULES = """Art direction, as a professional blog editor would brief a photographer:
+1. Show the answer, not just the product. Decide first what the reader gets from this article (the payoff), then make the picture show it:
+   warmth and layering for "is it warm enough", the overhang against the table edge for "what size", the step in progress for a how-to,
+   the finished occasion for an ideas article. A reader who sees only the picture and the title should guess the answer.
+2. Catch a moment. Prefer a scene with life in it: hands at work (folding, smoothing, setting down a cup, pressing a block), a task half done,
+   a person partly in frame. Keep faces out of frame or turned away. A still life is fine only when the moment is in the objects
+   (steam rising, a napkin just unfolded, a bed just turned down).
+3. Frame it like an editorial photo, not a product listing: off-centre subject, a strong diagonal or leading line, a close detail with depth
+   behind, a top-down flat lay, or a view through a doorway. Never the straight-on, centred, symmetrical catalogue shot. Choose the framing
+   that tells this article's story best.
+4. Keep it real: a little natural imperfection (a crease, a slipped corner, crumbs, a ruffled pillow, uneven light) so it reads as photographed.
+5. One clear focal point that still reads when the picture is shown small in a blog list."""
+
+
+def image_prompt(b: BrandConfig, v: dict, style: str, article: dict, products: list[dict], used: list[str], fmt: str, pin_fmt: str) -> tuple[dict, str]:
+    """The banner prompt and a tall Pinterest prompt for one article. `products`: [{url, title}] candidate reference photos,
+    shown to Claude; `used`: concepts already given to the brand's other articles, which this one must not repeat."""
+    content: list[dict] = [{"type": "text", "text": "\n".join(p for p in [
+        f"Write the image prompts for the featured banner of this {b.name} blog article, and for a tall Pinterest pin of it.",
+        f"Title: {article['title']}",
+        f"Primary keyword: {article['primary_keyword']}" if article.get("primary_keyword") else "",
+        f"Summary: {article['summary']}" if article.get("summary") else "",
+        ("Sections:\n" + "\n".join(f"- {h}" for h in article["headings"])) if article.get("headings") else "",
+        f"Opening text: {article['opening']}" if article.get("opening") else "",
+        "",
+        f"The store's visual style (from its own photos). Use it for light, palette and surfaces, not for framing:\n{style}" if style else "",
+        "",
+        EDITORIAL_RULES,
+        "",
+        f"Banner format: {fmt}. Pinterest pin format: {pin_fmt}.",
+    ] if p)}]
+    if products:
+        content.append({"type": "text", "text": "Product photos you may use as references (by number). They are catalogue shots: take the product from them, never their framing:"})
+        for i, p in enumerate(products, 1):
+            content += [{"type": "text", "text": f"{i}. {p['title']}"}, _image_block(p["url"])]
+    content.append({"type": "text", "text": "\n".join(p for p in [
+        ("Concepts already used for this store's other articles. Yours must clearly differ from every one of them in setting, "
+         "framing, viewpoint, moment and colour mood:\n" + "\n".join(f"- {u}" for u in used)) if used else "",
+        "",
+        "Return:",
+        "- payoff: one sentence, the answer or benefit the reader gets from this article (your starting point; not shown in the prompt).",
+        "- concept: one line naming the setting, framing and viewpoint, the moment, the main subject and the colour mood (kept so later articles look different).",
+        "- scene: the banner prompt, 130-230 words of plain sentences for an image tool, following the art direction: the moment and how it shows "
+        "the payoff, subject, setting, light, colours, surfaces and props, the framing and camera angle, lens feel, depth of field, mood. "
+        "Compose for the banner format. Do not mention the size, aspect ratio or a list of things to avoid: Flowmerce adds those. "
+        "Do not use the words 'AI' or 'prompt'.",
+        "- pin_scene: the Pinterest prompt, 100-180 words, the same idea and products recomposed for a tall picture: a vertical layout "
+        "(top-down, a tall room view, or a close detail with depth above), with calm, uncluttered space in the top quarter where a title can be "
+        "added later. Same rules as scene.",
+        "- references: the numbers of the product photos the scenes show (at most 2), or [] for scenes without a specific product. "
+        "Use a product only if it fits the article; when you do, describe it as in its photo. In the scenes, name such a product "
+        "as 'the <product name> from the attached photo', never by its number (the person sees no numbers), and do not add an instruction to "
+        "keep its print unchanged: Flowmerce adds that.",
+        "- alt_text: one sentence describing what the finished banner shows, for screen readers and search engines (not a keyword list).",
+        "- file_name: lowercase words joined by hyphens, ending in .jpg, describing the banner.",
+    ] if p)})
+    return _structured(_image_system(b, v), content, IMAGE_PROMPT_SCHEMA, "medium", max_tokens=10000)
+
+
+IMAGE_CHECK_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["faithful", "looks_real", "problems"],
+    "properties": {"faithful": {"type": "boolean"}, "looks_real": {"type": "boolean"}, "problems": {"type": "string"}}}
+
+
+def image_check(b: BrandConfig, v: dict, refs: list[dict], image_url: str) -> tuple[dict, str]:
+    """Compare an AI-made banner with the real product photos it was made from. `refs`: [{url, title}]; all by link."""
+    content: list[dict] = [{"type": "text", "text": "The real product photos:"}]
+    for r in refs:
+        content += [{"type": "text", "text": r["title"]}, _image_block(r["url"])]
+    content += [{"type": "text", "text": "The AI-made blog banner that should show those products:"}, _image_block(image_url),
+                {"type": "text", "text": "\n".join([
+                    "Check the banner as the brand's product manager would before it goes on the blog.",
+                    "- faithful: true only if every product in the banner has the same print motifs, colours, border and scale as its photo. "
+                    "Small differences of light and angle are fine; a changed, simplified or invented print is not.",
+                    "- looks_real: true if it reads as a real photograph (no warped objects, melted details, extra fingers, garbled patterns or text).",
+                    "- problems: what is wrong, in one or two short sentences, or \"\".",
+                ])}]
+    return _structured(_image_system(b, v), content, IMAGE_CHECK_SCHEMA, "low", max_tokens=4000)
 
 
 def ping() -> dict:

@@ -125,26 +125,80 @@ export const seriesOf = (rows, field, key, label, color, extra = {}) => ({
 });
 
 /* ------------------------------------------------------------------ date ranges
- * The CRO page works on any store-local day range picked on a calendar. Quick picks are recomputed from the
- * store's "today" every time the page opens, so "Yesterday" always means yesterday. A range lives in the address
- * (?r=last7, or ?r=custom&from=2026-11-01&to=2026-11-15) with the comparison in ?cmp=, so a link opens the same view. */
+ * The CRO page works on any store-local day range, picked like Shopify's date picker (2026-11-24): Today, Yesterday,
+ * Last N days / weeks / months / quarters / years, Period to date, Black Friday Cyber Monday, Quarters or a custom
+ * range. A pick that moves with time keeps its key, so "Yesterday" always means yesterday. A range lives in the address
+ * (?r=last-7-days, or ?r=custom&from=2026-11-01&to=2026-11-15) with the comparison in ?cmp= (and ?cfrom= for a custom
+ * comparison), so a link opens the same view. Older keys (last7, this_month, last_month...) still work. */
 
-export const RANGE_PRESETS = [
-    { key: 'today', label: 'Today' },
-    { key: 'yesterday', label: 'Yesterday' },
-    { key: 'last7', label: 'Last 7 days' },
-    { key: 'last14', label: 'Last 14 days' },
-    { key: 'last30', label: 'Last 30 days' },
-    { key: 'this_month', label: 'This month' },
-    { key: 'last_month', label: 'Last month' },
-];
-
+/** The comparisons. The picker offers Shopify's five; `hidden` ones are kept only so older links still open. */
 export const RANGE_COMPARES = [
     { key: 'previous', label: 'Previous period' },
-    { key: 'last_week', label: 'Same days a week earlier' },
-    { key: '4week_avg', label: '4-week weekday average', single: true },
+    { key: 'previous_year', label: 'Previous year' },
+    { key: 'previous_year_dow', label: 'Previous year (match day of week)' },
+    { key: 'custom', label: 'Custom' },
     { key: 'none', label: 'No comparison' },
+    { key: 'last_week', label: 'Same days a week earlier', hidden: true },
+    { key: '4week_avg', label: '4-week weekday average', single: true, hidden: true },
 ];
+
+export const TO_DATE = [{ key: 'wtd', label: 'Week to date' }, { key: 'mtd', label: 'Month to date' }, { key: 'qtd', label: 'Quarter to date' },
+    { key: 'ytd', label: 'Year to date' }];
+const LEGACY = { last7: 'last-7-days', last14: 'last-14-days', last30: 'last-30-days', this_month: 'mtd', last_month: 'last-1-months' };
+const pad2 = (n) => String(n).padStart(2, '0');
+const ymd = (y, m, d) => new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10);
+const weekStart = (iso) => shiftDay(iso, -new Date(`${iso}T00:00:00Z`).getUTCDay());   // weeks start on Sunday, as in Shopify
+const monthStart = (iso) => `${iso.slice(0, 7)}-01`;
+const quarterStart = (iso) => `${iso.slice(0, 4)}-${pad2(Math.floor((Number(iso.slice(5, 7)) - 1) / 3) * 3 + 1)}-01`;
+const yearStart = (iso) => `${iso.slice(0, 4)}-01-01`;
+/** The first day of the month `k` months after the month starting on `first`. */
+const addMonths = (first, k) => ymd(Number(first.slice(0, 4)), Number(first.slice(5, 7)) + k, 1);
+
+/** Black Friday to Cyber Monday of a year: the day after the fourth Thursday of November, for four days. */
+export function bfcm(year) {
+    const wd = new Date(Date.UTC(year, 10, 1)).getUTCDay();
+    const thanksgiving = 1 + ((4 - wd + 7) % 7) + 21;
+    return { from: ymd(year, 11, thanksgiving + 1), to: ymd(year, 11, thanksgiving + 4) };
+}
+/** Quarter `q` (1-4) of `year`. */
+export function quarterRange(year, q) {
+    const from = ymd(year, (q - 1) * 3 + 1, 1);
+    return { from, to: shiftDay(addMonths(from, 3), -1) };
+}
+/** "Last n unit" keys: last-7-days, last-1-months... (`-t` = up to and including today, for older links). */
+export function parseLast(key) {
+    const m = /^last-(\d{1,3})-(days|weeks|months|quarters|years)(-t)?$/.exec(LEGACY[key] ?? key ?? '');
+    return m ? { n: Math.max(1, Number(m[1])), unit: m[2], today: !!m[3] } : null;
+}
+
+/** Whether a range key is one the picker understands (custom ranges use 'custom'). */
+export const isRangeKey = (key) => !!key && (key === 'custom' || key === 'today' || key === 'yesterday' || !!LEGACY[key] || !!parseLast(key)
+    || TO_DATE.some((t) => t.key === key) || /^bfcm-\d{4}$/.test(key) || /^q-\d{4}-[1-4]$/.test(key));
+
+/** The label a range key shows on the picker button ("Yesterday", "Last 7 days", "Q3 2026"...). */
+export function rangeLabel(key, from, to) {
+    if (key === 'today') return 'Today';
+    if (key === 'yesterday') return 'Yesterday';
+    const last = parseLast(key);
+    if (last) {
+        const one = last.unit.replace(/s$/, '');
+        return (last.n === 1 && last.unit !== 'days' ? `Last ${one}` : `Last ${last.n} ${last.n === 1 ? one : last.unit}`) + (last.today ? ' (incl. today)' : '');
+    }
+    const td = TO_DATE.find((t) => t.key === (LEGACY[key] ?? key));
+    if (td) return td.label;
+    if (/^bfcm-\d{4}$/.test(key ?? '')) return `BFCM ${key.slice(5)}`;
+    if (/^q-\d{4}-[1-4]$/.test(key ?? '')) return `Q${key.slice(7)} ${key.slice(2, 6)}`;
+    return from && to ? fmtSpan(from, to) : 'Pick dates';
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "Nov 1 – 15, 2026", "Oct 28 – Nov 3, 2026" or "Nov 23, 2026". */
+export function fmtSpan(from, to) {
+    const [fy, fm, fd] = from.split('-').map(Number);
+    const [ty, tm, td] = to.split('-').map(Number);
+    if (from === to) return `${MONTHS[fm - 1]} ${fd}, ${fy}`;
+    if (fy !== ty) return `${MONTHS[fm - 1]} ${fd}, ${fy} – ${MONTHS[tm - 1]} ${td}, ${ty}`;
+    return fm === tm ? `${MONTHS[fm - 1]} ${fd} – ${td}, ${fy}` : `${MONTHS[fm - 1]} ${fd} – ${MONTHS[tm - 1]} ${td}, ${fy}`;
+}
 
 /** Today's date (YYYY-MM-DD) in the store's timezone. */
 export function todayIn(tz) {
@@ -162,30 +216,62 @@ export function shiftDay(iso, n) {
     return t.toISOString().slice(0, 10);
 }
 
-/** { from, to } for a quick pick, relative to the store's today. Unknown keys give yesterday. */
+/** { from, to } for a range key, relative to the store's today (Shopify's meanings: "Last 3 months" = the three
+ * whole months before this one; "(incl. today)" runs up to today). Unknown keys give yesterday. */
 export function presetRange(key, today) {
     const y = shiftDay(today, -1);
-    const [yy, mm] = today.split('-').map(Number);
-    const monthStart = `${yy}-${String(mm).padStart(2, '0')}-01`;
-    switch (key) {
-        case 'today': return { from: today, to: today };
-        case 'last7': return { from: shiftDay(y, -6), to: y };
-        case 'last14': return { from: shiftDay(y, -13), to: y };
-        case 'last30': return { from: shiftDay(y, -29), to: y };
-        case 'this_month': return { from: monthStart, to: today };
-        case 'last_month': {
-            const lastEnd = shiftDay(monthStart, -1);
-            return { from: `${lastEnd.slice(0, 7)}-01`, to: lastEnd };
-        }
-        default: return { from: y, to: y };
+    const k = LEGACY[key] ?? key;
+    if (k === 'today') return { from: today, to: today };
+    if (k === 'wtd') return { from: weekStart(today), to: today };
+    if (k === 'mtd') return { from: monthStart(today), to: today };
+    if (k === 'qtd') return { from: quarterStart(today), to: today };
+    if (k === 'ytd') return { from: yearStart(today), to: today };
+    if (/^bfcm-\d{4}$/.test(k ?? '')) {
+        const b = bfcm(Number(k.slice(5)));
+        return { from: b.from, to: b.to < today ? b.to : today };
     }
+    if (/^q-\d{4}-[1-4]$/.test(k ?? '')) {
+        const r = quarterRange(Number(k.slice(2, 6)), Number(k.slice(7)));
+        return { from: r.from, to: r.to < today ? r.to : today };
+    }
+    const last = parseLast(k);
+    if (last) {
+        const { n, unit } = last;
+        if (unit === 'days') return last.today ? { from: shiftDay(today, -(n - 1)), to: today } : { from: shiftDay(y, -(n - 1)), to: y };
+        const start = { weeks: weekStart, months: monthStart, quarters: quarterStart, years: yearStart }[unit](today);
+        const back = (first, steps) => (unit === 'weeks' ? shiftDay(first, -7 * steps)
+            : addMonths(first, -steps * ({ months: 1, quarters: 3, years: 12 }[unit])));
+        return last.today ? { from: back(start, n - 1), to: today } : { from: back(start, n), to: shiftDay(start, -1) };
+    }
+    return { from: y, to: y };
 }
 
 /** Number of days in an inclusive YYYY-MM-DD range. */
 export const rangeDays = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5) + 1;
 
-/** The comparison actually used: the 4-week weekday average only exists for a single day. */
-export const effectiveCompare = (cmp, from, to) => (cmp === '4week_avg' && rangeDays(from, to) !== 1 ? 'previous' : cmp);
+/** The comparison actually used: the 4-week weekday average only exists for a single day, and a custom comparison
+ * needs a first day before the chosen days. */
+export function effectiveCompare(cmp, from, to, cfrom) {
+    if (cmp === '4week_avg' && rangeDays(from, to) !== 1) return 'previous';
+    if (cmp === 'custom' && !(cfrom && cfrom < from)) return 'previous';
+    return RANGE_COMPARES.some((c) => c.key === cmp) ? cmp : 'previous';
+}
+
+/** The days a comparison covers, for the picker to show ({ from, to }, or null for none / the 4-week average). */
+export function compareRange(cmp, from, to, cfrom) {
+    const n = rangeDays(from, to);
+    const back = (days) => ({ from: shiftDay(from, -days), to: shiftDay(to, -days) });
+    if (cmp === 'previous') return back(n);
+    if (cmp === 'last_week') return back(7);
+    if (cmp === 'previous_year_dow') return back(364);
+    if (cmp === 'previous_year') {
+        const [y, m, d] = from.split('-').map(Number);
+        const start = m === 2 && d === 29 ? ymd(y - 1, 2, 28) : ymd(y - 1, m, d);
+        return { from: start, to: shiftDay(start, n - 1) };
+    }
+    if (cmp === 'custom' && cfrom) return { from: cfrom, to: shiftDay(cfrom, n - 1) };
+    return null;
+}
 
 /* ------------------------------------------------------------------ Overview drawing helpers
  * Small calculations for the Overview's charts (components/croOverview.jsx). They only arrange figures the API

@@ -3,7 +3,7 @@
 **Easiest way:** open Supabase → SQL Editor, paste **`supabase_setup.sql`**, run it. Then add `ops` and `cro` under
 Project Settings → Data API → Exposed schemas. Full guide: `docs/operations/shipping-supabase-setup.md`.
 
-`supabase_setup.sql` is files 000–105 below joined in order (generated; edit the numbered files, then rebuild it).
+`supabase_setup.sql` is files 000–114 below joined in order (except 095 and 110) (generated; edit the numbered files, then rebuild it).
 Every file is safe to run more than once, and none of them writes to the hub's `public.*` tables.
 
 | File | What it does |
@@ -22,6 +22,9 @@ Every file is safe to run more than once, and none of them writes to the hub's `
 | `110_validate.sql` | Read-only checks: A–C after setup, D–I after the first refresh |
 | `112_cro.sql` | CRO module: schema `cro` with store_settings, alarm_rules (editable thresholds), alerts (no duplicate open alerts), change_log, view `daily_sales` from `ops.orders`; default rules for RBP and CPC. Reads `ops` only. Run 2026-11-19 |
 | `113_cro_orders.sql` | CRO's own order copy: `cro.orders` (money breakdown), `cro.order_lines`, `cro.sync_state`; functions `save_orders`, `begin_sync`/`end_sync` (per-store lock), `delete_change_log`; drops 112's `daily_sales` view. **Not yet run** |
+| `114_cro_tracking.sql` | CRO recommendation status, experiments log, free-shipping amount |
+| `115_ads.sql` | Ads module: schema `ads` with accounts (+ sync state), campaigns, ad_sets, ads, daily (one row per ad per account day), fx_rates (INR starts at 88), rules, action_status, action_history; functions begin/end_sync, replace_daily, save_lifetime, reopen_action, account_days, ad_windows, store_days (reads `cro.orders`). Not in `supabase_setup.sql`: run it on its own, then expose `ads`. **Not yet run** |
+| `rollback/115_rollback_ads.sql` | Removes `ads` only; refuses while team-recorded Ads data exists (rules, action marks, rates). **Destructive, owner approval** |
 | `rollback/999_rollback_central.sql` | Removes `ops` + `seo`; refuses while real data exists. **Destructive, owner approval** |
 | `rollback/112_rollback_cro.sql` | Removes `cro` only (112 + 113); refuses while team-recorded CRO data exists. **Destructive, owner approval** |
 

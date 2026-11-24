@@ -161,16 +161,23 @@ function plan(db, brand, query, fallbackDays = null, includeToday = true) {
   if (to > today) to = today;
   const n = span(from, to);
   if (n > 366) throw new DemoError(400, 'Pick at most 366 days.', 'bad_request');
-  let compare = ['previous', 'last_week', '4week_avg', 'none'].includes(query.compare) ? query.compare : (n === 1 && to < today ? '4week_avg' : 'previous');
+  let compare = ['previous', 'previous_year', 'previous_year_dow', 'last_week', '4week_avg', 'custom', 'none'].includes(query.compare) ? query.compare
+    : (n === 1 && to < today ? '4week_avg' : 'previous');
   if (compare === '4week_avg' && n !== 1) compare = 'previous';
+  if (compare === 'custom' && !/^\d{4}-\d{2}-\d{2}$/.test(query.cfrom ?? '')) compare = 'previous';
+  if (compare === 'custom' && query.cfrom >= from) throw new DemoError(400, 'The comparison must start before the chosen days.', 'bad_request');
   const byDay = byDate(db, brand);
   const daysOf = (start, count) => Array.from({ length: count }, (_, i) => shift(start, i));
   const pick = (list) => list.map((d) => byDay.get(d)).filter(Boolean);
   const current = daysOf(from, n);
-  const back = compare === 'none' ? [] : compare === 'last_week' ? [7] : compare === '4week_avg' ? [7, 14, 21, 28] : [n];
+  // The demo keeps 70 days, so a year back has no days: the comparison then shows as empty, as a store without history would.
+  const back = compare === 'none' ? [] : compare === 'last_week' ? [7] : compare === '4week_avg' ? [7, 14, 21, 28]
+    : compare === 'previous_year' ? [365] : compare === 'previous_year_dow' ? [364] : compare === 'custom' ? [span(query.cfrom, from) - 1] : [n];
   const partial = to === today;
   const baselines = back.map((b) => pick(daysOf(shift(from, -b), n)).map((d, i, a) => (partial && i === a.length - 1 ? { ...d, ...scale(d, 0.55) } : d)));
-  const baseLabel = compare === 'none' ? 'no comparison' : compare === 'last_week' ? (n === 1 ? `vs same ${dayLabel(from).slice(0, 3)} last week` : 'vs same days a week earlier')
+  const baseLabel = compare === 'none' ? 'no comparison' : compare === 'previous_year' ? 'vs same dates last year'
+    : compare === 'previous_year_dow' ? 'vs last year (same weekdays)' : compare === 'custom' ? `vs ${dayLabel(query.cfrom).slice(4)} - ${dayLabel(shift(query.cfrom, n - 1)).slice(4)}`
+    : compare === 'last_week' ? (n === 1 ? `vs same ${dayLabel(from).slice(0, 3)} last week` : 'vs same days a week earlier')
     : compare === '4week_avg' ? `vs 4-week ${dayLabel(from).slice(0, 3)} average` : (n === 1 ? 'vs previous day' : `vs previous ${n} days`);
   const label = (n === 1 ? dayLabel(from) : `${dayLabel(from).slice(4)} - ${dayLabel(to).slice(4)} (${n} days)`) + (partial ? ', so far' : '');
   return { from, to, n, compare, label, baseLabel, partial, current: pick(current), baselines };

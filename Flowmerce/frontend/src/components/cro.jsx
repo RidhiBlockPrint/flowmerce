@@ -1,14 +1,13 @@
 'use client';
 /* Building blocks for the CRO page (views/Cro.jsx). */
-import { useState } from 'react';
 import Link from 'next/link';
 import { Icon } from './Icon';
-import { Dialog } from './overlays';
 import { LineChart } from './charts';
 import { CountUp } from './motion';
 import { BRAND_COLOR } from './metrics';
+import { ComparePicker, DateRangePicker } from './croDates';
 import { Button, Card, Empty, ErrorState, LoadingBlock } from './ui';
-import { RANGE_COMPARES, RANGE_PRESETS, effectiveCompare, explainError, money, pct, rangeDays, signedPct } from '../lib/cro';
+import { explainError, money, pct, rangeDays, signedPct } from '../lib/cro';
 import { useApi, qs } from '../lib/api';
 import { fmtDate, fmtInt, timeAgo } from '../lib/format';
 
@@ -85,46 +84,21 @@ export function CroEmpty({ title, children, icon = 'inbox' }) {
 }
 
 /* ------------------------------------------------------------------ date range */
-/** Quick picks, a calendar for any range, and the comparison. `value` is { r, from, to, cmp }. */
+/** The date range and its comparison, picked like in Shopify Analytics (components/croDates.jsx). `value` is
+ * { r, from, to, cmp, cfrom }; onChange gets { r, from, to } from the date picker or { cmp, cfrom } from the
+ * comparison picker. */
 export function RangeBar({ value, onChange, today }) {
-    const [custom, setCustom] = useState(false);
     const n = rangeDays(value.from, value.to);
-    const cmp = effectiveCompare(value.cmp, value.from, value.to);
-    return (<div className="col" style={{ gap: 8 }}>
+    return (<div className="col" style={{ gap: 6 }}>
       <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <Seg label="Date range" options={RANGE_PRESETS} value={value.r} onChange={(r) => onChange({ r })}/>
-        <Button size="sm" icon="calendar" variant={value.r === 'custom' ? 'primary' : 'secondary'} onClick={() => setCustom(true)}>
-          {value.r === 'custom' ? `${fmtDate(value.from)} – ${fmtDate(value.to)}` : 'Pick dates…'}
-        </Button>
-        <label className="row small" style={{ gap: 6 }}>
-          <span className="muted nowrap">Compare with</span>
-          <select className="select sm" value={cmp} onChange={(e) => onChange({ cmp: e.target.value })}>
-            {RANGE_COMPARES.filter((c) => !c.single || n === 1).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-          </select>
-        </label>
+        <DateRangePicker value={value} today={today} onChange={onChange}/>
+        <ComparePicker range={value} value={{ cmp: value.cmp, cfrom: value.cfrom }} today={today} onChange={onChange}/>
       </div>
       <div className="muted small">
         {n === 1 ? fmtDate(value.from) : `${fmtDate(value.from)} – ${fmtDate(value.to)} · ${n} days`}
         {value.to >= today ? ' · today is still running' : ''}
       </div>
-      {custom ? <CustomRangeDialog value={value} today={today} onClose={() => setCustom(false)} onApply={(from, to) => { onChange({ r: 'custom', from, to }); setCustom(false); }}/> : null}
     </div>);
-}
-
-function CustomRangeDialog({ value, today, onClose, onApply }) {
-    const [from, setFrom] = useState(value.from);
-    const [to, setTo] = useState(value.to);
-    const bad = !from || !to || from > to || from > today;
-    const long = !bad && rangeDays(from, to) > 366;
-    return (<Dialog title="Pick dates" sub="Store days. Pick the same day twice to see a single day." onClose={onClose}
-      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={bad || long} onClick={() => onApply(from, to)}>Apply</Button></>}>
-      <div className="form-grid">
-        <div className="field"><label htmlFor="cro-from">From</label><input id="cro-from" type="date" className="input" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)}/></div>
-        <div className="field"><label htmlFor="cro-to">To</label><input id="cro-to" type="date" className="input" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)}/></div>
-      </div>
-      {bad ? <p className="small" style={{ color: 'var(--crit)' }}>The start must be on or before the end, and not in the future.</p> : null}
-      {long ? <p className="small" style={{ color: 'var(--crit)' }}>Pick at most 366 days.</p> : null}
-    </Dialog>);
 }
 
 /* ------------------------------------------------------------------ Home */

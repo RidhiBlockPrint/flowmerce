@@ -5,7 +5,7 @@ import { useNavigate, useSearchParams } from '../lib/nav';
 import { api, useApi, qs, download } from '../lib/api';
 import { useApp, useBrandParam } from '../lib/app';
 import { fmtDate, fmtInt, timeAgo } from '../lib/format';
-import { BrandTag, Button, Empty, ErrorState, Field, PageHead, Pill, Skeleton, Tabs, Paged } from '../components/ui';
+import { BrandTag, Button, Empty, ErrorState, Field, PageHead, Pill, Skeleton, Paged } from '../components/ui';
 import { Dialog, useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import KeywordFile from './KeywordFile';
@@ -13,12 +13,10 @@ import { AskClaude } from '../components/claude';
 const TOPIC_TONE = { proposed: 'neutral', validated: 'info', approved: 'ok', rejected: 'crit', in_production: 'accent', published: 'ok' };
 const INTENTS = ['informational', 'commercial', 'transactional', 'navigational'];
 export default function Topics() {
-    const [sp, setSp] = useSearchParams();
+    const [sp] = useSearchParams();
     const tab = sp.get('tab') === 'keywords' ? 'keywords' : 'topics';
     return (<>
-      <PageHead title="Topics & keywords" sub="Proposed → validated → approved → in production"/>
-      <Tabs value={tab} onChange={(t) => { const n = new URLSearchParams(); if (t === 'keywords')
-        n.set('tab', 'keywords'); setSp(n, { replace: true }); }} tabs={[{ key: 'topics', label: <><Icon name="topics" size="sm"/>Topics</> }, { key: 'keywords', label: <><Icon name="target" size="sm"/>Keywords</> }]}/>
+      <PageHead title={tab === 'keywords' ? 'Keywords' : 'Topics'} crumbs="SEO & Blog" sub={tab === 'keywords' ? 'Search volumes and difficulty from your keyword tools' : 'Proposed → validated → approved → in production'}/>
       {tab === 'topics' ? <TopicList /> : <KeywordList />}
     </>);
 }

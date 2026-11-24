@@ -21,10 +21,10 @@ from (values
 ) as s(schema, tbl)
 order by exists, s.schema, s.tbl;
 
--- B. RLS is on for every table in ops and seo (expect zero rows)
+-- B. RLS is on for every table in ops, seo and cro (expect zero rows)
 select n.nspname, c.relname
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
-where n.nspname in ('ops','seo') and c.relkind = 'r' and not c.relrowsecurity;
+where n.nspname in ('ops','seo','cro') and c.relkind = 'r' and not c.relrowsecurity;
 
 -- C. Write switches are OFF (expect all false)
 select key, value from ops.settings where key in ('shopify_writes','amazon_writes','auto_mcf');

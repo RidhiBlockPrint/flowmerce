@@ -1,13 +1,16 @@
-"""Autopilot: one click to a finished, hidden Shopify draft, and the 6-hour rule. Owner decision of 2026-11-19.
+"""Autopilot: one click to a finished, approved blog kept in Flowmerce, and the 6-hour rule. Owner decision of 2026-11-19.
 
 "Write a blog" runs this chain with no stops, as one autopilot run:
   research   Claude proposes 3 topics (for the next upcoming event, or the brand's usual focus)
   draft      Flowmerce approves the best new topic and Claude writes the draft (SEO fields, product image, notes)
-  shopify    a featured image is picked if Claude chose none, the draft is approved and saved as a HIDDEN Shopify draft
-A calendar drafting task runs the same chain from its topic.
+  approve    a featured image is picked if Claude chose none and the draft is approved. It stays in Flowmerce.
+A calendar drafting task runs the same chain from its topic. A person can stop a run while it is going (stop()).
+
+Drafts never go to Shopify (owner decision 2026-11-24): an article reaches Shopify only when a reviewer authorizes its
+publish request, live at once or hidden with a future publish date (services/publishing.py).
 
 The 6-hour rule: an article scheduled on the content calendar that nobody has approved by 6 hours before its publish time
-is approved automatically and saved as a hidden Shopify draft.
+is approved automatically, so its publish request can be made.
 
 Nothing here publishes. Going live always takes a person: a publish request that a reviewer authorizes. Every automatic
 approval is recorded as "Auto-approved by Flowmerce" in the article's review history, the topic's notes and the audit log."""
@@ -21,10 +24,9 @@ from typing import Any
 from ..audit import audit
 from ..config import is_brand
 from ..db import all_rows, get, now, run
-from ..integrations import shopify
 from ..util import HttpError, s, similarity
 from . import ai_budget
-from .brands import brand, brand_settings
+from .brands import brand_settings
 
 log = logging.getLogger(__name__)
 
@@ -60,29 +62,13 @@ def approve_article(article_id: int, reason: str) -> bool:
 
 
 def _acting_user(user_id: int | None) -> Row | None:
-    """Shopify saves are recorded against a person: the one who started the run, else the first active admin."""
+    """Calendar entries made by a run are recorded against a person: the one who started it, else the first active admin."""
     u = get("SELECT * FROM users WHERE id = ? AND active = 1", user_id) if user_id else None
     return u or get("SELECT * FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1")
 
 
-def save_hidden_draft(article_id: int, user_id: int | None) -> str:
-    """Save an approved article to Shopify as a hidden draft. Returns what happened, in words."""
-    from . import publishing   # imported here: it imports modules that import this one
-    a = get("SELECT * FROM articles WHERE id = ?", article_id)
-    if not a:
-        return "The article no longer exists."
-    if not shopify.configured(brand(a["brand_id"])):
-        return "Shopify is not connected for this brand, so the draft is in Articles only."
-    user = _acting_user(user_id)
-    if not user:
-        return "No active admin to record the Shopify save against; save it from the article."
-    try:
-        publishing.save_shopify_draft(user, article_id)
-    except HttpError as e:
-        return f"Approved, but the Shopify draft was not saved: {e.message}"
-    except Exception as e:  # noqa: BLE001 — recorded on the article (last_error) by save_shopify_draft
-        return f"Approved, but the Shopify draft was not saved: {getattr(e, 'message', None) or e}"
-    return "Saved as a hidden Shopify draft."
+KEPT = "Approved and kept in Flowmerce. Schedule it to publish; a reviewer authorizes it before it goes to Shopify."
+NOT_APPROVED = "Draft written; it was not approved automatically because its status changed."
 
 
 # ---------------------------------------------------------------- the one-click run
@@ -115,7 +101,7 @@ def _insert(brand_id: str, user: Row | None, step: str, message: str, **cols: An
 
 
 def start(user: Row, brand_id: str, focus: str = "", source: str = "button") -> Row:
-    """Write a blog: research, pick, draft, approve and save as a hidden Shopify draft, with no stops. `source` "auto" is
+    """Write a blog: research, pick, draft and approve, with no stops; the blog stays in Flowmerce. `source` "auto" is
     the automatic blog pipeline (services/auto_blog.py), which adds images and a quality check before approval."""
     from . import ai_jobs, workflow
     if not is_brand(brand_id):
@@ -142,6 +128,30 @@ def start_from_topic(user_id: int | None, brand_id: str, topic_id: int, reason: 
     job, _ = ai_jobs.create_job(None, brand_id, "content_generation", {"topic_id": topic_id})
     user = get("SELECT * FROM users WHERE id = ?", user_id) if user_id else None
     return _insert(brand_id, user, "draft", "Claude is writing the draft", topic_id=topic_id, draft_job_id=job["id"], source=source)
+
+
+def stop(user: Row, rid: int) -> Row:
+    """Stop a running "Write a blog" (or automatic blog) run: its Claude jobs that have not finished are cancelled, so no
+    more of the daily Claude limit is spent on it, and the run ends. Whatever was already written stays as a draft and is
+    not approved. An automatic blog's calendar slot is marked skipped, so Claude does not write a blog for that day."""
+    from . import ai_jobs
+    r = get("SELECT * FROM autopilot_runs WHERE id = ?", rid)
+    if not r:
+        raise HttpError(404, "Run not found.")
+    if r["status"] != "running":
+        raise HttpError(409, "This blog is not being written any more.", "not_running")
+    who = user.get("name") or user.get("email") or "a person"
+    for jid in (r["research_job_id"], r["draft_job_id"], r.get("revise_job_id")):
+        job = get("SELECT status FROM ai_jobs WHERE id = ?", jid) if jid else None
+        if job and job["status"] in ai_jobs.ACTIVE:
+            ai_jobs.cancel_job(user, jid)
+    kept = " The draft written so far is kept, not approved." if r["article_id"] else ""
+    _set(rid, status="failed", message=f"Stopped by {who}.{kept}")
+    if r.get("slot_id"):
+        run("UPDATE auto_blogs SET status = 'skipped', message = ?, updated_at = ? WHERE id = ?",
+            f"Stopped by {who}. No blog is written for this day.{kept}", now(), r["slot_id"])
+    audit(user, "autopilot.stop", "autopilot_run", rid, r["brand_id"], f"stopped at step {r['step']}")
+    return get_run(rid)
 
 
 def get_run(rid: int) -> Row:
@@ -181,6 +191,12 @@ def _pick_topic(brand_id: str, topic_ids: list[int]) -> Row | None:
 
 def _advance(r: Row) -> None:
     from . import ai_jobs, workflow
+    if r["step"] == "image":   # an automatic blog waiting for its AI featured image (services/ai_images.py)
+        from . import ai_images
+        if ai_images.still_working(int(r["article_id"]), r["updated_at"]):
+            return
+        _finish_auto(r, int(r["article_id"]), r["message"].replace(IMAGE_WAIT, "").strip())
+        return
     job_id = {"research": r["research_job_id"], "revise": r.get("revise_job_id")}.get(r["step"], r["draft_job_id"])
     job = get("SELECT * FROM ai_jobs WHERE id = ?", job_id) if job_id else None
     if not job:
@@ -191,7 +207,7 @@ def _advance(r: Row) -> None:
             _set(r["id"], message="Waiting for tomorrow's Claude limit")
         return
     if job["status"] != "succeeded" and r["step"] == "revise":
-        _finish_auto(r, int(r["article_id"]), f"Claude's revision {job['status']}; the draft is kept as it was.")
+        _image_then_finish(r, int(r["article_id"]), f"Claude's revision {job['status']}; the draft is kept as it was.")
         return
     if job["status"] != "succeeded":
         _set(r["id"], status="failed", message=f"Claude {job['status']}: {s(job['error'] or '', 300)}")
@@ -213,7 +229,7 @@ def _advance(r: Row) -> None:
         _set(r["id"], step="draft", topic_id=t["id"], draft_job_id=draft["id"], message="Claude is writing the draft")
         return
     if r["step"] == "revise":
-        _finish_auto(r, int(r["article_id"]), "Claude fixed the points the quality check found.")
+        _image_then_finish(r, int(r["article_id"]), "Claude fixed the points the quality check found.")
         return
     aid = result.get("articleId")
     if not aid:
@@ -225,19 +241,40 @@ def _advance(r: Row) -> None:
         if revise:
             _set(r["id"], step="revise", article_id=aid, revise_job_id=revise, message="Claude is fixing what the quality check found")
             return
-        _finish_auto({**r, "article_id": aid}, int(aid), "The draft passed the quality check.")
+        _image_then_finish({**r, "article_id": aid}, int(aid), "The draft passed the quality check.")
         return
     a = get("SELECT image_url FROM articles WHERE id = ?", aid)
     if a and not a["image_url"]:
         workflow._image_selection(r["brand_id"])   # same rule as the Image selection stage
     approved = approve_article(aid, "written by Write a blog" if r["source"] == "button" else "written by a calendar task")
-    outcome = save_hidden_draft(aid, r["created_by"]) if approved else "Draft saved; it was not approved automatically because its status changed."
+    outcome = KEPT if approved else NOT_APPROVED
     _set(r["id"], status="done", step="done", article_id=aid, message=outcome)
     audit(None, "autopilot.done", "autopilot_run", r["id"], r["brand_id"], outcome)
 
 
+IMAGE_WAIT = "Making the featured image."
+
+
+def _image_then_finish(r: Row, aid: int, note: str) -> None:
+    """Before an automatic blog is approved, give it its AI featured image when that is switched on: the image is part of
+    the approved content, so it must be in place first. The wait is bounded (ai_images.WAIT_MINUTES)."""
+    from . import ai_images, image_prompts
+    if ai_images.active():
+        p = get("SELECT status, image_status FROM image_prompts WHERE article_id = ?", aid)
+        if not p or p["status"] == "failed":
+            a = get("SELECT brand_id FROM articles WHERE id = ?", aid)
+            if a:
+                image_prompts._upsert(aid, a["brand_id"], "new_article", 0, None)
+        elif p["status"] == "ready" and p["image_status"] in ("", "failed"):
+            ai_images.queue(aid, "automatic blog")
+        image_prompts.wake()
+        _set(r["id"], step="image", article_id=aid, message=f"{note} {IMAGE_WAIT}")
+        return
+    _finish_auto(r, aid, note)
+
+
 def _finish_auto(r: Row, aid: int, note: str) -> None:
-    """The end of an automatic run: approve, hidden Shopify draft, publish request on the calendar (auto_blog.finish)."""
+    """The end of an automatic run: approve, and a publish request on the calendar (auto_blog.finish)."""
     from . import auto_blog
     outcome = auto_blog.finish(r, aid)
     _set(r["id"], status="done", step="done", article_id=aid, message=f"{note} {outcome}")
@@ -265,7 +302,7 @@ def advance_all() -> int:
 # ---------------------------------------------------------------- the 6-hour rule
 
 def enforce_deadlines(now_utc: datetime | None = None) -> int:
-    """Approve, and save as hidden Shopify drafts, calendar-scheduled articles nobody approved by 6 hours before publish time."""
+    """Approve calendar-scheduled articles nobody approved by 6 hours before publish time (they stay in Flowmerce)."""
     from .calendar_plan import _publish_at
     t = now_utc or datetime.now(timezone.utc)
     done = 0
@@ -275,8 +312,7 @@ def enforce_deadlines(now_utc: datetime | None = None) -> int:
         if t < publish_at - timedelta(hours=DEADLINE_HOURS) or t >= publish_at:
             continue
         if approve_article(e["article_id"], f"nobody approved it by {DEADLINE_HOURS} hours before its scheduled publish time ({e['run_on']})"):
-            outcome = save_hidden_draft(e["article_id"], e["created_by"])
             run("UPDATE content_schedule SET message = ?, updated_at = ? WHERE id = ?",
-                f"Auto-approved 6 hours before publish time. {outcome} Publishing still needs a reviewer.", now(), e["id"])
+                "Auto-approved 6 hours before publish time. Publishing still needs a reviewer.", now(), e["id"])
             done += 1
     return done

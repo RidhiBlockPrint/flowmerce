@@ -661,6 +661,8 @@ class Runner:
     def start(self) -> None:
         recover_on_startup()
         self._thread.start()
+        from . import image_prompts   # featured-image prompts run beside the job queue, on their own thread
+        image_prompts.start()
 
     def kick(self) -> None:
         self._wake.set()
@@ -681,6 +683,11 @@ class Runner:
             autopilot.advance_all()   # move "Write a blog" runs on as their jobs finish
         except Exception:  # noqa: BLE001 — the queue below must still run
             log.exception("Autopilot step failed")
+        try:
+            from . import image_prompts
+            image_prompts.kick()      # cheap: starts the image prompt worker only when it may have work
+        except Exception:  # noqa: BLE001
+            log.exception("Image prompt step failed")
         started = 0
         while not self._stop.is_set():
             with self._lock:

@@ -2,6 +2,220 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-24 (Ads pages about twice as fast; repeat visits instant; Home asks for sales once)
+
+Owner request 2026-11-24: test the loading speed of every page, newly built ones especially, then speed up Ads. Measured
+on a production build with real data: every page outside Ads was ready in 0.2-1.5 s; the Ads tabs took 1.5-4.7 s
+because each answer made 2-10 Supabase round trips one after another, at 0.3-0.9 s each. Verified: Python suite (872
+passed, 3 new Ads tests), ruff and mypy clean on Ads, frontend tests (121 passed), Ads answers timed against the real
+database, and Home in the browser (production build).
+
+- **Changed** Ads answers are kept 5 minutes (at most 24, a few MB; `ads/data.py answer`), cleared by every change (rules,
+  rupee rate, marked suggestions) and every Meta read: repeat visits went from 0.7-2.8 s to instant.
+- **Changed** Ads reads that do not depend on each other go out at the same time (account and rules; Meta days, store
+  days, newest saved day and rate; the campaign, ad set and ad lists; ads and marks), and the account, rules, rupee
+  rate and newest saved day are kept 5 minutes. First visit after a Meta read: Overview tab 4.7 s to 2.2 s (Ridhi) and
+  3.0 s to 1.5 s (CPC), its figures in about 0.8 s; other tabs 0.4-1.3 s (were 1.5-2.5 s).
+- **Fixed** Home asked `/api/cro/home` twice: the sales card was built in a different place while Home loaded, so it was
+  built again (and fetched again) when Home arrived. It now keeps its place; Home is ready in 0.2-0.4 s (was 1.3 s).
+
+## 2026-11-24 (Ads: the Overview redesigned for directors and heads of department)
+
+Owner request 2026-11-24: drop the small lines under the figures, make the change and "was" values readable at a glance,
+make the page less plain (like the CRO Overview), make the $20,000 goal editable and eye-catching, explain the scaling
+gate, and lead with what helps plan today's work. Verified: Ads Python tests (58 passed), ruff and mypy clean, frontend
+tests (121 passed), and in the browser on demo data (1440 wide and tablet, no sideways scroll, no console errors, the goal
+edited and saved) and on real data from the local backend (Ridhi).
+
+- **Changed** The Overview opens with "Today's plan": the spend call in plain words ("Cut ad spend by about 15%", "Keep
+  total spend steady", "Room to spend up to 20% more"), today's daily spend against the suggested one, a meter of store
+  sales per $1 of ads with the 3-day and 7-day figures on the cut back / hold / grow zones, and the top 4 open suggestions
+  from the Actions tab. It replaces the "scaling gate" panel (`components/adsOverview.jsx`, new).
+- **Changed** Four headline figures (ad spend, store sales, MER, Meta ROAS) in large type with a coloured change chip, the
+  earlier value in bold and a 14-day sparkline; four smaller ones under them. Definitions moved into the (i) tooltips.
+- **Changed** The daily sales goal is an animated ring and bar, edited in place ("Change goal", saved to the Rules), with
+  what is still missing, the spend now, the spend the goal needs, and the last 7 days as columns against the goal line.
+- **Changed** The last 14 days use the CRO day tiles (sales, MER, coloured bar; click a day to open it).
+- **Fixed** A missing MER (Meta days not saved yet) no longer reads as "cut back": the gate says "No spend call yet"
+  (`state: "unknown"`) when either figure is missing or the last days' ad spend is not all saved. `GET /api/ads/overview`
+  also returns `meta_saved_to`, and the plan says so when Meta's figures stop before the range ends.
+- **Removed** `GatePanel`, `DayStrip` and `GoalBar` from `components/ads.jsx` (replaced by the above).
+
+## 2026-11-24 (Calendars: any month and year, scrolling between months; the overview's calendar is interactive)
+
+Owner request 2026-11-24: the calendar should move to any month and year, show that month's events and let you schedule
+there, like a full calendar; the SEO & Blog overview's calendar should be interactive, not static. Verified: the Python
+suite (869 passed, with 2 new API tests), the frontend tests (121 passed), a production build, and in the browser (demo,
+1920 x 945): the month picker jumps to March next year with its events, one scroll over the month moves exactly one
+month without scrolling the page, and clicking a day on the overview shows its blogs with Open and Cancel.
+
+- **Added** Month navigation on both calendars (`components/calendar.jsx`): arrows, the month name as a button that opens
+  a year with its twelve months (any year), Today, PageUp / PageDown, and the mouse wheel or trackpad over the calendar
+  (one month per scroll).
+- **Changed** The overview's blog calendar is interactive: any month, click a day to see its events and blogs beside the
+  month (status, message, quality, Open article, Cancel / Stop), and "Blog on a day" / "Blog on this day" open the same
+  form as the Content calendar.
+- **Changed** `GET /api/calendar` also returns the blog slots in its range (`slots`) and `today`, so a far month shows
+  the blogs put on it. The Content calendar reads them from there.
+- **Added** The demo answers `GET /api/calendar` (built-in events for any year, the demo's blogs and tasks), so the
+  Content calendar and the overview's calendar work in the demo too.
+
+## 2026-11-24 (Every module: no tab strips on pages; a stronger sidebar)
+
+Owner request 2026-11-24: remove the tab bar under each module's title (the left sidebar already has those pages), and
+make the sidebar show the modules as important. Verified: the frontend tests (120 passed, with new ones for the menu),
+a production build, and in the browser (demo): CRO, Ads, Shipping, Topics / Keywords and the SEO & traffic pages, with no
+console errors. The Ads session (editing Ads.jsx, Cro.jsx and globals.css at the same time) agreed the edits first.
+
+- **Removed** The tab strips on Shipping, Conversion (CRO), Ads, Topics & keywords and SEO & traffic. The sidebar is the
+  way between them; each page's title now names the tab on screen, under the module's name (`lib/routes.mjs tabLabel`).
+  The article editor keeps its Edit / Preview / Review / Publishing tabs (they belong to one article).
+- **Changed** Topics, Keywords, Search Console, GA4 traffic and Traffic by article are their own entries under SEO & Blog
+  → Advanced (they were tabs). A page's first listed tab is its default (`defaultTab`), so links stay short.
+- **Changed** The sidebar: each module has its own colour (from the logo's threads: SEO & Blog coral, Shipping blue,
+  CRO green, Ads purple), a colour tile with its icon, its name and a one-line description; the open module is a tinted
+  panel holding its pages, with a rail and a raised pill for the page on screen; counts sit on the module's tile; Home
+  is drawn the same way and the modules sit under a "Modules" heading. Sidebar 260 px wide.
+
+## 2026-11-24 (SEO & Blog: put a topic on a day; the content calendar on one screen)
+
+Owner requests 2026-11-24: (1) the calendar should fit on one page; (2) the calendar should take topics for a day, and
+Flowmerce should draft the blog and do everything else by itself, publishing it on that day. Owner decision (asked): the
+written blog still waits for one click (Authorize) before it goes to Shopify; nothing is published unread.
+Verified: the full Python suite (859 passed) and the frontend tests (111 passed); in the browser on a throwaway copy of
+this computer's database with no API keys, at 1920 x 945: the month, the side panel and the List view fit the window
+exactly, and a topic put on 3 Dec shows on the calendar ("Claude writes it on 28 Nov") and in the Blog pipeline.
+
+- **Added** "Blog on a day" (`POST /api/blog/slots`; calendar header, a day's panel, "Blog for this" on an event, and
+  "Put on a day…" on a topic in the Blog pipeline): a new or existing topic and a go-live day. Flowmerce writes it 5 days
+  before (at once if sooner) with the automatic blog chain (draft, images, quality check, one revision, approval) and
+  makes a publish request for 10:00 that day, waiting for Authorize. It runs even while automatic blogs are switched off,
+  but waits while automation is paused for the brand. A topic already written by hand is put forward for the day instead.
+  One blog per brand per day; a planned automatic blog on that day becomes the topic's blog.
+- **Changed** The content calendar fits the window: the day cells share the height left on screen, the "Next 14 days"
+  strip is gone, the side panel has tabs (This day, Coming up, Claude limit) and scrolls inside itself, and the schedule
+  table is the "List" view.
+- **Architecture** `auto_blogs.topic_id` is added by `db.EXTRA_COLUMNS` (added once if missing) instead of a numbered
+  migration, so it does not depend on the image-prompt migrations that are not committed yet.
+- **Fixed** Tests no longer read the developer's `ALLOW_LIVE_PUBLISH` from `.env` (`tests/fixtures/seo.py` sets it off);
+  switching live publishing on in `.env` had made 4 SEO tests fail.
+
+## 2026-11-24 (Ads and CRO: Shopify-style date picker and "Compare to")
+
+Owner request 2026-11-24: the Ads page should filter dates like the CRO picker built on the `worktree-team-logins`
+branch (commit 7ad11ee), with a real comparison choice instead of a single on/off box. The owner chose to bring that
+picker over and share it. Only its date-picker parts were brought over (the same commit's other CRO changes, the
+removed "What to do next" card, sentences under the conversion rate and landing-page countries, stay on the branch, and
+it also needs earlier unmerged CRO commits). Verified: frontend tests 119 passed, CRO tests 130 and Ads tests 58
+passed, ruff and mypy --strict on both modules, and in the browser on real data (CPC): picking Last 30 days and
+"Previous year (match day of week)" changes the address and the requests; CRO opens with the picker, older links
+(`?r=last7`) still work, no console errors.
+
+- **Added** `frontend/src/components/croDates.jsx` and `tests/cro-dates.test.mjs` (from the branch, unchanged): the
+  date picker (Today, Yesterday, Last..., Period to date, Black Friday Cyber Monday, Quarters, Custom range; two-month
+  calendar; Apply) and "Compare to" (Previous period, Previous year, Previous year (match day of week), Custom, No
+  comparison). Its styles are appended to `app/globals.css`.
+- **Changed** CRO: `lib/cro.js`, `components/cro.jsx`, `modules/cro/periods.py`, `service.py`, `api.py` and
+  `tests/unit/cro/test_ranges.py` as on the branch; `views/Cro.jsx` and `demo/modules/cro.js` take only the range and
+  comparison parts.
+- **Changed** Ads: the range bar is the same picker; every range tab compares (the Campaigns and Creatives "before"
+  columns follow it); `/api/ads/*` take `compare` = previous, previous_year, previous_year_dow, custom (`cfrom=`) or
+  none; a range may end today (still running); a comparison before the first loaded day says so.
+
+## 2026-11-24 (Ads module, phase 2: Meta data, database and routes; not yet run live)
+
+Owner approved phase 2 of `docs/plans/ads-module.md` on 2026-11-24. Verified: the 48 new Ads unit tests and the full
+Python suite (848 passed; 4 SEO tests about the live-publishing switch fail, not related to Ads), ruff and mypy
+--strict on the new module, and read-only runs against both real Meta accounts: the sync and every page answer worked
+on real Meta data and real `cro.orders`, with schema `ads` stood in by an in-memory copy (nothing was written). Ridhi's
+17-23 Oct added up from ad-level rows reproduces the Daily sheet (spend Rs 1,982,437.52, 297 purchases, 14,665 page
+views, 1,824 carts, 591 checkouts). Not done: `115_ads.sql` has not been run (no local PostgreSQL to run it on first).
+
+- **Added** `src/flowmerce/modules/ads/`: read-only Meta client, hourly background sync into schema `ads` (90 days
+  first, 28 days nightly, 3 days otherwise), the rules, and `/api/ads/*` (settings, overview, campaigns, creatives,
+  funnel, gap, actions, rules, sync) answering the `/ads` screens with real figures. Google Ads answers "not connected
+  yet" (phase 3); "All" uses Meta spend only and says so.
+- **Added** `db/central/115_ads.sql` (+ rollback): schema `ads`. Store sales are orders as placed from `cro.orders`, by
+  the store's day in Shopify's time zone (New York for Ridhi, Phoenix for CPC); `ops.stores.timezone` says Los Angeles
+  for both and is not used.
+- **Added** ADR 0011 (how ad data is read and kept).
+- **Changed** `modules/seo/app.py`: mounts `/api/ads` and starts the Ads background job, like Shipping and CRO.
+- **Changed** from the plan: the Funnel's second step is link clicks (the Daily sheet's funnel), not outbound clicks;
+  video length is not read (Meta refuses it to an `ads_read` token).
+- **Changed** after the first live reads (same day): Meta requests are retried 3 times with pauses after a network
+  failure (5, 15, 45 s; a connection that does not open in 15 s counts as failed); the background job tries again
+  after 5 minutes when an account failed or was locked, instead of waiting the full hour; a first load stopped
+  part-way keeps what it saved when that reaches into the last 28 days; the Overview says how far Meta figures are
+  saved when that is short of the chosen days. Owner approved two screen fixes in `views/Ads.jsx`: long real
+  ad and campaign names end in "..." (full name on hover) so tables fit their card, and the ad detail no longer
+  prints a video length Meta does not give. Checked on real data for both brands; the backend changes apply after
+  the next restart.
+
+## 2026-11-24 (Ads module, phase 1: the screens, on sample numbers)
+
+Owner approved phase 1 of `docs/plans/ads-module.md` on 2026-11-24: the Ads screens, run on sample numbers before the
+live Meta and Google data is connected. Verified: the frontend tests (110 passed: 93 before, 17 new), the frontend
+JavaScript-only check, and in the browser on the demo copy: every tab for both brands and all three platform choices,
+expanding campaigns and ads, marking a suggestion done, saving the rules, a layout check of each tab for sections that
+end unevenly or tables wider than their card, and phone width. Not done: no backend, database table or live data; with
+real data the page says Ads is not connected yet.
+
+- **Added** Ads (`/ads`, sidebar "Ads"): Meta and Google Ads next to the store's own sales, one brand at a time, with a
+  platform switch (All / Meta / Google) and any date range of complete days with its comparison, all kept in the
+  address. Tabs: Overview (spend, store sales, MER on all ad spend, orders, each platform's ROAS, ad cost per store
+  order, the scaling gate, the road to the daily sales goal, days coloured by MER, Meta and Google side by side),
+  Campaigns (CBO health with the budget call; every campaign with its ad sets), Creatives (Meta: every ad's verdict
+  and reason, 3-day / lifetime ROAS, CTR, cart rate, hook and video drop-off, weakest step; new ads, tests and the
+  winners bench), Funnel, Actions (rule-based suggestions the team marks done or skipped, with a history), and under
+  Advanced: Search terms (Google), ABO to CBO gap (Meta) and Rules (every threshold, the rupee rate, the daily goal and
+  the bulk-order limit, per brand). Read-only toward the ad accounts.
+- **Added** Sample data for every `/api/ads/*` route (`frontend/src/demo/modules/ads.js`): invented "Demo" accounts,
+  campaigns and ads, no real account names or figures. The demo's browser snapshot version is now 5.
+
+## 2026-11-24 (SEO & Blog: drafts stay in Flowmerce, one Blog pipeline page, stop and cancel Claude, no empty space)
+
+Owner requests 2026-11-24: (1) a way to pause "Write a blog", or an explanation of what it does; (2) the blog steps are
+spread over several pages (topic in one, draft in another, and a drafted blog could not be found or scheduled); (3) do not
+push drafts to Shopify's hidden section, only an authorized publish or schedule goes to Shopify; (4) the calendar has no
+way to cancel a Claude task for a day; (5) no empty space under, above or beside any section, in any module.
+Verified: the full Python suite (804 passed), the frontend tests (93 passed), and in the browser (demo, plus the real app
+on a throwaway copy of this computer's database with no API keys): calendar cancel, the Blog pipeline from review to
+Schedule…, Write a blog → Stop, and a layout check of every page for sections ending unevenly.
+
+- **Added** Blog pipeline (`/pipeline`, SEO & Blog): every blog in building order on one page, 1 Topics, 2 Claude is
+  writing, 3 Drafts & review, 4 Ready to schedule, 5 Scheduled, 6 Live, with each step's button beside the blog. It
+  replaces Write it yourself (`/write` redirects here). The SEO & Blog menu now follows the same order: Overview, Blog
+  pipeline, Content calendar, Publishing, Articles.
+- **Added** "Schedule…" (pipeline and the article's Publishing tab): pick the go-live date and time; an admin can also
+  authorize it in the same step by typing PUBLISH. Once authorized it goes to Shopify hidden until that time.
+- **Added** Stop for "Write a blog" while it runs, and for any Claude task in the pipeline: unfinished Claude jobs are
+  cancelled, nothing is approved (`POST /api/autopilot/{id}/stop`). "Pause automatic blogs" is also on the calendar.
+- **Added** Cancel on the calendar: "Cancel this blog" for a planned automatic blog, "Stop writing" for one Claude is
+  writing (`POST /api/blog/slots/{id}/cancel`; the old `/skip` still works), and "Cancel" (with "Plan again") for research,
+  draft and publish tasks.
+- **Changed** Drafts never go to Shopify. Write a blog, the automatic blogs, calendar drafting tasks and the 6-hour rule
+  approve the blog and keep it in Flowmerce. Articles already saved to Shopify as hidden drafts before today stay there
+  (Flowmerce updates them by handle when they are published).
+- **Removed** "Save as hidden Shopify draft" (editor button, `POST /api/articles/{id}/shopify-draft`, the `shopify:draft`
+  permission) and the Automation stage "Shopify draft".
+- **Changed** No empty space beside or under sections, app-wide (`globals.css`): side-by-side columns end level, the
+  calendar's day cells grow to match the day panel, cards in a row are the same height, and the article editor's side
+  panel travels with the editor. Written into `docs/development/coding-standards.md` for new modules.
+
+## 2026-11-24 (SEO & Blog: scheduled publishing goes to Shopify hidden, with a visibility date)
+
+Owner report 2026-11-24: authorizing a scheduled blog failed with "Shopify rejected the publish: article Can't set
+isPublished to true and also set a future publish date." Owner's rule: an authorized schedule saves the article in
+Shopify as hidden, with Shopify set to make it visible at the chosen date and time.
+Verified: 4 new unit tests (`tests/unit/seo/test_publish_schedule.py`), the full Python suite (802 passed) and the
+frontend tests (93 passed). Not yet tried against a real Shopify store.
+
+- **Fixed** Scheduling sent `isPublished: true` with the future `publishDate`, which Shopify refuses. A schedule now sends
+  `isPublished: false` + `publishDate`, and fails with a clear message if Shopify does not keep the date.
+- **Changed** A scheduled article is no longer marked live until Shopify shows it (the Shopify sync switches it to
+  published then). It is not listed as a Shopify draft, and "Save as hidden Shopify draft" is refused for it so a draft
+  save cannot change or clear the schedule.
+
 ## 2026-11-23 (Shipping: one section per order, clock from the last scan, dispatched parcels only)
 
 Owner request 2026-11-23, after reviewing every separation rule of the Shipping page: stop tracking orders that are not
@@ -37,6 +251,71 @@ track, 288 yellow, 3 orange, 8 critical, 9 tracking missing, 30 invalid tracking
   orders older than 60 days are re-read from Shopify once a day (newer ones every 2 hours, as before). A dry run on
   23 Nov found 2,810 (RBP) and 1,331 (CPC) such orders not yet stored, 449 of their parcels not delivered in Shopify.
 - **Changed** Open parcels dispatched more than 120 days ago (`board.TRACK_DAYS`) are not listed.
+
+## 2026-11-23 (SEO & Blog: automatic featured images from an image API)
+
+Owner request 2026-11-23: a fully automatic chain, Claude writes the prompt, an image API makes the picture with the real
+product photo, and the picture becomes the blog's featured image. Verified with stand-ins only (12 new tests; the SEO
+unit and integration tests show only the 3 older failures plus the local CLI one; frontend tests 93 and build; both
+screens in demo mode; migration 9 on a copy of the local database). Not run against a real image API: no key yet.
+Both stores' Shopify apps already have the write_files permission the upload needs (checked read-only).
+
+- **Added** `integrations/image_gen.py`: Google Gemini (`GEMINI_API_KEY`, default model `gemini-3-pro-image`, Nano Banana
+  Pro, about $0.134 a picture) or OpenAI (`OPENAI_API_KEY`, default `gpt-image-2`, exact WIDTHxHEIGHT); `IMAGE_PROVIDER`
+  and `IMAGE_MODEL` to choose. Request formats from the providers' documentation of 2026-11-23 (Gemini's newer
+  `interactions` endpoint); answers are read defensively and the picture's type comes from its bytes.
+- **Added** `services/ai_images.py`: after each prompt, the picture is made, stored in Shopify Files, checked by Claude
+  against the real product photo (about $0.04; a failed check is made once more, then left to a person), and attached
+  as the featured image of articles still being written. Articles in review, approved, scheduled or live keep their
+  image; the new one waits in the editor ("Use this picture"). Optional Pinterest picture. Limits: pictures a day
+  (default 10) and dollars a month (default $25), kept in the new table `image_generations` (migration 9).
+- **Changed** Automatic blogs wait (at most 45 minutes) for their picture before they are approved and saved as hidden
+  Shopify drafts, so the picture is part of the approved content; new autopilot step `image`.
+- **Changed** Migration 8 is back to its first form (the local database already ran it); the Pinterest prompt and payoff
+  columns moved to migration 9.
+- **Added** Editor: an "AI picture" section (preview, print check, Use this picture, Make a new picture). SEO & Blog:
+  "Automatic pictures" switches (on/off, print check, Pinterest) and the daily and monthly limits.
+
+## 2026-11-23 (SEO & Blog: AI image prompts for featured images)
+
+Owner request 2026-11-23: write one prompt per blog that any AI image tool (ChatGPT, Gemini, …) can use to make the
+featured image, built from the store's existing images and the article; sized for each store's blog page; different
+for every article; made for every new draft, with an option for past drafts and live blogs. Verified: 11 new tests,
+the SEO unit and integration tests (the same 3 integration failures as on main before this change), the frontend tests
+(91) and build, and both screens in demo mode. Tried with real Claude on a copy of the local database (2 articles per
+store, about $0.37 in all, recorded only in the copy): styles $0.06 per brand, prompts $0.04-0.09 each. Fixes from that
+trial: product matching ranks by product type and name (a quilt article had been given a lampshade), Claude names
+products instead of photo numbers, and the brand's writing "Never" note is no longer pasted into image prompts. Prompts
+for a brand whose automation is paused wait until it is resumed; the screens say so. Then two prompts were run in Google Nano Banana Pro
+(through the ElevenLabs Creative connection, with the real product photo attached): both kept the print faithfully and
+came out at the right size; the runner picture copied the product photo's layout, so prompts now say to take only the
+product from the photo, and the steps say to set the aspect ratio in the tool (image tools often copy the photo's shape).
+After the owner's review as a professional blog editor (clean but catalogue-like, the picture did not show the answer, no
+human moment, nothing for Pinterest), Claude's brief now asks for the article's payoff shown in the picture, a moment
+with hands or a partly seen person (faces out of frame), editorial framing (never the centred catalogue shot), a little
+natural imperfection and one focal point that reads small; and every article also gets a tall Pinterest pin prompt
+(2:3, 1,000 × 1,500, calm space at the top for a title). Banner safe zones now also allow for the wide crop of social
+link previews. Re-run on the 2 test articles: about $0.10 each. The new images were not generated: the ElevenLabs
+account's free plan reached its daily image limit.
+
+- **Added** `services/image_prompts.py`, table `image_prompts` (migration 8) and `/api/articles/{id}/image-prompt`,
+  `/api/image-prompts`, `/api/image-prompts/backfill` (and `/cancel`), `/api/image-prompts/style`.
+- **Added** The brand's visual style: Claude reads up to 12 photos the store already uses (live blog banners, then
+  product photos) and describes light, palette, surfaces, props, composition and mood. Read once, kept 60 days,
+  "Read the photos again" redoes it (about $0.15).
+- **Added** A prompt per article (about $0.10): from the title, keyword, summary, headings and opening, the visual style,
+  up to 4 matching product photos (at most 2 used as references) and the last 30 concepts used for the brand, which it
+  must not repeat. Flowmerce adds the size, the reference-photo instruction and the exclusions itself. Sizes measured on
+  the live themes: Ridhi (Yuva) square 1:1, 2048 × 2048; CPC (Nimbus) 4:3, 2400 × 1800 with a safe zone for the 10:7
+  article banner. Recommended tool: Google Gemini (Nano Banana Pro), because it keeps a real product photo most faithfully.
+- **Added** Every article created from 2026-11-23 on is queued once it has 150 words (Claude drafts and articles written
+  in Flowmerce). Shopify imports and older articles: "Create prompts for past drafts / live blogs" on SEO & Blog. Past
+  articles only run when today's Claude limit still has room for one automatic blog, so they never hold up new work.
+- **Added** Article editor, Featured image card: the prompt with Copy, the photos to attach, suggested alt text ("Use
+  it") and file name, the tool and steps. The image preview now uses the store's shape instead of 16:9.
+- **Changed** `claude._structured` accepts content blocks (text and images by link).
+- Brand rule kept (Ridhi master brief): a real product appears only from its real photo as a reference; a generated
+  picture is never presented as a photograph of the actual item.
 
 ## 2026-11-23 (Fix: hosted app crashing out of memory)
 

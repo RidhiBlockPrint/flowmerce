@@ -455,6 +455,60 @@ MIGRATIONS: list[str] = [
     ALTER TABLE autopilot_runs ADD COLUMN slot_id INTEGER REFERENCES auto_blogs(id) ON DELETE SET NULL;
     ALTER TABLE autopilot_runs ADD COLUMN revise_job_id TEXT;
     """,
+    # AI image prompts: one per article (services/image_prompts.py). Owner request 2026-11-23.
+    """
+    CREATE TABLE image_prompts (
+      article_id INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+      brand_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('queued','working','ready','failed')),
+      priority INTEGER NOT NULL DEFAULT 0,
+      reason TEXT NOT NULL DEFAULT '',
+      prompt TEXT NOT NULL DEFAULT '',
+      concept TEXT NOT NULL DEFAULT '',
+      references_json TEXT NOT NULL DEFAULT '[]',
+      alt_text TEXT NOT NULL DEFAULT '',
+      file_name TEXT NOT NULL DEFAULT '',
+      article_version INTEGER,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      next_attempt_at TEXT,
+      requested_by INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT
+    );
+    CREATE INDEX image_prompts_queue ON image_prompts(status, priority, created_at)
+    """,
+    # 9: the Pinterest prompt and payoff (2026-11-23 review), and automatic images from an image API (integrations/image_gen.py).
+    # image_status: '' (none asked) | queued | working | ready | failed. image_attached = 1 once it is the article's featured image.
+    """
+    ALTER TABLE image_prompts ADD COLUMN pin_prompt TEXT NOT NULL DEFAULT '';
+    ALTER TABLE image_prompts ADD COLUMN payoff TEXT NOT NULL DEFAULT '';
+    ALTER TABLE image_prompts ADD COLUMN image_status TEXT NOT NULL DEFAULT '';
+    ALTER TABLE image_prompts ADD COLUMN image_url TEXT NOT NULL DEFAULT '';
+    ALTER TABLE image_prompts ADD COLUMN pin_image_url TEXT NOT NULL DEFAULT '';
+    ALTER TABLE image_prompts ADD COLUMN image_attached INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE image_prompts ADD COLUMN image_check_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE image_prompts ADD COLUMN image_error TEXT;
+    ALTER TABLE image_prompts ADD COLUMN image_attempts INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE image_prompts ADD COLUMN image_next_at TEXT;
+    ALTER TABLE image_prompts ADD COLUMN image_updated_at TEXT;
+    CREATE TABLE image_generations (
+      id INTEGER PRIMARY KEY,
+      ts TEXT NOT NULL,
+      day TEXT NOT NULL,
+      brand_id TEXT NOT NULL,
+      article_id INTEGER,
+      kind TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      ok INTEGER NOT NULL,
+      cost_usd REAL NOT NULL,
+      error TEXT
+    );
+    CREATE INDEX image_generations_day ON image_generations(day)
+    """,
 ]
 
 _conn: sqlite3.Connection | None = None
@@ -473,7 +527,25 @@ def open_db(file: str | None = None) -> sqlite3.Connection:
     _conn.execute("PRAGMA foreign_keys = ON")
     _conn.execute("PRAGMA busy_timeout = 5000")
     _migrate()
+    _ensure_columns()
     return _conn
+
+
+# Columns added outside the numbered MIGRATIONS: each is added once, only if missing, so it does not depend on which
+# numbered migrations a copy already has (other numbered migrations were still waiting to be committed when this was
+# added). Only ever ADD a column here; anything else belongs in MIGRATIONS.
+#   auto_blogs.topic_id  a blog a person put on the calendar for a topic (services/auto_blog.schedule_topic), 2026-11-24.
+EXTRA_COLUMNS: list[tuple[str, str, str]] = [
+    ("auto_blogs", "topic_id", "INTEGER REFERENCES topics(id) ON DELETE SET NULL"),
+]
+
+
+def _ensure_columns() -> None:
+    db = _db()
+    for table, column, decl in EXTRA_COLUMNS:
+        have = {r[1] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
+        if have and column not in have:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def _db() -> sqlite3.Connection:

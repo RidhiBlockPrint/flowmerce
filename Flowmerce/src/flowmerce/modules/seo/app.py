@@ -76,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(api)
     _include_shipping(app)   # must come before the /api catch-all below
     _include_cro(app)        # likewise
+    _include_ads(app)        # likewise
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
     def api_not_found(rest: str):
@@ -104,6 +105,25 @@ def _include_cro(app: FastAPI) -> None:
         print(f"CRO module not loaded:\n{traceback.format_exc()}")
         return
     app.include_router(cro)
+
+
+def _include_ads(app: FastAPI) -> None:
+    """Mount the Ads module's /api/ads routes. Kept independent like CRO: if it cannot load, the rest still starts."""
+    try:
+        from ..ads.api import ads
+    except Exception:  # noqa: BLE001 - a broken optional module must never stop SEO
+        print(f"Ads module not loaded:\n{traceback.format_exc()}")
+        return
+    app.include_router(ads)
+
+
+def _start_ads_scheduler() -> None:
+    try:
+        from ..ads import scheduler as ads_scheduler
+        if ads_scheduler.start():
+            print("Ads: reading the Meta ad accounts in the background.")
+    except Exception:  # noqa: BLE001
+        print(f"Ads background job not started:\n{traceback.format_exc()}")
 
 
 def _start_cro_scheduler() -> None:
@@ -167,4 +187,5 @@ def startup(with_scheduler: bool = True) -> FastAPI:
         app.router.add_event_handler("shutdown", ai_jobs.stop_runner)   # graceful: finish or hand back running jobs
         _start_shipping_refresher()
         _start_cro_scheduler()
+        _start_ads_scheduler()
     return app

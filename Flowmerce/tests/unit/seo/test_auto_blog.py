@@ -1,6 +1,7 @@
 """The automatic blog pipeline (services/auto_blog.py) and the AEO/GEO/LLMO checks (services/answer_checks.py).
-Owner decisions of 2026-11-20: two blogs a week per brand, written with no person involved, kept as HIDDEN Shopify drafts
-with a publish request a reviewer must authorize. No network: Claude is replaced by stand-ins."""
+Owner decisions of 2026-11-20: two blogs a week per brand, written with no person involved, with a publish request a
+reviewer must authorize; since 2026-11-24 the blog stays in Flowmerce (never a Shopify draft) until that request is
+authorized. No network: Claude is replaced by stand-ins."""
 from datetime import date, timedelta
 
 import pytest
@@ -58,7 +59,6 @@ def pipe(ai_env, monkeypatch):
     monkeypatch.setattr(claude, "research_topics", lambda *a, **k: (TOPIC_RESULT, "m"))
     monkeypatch.setattr(claude, "generate_draft", lambda *a: ({**DRAFT_RESULT, "image_url": IMG, "notes": {"secondary_keywords": [], "needs_confirmation": [],
                         "recommendations": [], "technical_checks": [], "sources": [], "next_article": "", "image_brief": ""}}, "m"))
-    monkeypatch.setattr(autopilot.shopify, "configured", lambda b: False)
     run("""INSERT INTO app_settings (key, value_json, updated_at) VALUES ('auto_blog', '{"enabled": true}', ?)""", now())
     yield ai_env
     for table in ("claude_usage", "content_schedule", "calendar_events", "app_settings", "auto_blogs", "autopilot_runs"):
@@ -98,7 +98,7 @@ def test_a_paused_brand_starts_nothing(pipe, users):
         workflow.set_paused(users["admin"], "ridhi", False, "")
 
 
-def test_the_whole_chain_ends_as_a_checked_hidden_draft_with_a_publish_request_on_the_calendar(pipe, users, monkeypatch):
+def test_the_whole_chain_ends_as_a_checked_blog_in_flowmerce_with_a_publish_request_on_the_calendar(pipe, users, monkeypatch):
     t = _today()
     day = (t + timedelta(days=3)).isoformat()
     sid = run("INSERT INTO auto_blogs (brand_id, publish_on, created_at, updated_at) VALUES ('ridhi', ?, ?, ?)", day, now(), now()).last_id
@@ -120,10 +120,11 @@ def test_the_whole_chain_ends_as_a_checked_hidden_draft_with_a_publish_request_o
     assert r["step"] == "revise" and "FAQ" in asked.get("instructions", "FAQ")
     a = get("SELECT * FROM articles WHERE id = ?", r["article_id"])
     assert IMG2 in a["body_html"] and 'alt="AIT Sage Napkins"' in a["body_html"]   # a second product photo inside the body
-    ai_jobs.run_pending(); autopilot.advance_all()                              # revision in: approved, hidden draft, calendar
+    ai_jobs.run_pending(); autopilot.advance_all()                              # revision in: approved, kept here, calendar
     slot = get("SELECT * FROM auto_blogs WHERE id = ?", sid)
     a = get("SELECT * FROM articles WHERE id = ?", slot["article_id"])
     assert slot["status"] == "ready" and a["status"] in ("approved", "publish_requested") and not a["shopify_published"]
+    assert a["shopify_article_id"] is None                                     # never sent to Shopify as a draft
     assert "FAQ" in asked["instructions"]
     entry = get("SELECT * FROM content_schedule WHERE article_id = ? AND action = 'publish'", a["id"])
     assert entry and entry["run_on"] == day                                     # on the calendar for the slot's day
@@ -134,13 +135,29 @@ def test_the_whole_chain_ends_as_a_checked_hidden_draft_with_a_publish_request_o
     assert ov["projection"]["claudeUsdNext4Weeks"] >= 0
 
 
-def test_a_slot_can_be_skipped_only_before_it_starts(pipe, users):
+def test_a_planned_slot_can_be_cancelled_once(pipe, users):
     t = _today()
     sid = run("INSERT INTO auto_blogs (brand_id, publish_on, created_at, updated_at) VALUES ('cpc', ?, ?, ?)", (t + timedelta(days=12)).isoformat(), now(), now()).last_id
-    assert auto_blog.skip(users["admin"], sid)["status"] == "skipped"
+    done = auto_blog.cancel(users["admin"], sid)
+    assert done["status"] == "skipped" and done["message"].startswith("Cancelled by")
     with pytest.raises(Exception) as e:
-        auto_blog.skip(users["admin"], sid)
+        auto_blog.cancel(users["admin"], sid)
     assert getattr(e.value, "status", 409) == 409
+
+
+def test_a_slot_being_written_can_be_cancelled_and_claude_stops(pipe, users):
+    t = _today()
+    sid = run("INSERT INTO auto_blogs (brand_id, publish_on, created_at, updated_at) VALUES ('ridhi', ?, ?, ?)", (t + timedelta(days=3)).isoformat(), now(), now()).last_id
+    assert auto_blog.start_due(t) == 1
+    slot = get("SELECT * FROM auto_blogs WHERE id = ?", sid)
+    r = get("SELECT * FROM autopilot_runs WHERE id = ?", slot["run_id"])
+    assert slot["status"] == "writing" and r["status"] == "running"
+    done = auto_blog.cancel(users["admin"], sid)
+    assert done["status"] == "skipped" and "Stopped by" in done["message"]
+    assert get("SELECT status FROM autopilot_runs WHERE id = ?", r["id"])["status"] == "failed"
+    assert get("SELECT status FROM ai_jobs WHERE id = ?", r["research_job_id"])["status"] == "cancelled"
+    ai_jobs.run_pending(); autopilot.advance_all()
+    assert get("SELECT status FROM auto_blogs WHERE id = ?", sid)["status"] == "skipped"   # nothing writes it after all
 
 
 def test_the_pipeline_is_off_until_switched_on_and_then_only_plans(pipe, users):
@@ -152,3 +169,77 @@ def test_the_pipeline_is_off_until_switched_on_and_then_only_plans(pipe, users):
     assert auto_blog.update_settings(users["admin"], {"enabled": True})["enabled"] is True
     with pytest.raises(Exception):
         auto_blog.update_settings(users["admin"], {"weekdays": [9]})
+
+
+# ---------------------------------------------------------------- a topic a person puts on the calendar (2026-11-24)
+
+def test_a_topic_put_on_the_calendar_is_written_and_put_forward_for_its_day(pipe, users, monkeypatch):
+    """Owner request 2026-11-24: add a topic to a day; Flowmerce drafts, checks and approves it, and makes a publish request
+    for that day that waits for one click from a reviewer. It runs even while the automatic weekday blogs are off."""
+    monkeypatch.setattr(claude, "revise_draft", lambda *a: (_ for _ in ()).throw(AssertionError("not needed")))
+    auto_blog.update_settings(users["admin"], {"enabled": False})
+    t = _today()
+    day = (t + timedelta(days=12)).isoformat()
+    slot = auto_blog.schedule_topic(users["admin"], {"brand": "ridhi", "publish_on": day, "title": "AIT How to wash a block print quilt",
+                                                     "keyword": "ait wash block print quilt"})
+    assert slot["status"] == "planned" and slot["scheduled_topic"] and slot["topic_title"] == "AIT How to wash a block print quilt"
+    topic = get("SELECT * FROM topics WHERE id = ?", slot["topic_id"])
+    assert topic["status"] == "approved"                                         # putting it on the calendar approves it
+    assert auto_blog.start_due(t) == 0                                           # 12 days away: written 5 days before
+    assert auto_blog.start_due(t + timedelta(days=8)) == 1                       # inside the lead time: Claude writes it
+    s = get("SELECT * FROM auto_blogs WHERE id = ?", slot["id"])
+    r = get("SELECT * FROM autopilot_runs WHERE id = ?", s["run_id"])
+    assert s["status"] == "writing" and r["topic_id"] == topic["id"] and r["slot_id"] == s["id"] and r["step"] == "draft"
+    for _ in range(3):
+        ai_jobs.run_pending(); autopilot.advance_all()
+    s = get("SELECT * FROM auto_blogs WHERE id = ?", slot["id"])
+    a = get("SELECT * FROM articles WHERE id = ?", s["article_id"])
+    assert s["status"] == "ready" and a["topic_id"] == topic["id"] and a["status"] == "approved" and a["shopify_article_id"] is None
+    entry = get("SELECT * FROM content_schedule WHERE article_id = ? AND action = 'publish'", a["id"])
+    assert entry and entry["run_on"] == day                                      # the publish request is made for that day
+    assert not get("SELECT 1 FROM publish_requests WHERE article_id = ? AND status = 'executed'", a["id"])   # nothing went live
+
+
+def test_a_scheduled_topic_needs_a_free_future_day_and_is_scheduled_once(pipe, users):
+    t = _today()
+    with pytest.raises(Exception) as e:
+        auto_blog.schedule_topic(users["admin"], {"brand": "cpc", "publish_on": t.isoformat(), "title": "AIT Too soon a topic"})
+    assert getattr(e.value, "status", 0) == 400
+    day = (t + timedelta(days=20)).isoformat()
+    first = auto_blog.schedule_topic(users["admin"], {"brand": "cpc", "publish_on": day, "title": "AIT Napkin rings for a long table"})
+    with pytest.raises(Exception) as e:                                          # the same topic again, on another day
+        auto_blog.schedule_topic(users["admin"], {"brand": "cpc", "publish_on": (t + timedelta(days=21)).isoformat(), "topic_id": first["topic_id"]})
+    assert getattr(e.value, "code", "") == "already_scheduled"
+    with pytest.raises(Exception) as e:                                          # another topic on a day that has one
+        auto_blog.schedule_topic(users["admin"], {"brand": "cpc", "publish_on": day, "title": "AIT A different topic for that day"})
+    assert getattr(e.value, "code", "") == "day_taken"
+    auto_blog.cancel(users["admin"], first["id"])                                # cancelled: the day is free again
+    again = auto_blog.schedule_topic(users["admin"], {"brand": "cpc", "publish_on": day, "title": "AIT A different topic for that day"})
+    assert again["id"] == first["id"] and again["status"] == "planned" and again["topic_title"] == "AIT A different topic for that day"
+
+
+def test_an_automatic_slot_becomes_the_scheduled_topics_day_and_a_paused_brand_waits(pipe, users):
+    t = _today()
+    auto_blog.plan(t)
+    auto_day = get("SELECT publish_on FROM auto_blogs WHERE brand_id = 'ridhi' AND topic_id IS NULL ORDER BY publish_on DESC LIMIT 1")["publish_on"]
+    slot = auto_blog.schedule_topic(users["admin"], {"brand": "ridhi", "publish_on": auto_day, "title": "AIT Kantha throws explained"})
+    assert get("SELECT COUNT(*) n FROM auto_blogs WHERE brand_id = 'ridhi' AND publish_on = ?", auto_day)["n"] == 1
+    assert slot["scheduled_topic"]
+    workflow.set_paused(users["admin"], "ridhi", True, "test")
+    try:
+        auto_blog.start_due(date.fromisoformat(auto_day) - timedelta(days=2))
+        assert get("SELECT status FROM auto_blogs WHERE id = ?", slot["id"])["status"] == "planned"   # waits while paused
+    finally:
+        workflow.set_paused(users["admin"], "ridhi", False, "")
+
+
+def test_a_topic_written_by_hand_meanwhile_is_put_forward_instead_of_written_again(pipe, users):
+    t = _today()
+    slot = auto_blog.schedule_topic(users["admin"], {"brand": "ridhi", "publish_on": (t + timedelta(days=15)).isoformat(), "title": "AIT Table runner lengths"})
+    from flowmerce.modules.seo.services import articles
+    a = articles.create_article(users["admin"], "ridhi", {"title": "AIT Table runner lengths", "primary_keyword": "ait table runner lengths",
+                                                         "topic_id": slot["topic_id"], "body_html": "<p>Body</p>"}, "app", "draft")
+    assert auto_blog.start_due(t + timedelta(days=11)) == 0                      # nothing for Claude to write
+    s = get("SELECT * FROM auto_blogs WHERE id = ?", slot["id"])
+    assert s["status"] == "ready" and s["article_id"] == a["id"] and s["run_id"] is None
+    assert get("SELECT run_on FROM content_schedule WHERE article_id = ? AND action = 'publish'", a["id"])["run_on"] == slot["publish_on"]
