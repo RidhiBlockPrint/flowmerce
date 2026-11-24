@@ -161,16 +161,23 @@ function plan(db, brand, query, fallbackDays = null, includeToday = true) {
   if (to > today) to = today;
   const n = span(from, to);
   if (n > 366) throw new DemoError(400, 'Pick at most 366 days.', 'bad_request');
-  let compare = ['previous', 'last_week', '4week_avg', 'none'].includes(query.compare) ? query.compare : (n === 1 && to < today ? '4week_avg' : 'previous');
+  let compare = ['previous', 'previous_year', 'previous_year_dow', 'last_week', '4week_avg', 'custom', 'none'].includes(query.compare) ? query.compare
+    : (n === 1 && to < today ? '4week_avg' : 'previous');
   if (compare === '4week_avg' && n !== 1) compare = 'previous';
+  if (compare === 'custom' && !/^\d{4}-\d{2}-\d{2}$/.test(query.cfrom ?? '')) compare = 'previous';
+  if (compare === 'custom' && query.cfrom >= from) throw new DemoError(400, 'The comparison must start before the chosen days.', 'bad_request');
   const byDay = byDate(db, brand);
   const daysOf = (start, count) => Array.from({ length: count }, (_, i) => shift(start, i));
   const pick = (list) => list.map((d) => byDay.get(d)).filter(Boolean);
   const current = daysOf(from, n);
-  const back = compare === 'none' ? [] : compare === 'last_week' ? [7] : compare === '4week_avg' ? [7, 14, 21, 28] : [n];
+  // The demo keeps 70 days, so a year back has no days: the comparison then shows as empty, as a store without history would.
+  const back = compare === 'none' ? [] : compare === 'last_week' ? [7] : compare === '4week_avg' ? [7, 14, 21, 28]
+    : compare === 'previous_year' ? [365] : compare === 'previous_year_dow' ? [364] : compare === 'custom' ? [span(query.cfrom, from) - 1] : [n];
   const partial = to === today;
   const baselines = back.map((b) => pick(daysOf(shift(from, -b), n)).map((d, i, a) => (partial && i === a.length - 1 ? { ...d, ...scale(d, 0.55) } : d)));
-  const baseLabel = compare === 'none' ? 'no comparison' : compare === 'last_week' ? (n === 1 ? `vs same ${dayLabel(from).slice(0, 3)} last week` : 'vs same days a week earlier')
+  const baseLabel = compare === 'none' ? 'no comparison' : compare === 'previous_year' ? 'vs same dates last year'
+    : compare === 'previous_year_dow' ? 'vs last year (same weekdays)' : compare === 'custom' ? `vs ${dayLabel(query.cfrom).slice(4)} - ${dayLabel(shift(query.cfrom, n - 1)).slice(4)}`
+    : compare === 'last_week' ? (n === 1 ? `vs same ${dayLabel(from).slice(0, 3)} last week` : 'vs same days a week earlier')
     : compare === '4week_avg' ? `vs 4-week ${dayLabel(from).slice(0, 3)} average` : (n === 1 ? 'vs previous day' : `vs previous ${n} days`);
   const label = (n === 1 ? dayLabel(from) : `${dayLabel(from).slice(4)} - ${dayLabel(to).slice(4)} (${n} days)`) + (partial ? ', so far' : '');
   return { from, to, n, compare, label, baseLabel, partial, current: pick(current), baselines };
@@ -953,8 +960,7 @@ export const routes = [
       const split = (t) => ({ all: lpFunnel(t, pg), devices: [dev(t, 'Mobile', 0.84, 0.95), dev(t, 'Desktop', 0.11, 1.3), dev(t, 'Tablet', 0.05, 1.0)] });
       funnel[mode] = { now: split(now), before: split(before) };
     }
-    const countries = lpSegments(blocks.month.now, blocks.month.before, [['United States', 0.93, 1], ['Canada', 0.03, 0.7], ['United Kingdom', 0.02, 0.8], ['Australia', 0.01, 0.6], ['India', 0.01, 0.2]], 100);
-    return { brand, path: pg[0], days: daily.length, week: blocks.week, month: blocks.month, daily, ...segs, countries, funnel,
+    return { brand, path: pg[0], days: daily.length, week: blocks.week, month: blocks.month, daily, ...segs, funnel,
       what_changed: lpWhatChanged(blocks.week, blocks.month, segs.sources_week), revenue_available: true, errors: {} };
   }],
 ];
@@ -1015,7 +1021,7 @@ function lpFunnel(t, pg) {
   return { sessions: s, steps: counts.map(([key, count], i) => ({ key, count, pct_of_sessions: rate(count, s), step_pct: rate(count, i ? counts[i - 1][1] : s, 1) })),
     purchase_rate: rate(done, s), checkout_abandonment: rate(checkout - done, checkout, 1) };
 }
-/** A page's sources, devices or countries: the page's totals split by fixed shares, conversion lifted per segment. */
+/** A page's sources or devices: the page's totals split by fixed shares, conversion lifted per segment. */
 function lpSegments(now, before, parts, least) {
   const one = (t, share, lift, k) => ({ sessions: Math.round(t.sessions * share * (k ? 0.97 : 1)), bounce_rate: round((t.bounce_rate || 0) / Math.sqrt(lift)),
     added_to_cart_rate: round((t.added_to_cart_rate || 0) * lift), conversion_rate: round((t.conversion_rate || 0) * lift) });

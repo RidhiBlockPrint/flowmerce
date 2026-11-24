@@ -2,6 +2,36 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-24 (CRO: Shopify-style date picker and comparison; tidier Overview)
+
+Owner requests 2026-11-24: a date picker and comparison like Shopify's; remove the sentences under the conversion
+rate; remove the Overview's "What to do next" card. Verified: CRO tests (143, 1 new), ruff and mypy --strict on the CRO
+module, the Python suite (only the older `test_unfinished_pages_are_not_mounted` failure), frontend tests (104, 6 new),
+the API smoke test, `next build`, and demo mode in the browser (presets, Last N, calendar pick, Apply, custom
+comparison, phone width without sideways scroll). Not checked on live data: the new comparisons' figures.
+
+- **Changed** The CRO date bar is a Shopify-style picker (`frontend/src/components/croDates.jsx`): one button with the
+  range's name opens the presets on the left as a parent-child tree (Today, Yesterday; Last > 7 / 30 / 90 / 365 days,
+  last week, month, quarter, year; Period to date > week, month, quarter, year to date; Black Friday Cyber Monday >
+  years; Quarters > the last five; Custom range) and the start and end dates with a two-month calendar on the right;
+  nothing changes until Apply. The panel moves left when it would run past the window. "Compare to" offers Shopify's
+  five choices: Previous period (now the default, as in Shopify, instead of the 4-week weekday average for one day),
+  Previous year, Previous year (match day of week), Custom (pick the first day; same length) or No comparison; older
+  links with "a week earlier" or "4-week average" still open. The chosen comparison stays when the dates change.
+  Ranges that move with time keep their key in the address (`?r=last-30-days`, `mtd`, `q-2026-3`, `bfcm-2025`); older
+  links (`last7`, `this_month`...) still work.
+- **Added** Comparisons `previous_year`, `previous_year_dow` and `custom` (with `cfrom`, the first day) in
+  `modules/cro/periods.range_plan`, `service.RangeQuery.compare_from` and every CRO report's `?cfrom=`; the demo
+  answers them too.
+- **Removed** The sentences under the Overview's conversion rate ("of visits ended in an order", "Better than N of the
+  last 28 days"); only the reason for a missing rate (today is not complete) is still shown.
+- **Removed** The Overview's "What to do next" card (with its tick-boxes); Claude's plan and the checks stay on the
+  Recommendations tab. The Overview no longer asks for recommendations or Claude's plan.
+- **Changed** A landing page's deep dive now covers the whole window (its cards in a centred column up to 1,200 px)
+  instead of a panel on the left.
+- **Removed** "Top countries (month on month)" from a landing page's deep dive, with its two Shopify queries
+  (`landing_detail.page_detail` no longer returns `countries`). Countries by store stay on the Conversion tab.
+
 ## 2026-11-23 (Shipping and CRO: no tab bar under the title)
 
 Owner request 2026-11-23: the tab bars on Shipping (Overview, Shipments, Hand checks) and CRO (Overview, Conversion,

@@ -233,8 +233,9 @@ function SegTable({ rows }) {
 }
 
 /**
- * One landing page's deep dive in a left-side panel: what changed, week on week and month on month, day by day (with
- * CSV), the 60-day trend, traffic sources and devices (WoW / MoM) and top countries (MoM). Escape or the cross closes it.
+ * One landing page's deep dive over the whole window (owner 2026-11-24): what changed, its funnel, week on week and
+ * month on month, day by day (with CSV), the 60-day trend, traffic sources and devices (WoW / MoM). Escape or the cross
+ * closes it.
  */
 export function PageDive({ brand, path, type, onClose }) {
     const q = useApi(`/cro/landing-page${qs({ brand, path })}`);
@@ -260,7 +261,6 @@ export function PageDive({ brand, path, type, onClose }) {
               </Card>
               <SegmentCard d={d} kind="sources" title="Traffic sources for this page"/>
               <SegmentCard d={d} kind="devices" title="Devices for this page"/>
-              <Card title="Top countries (month on month)" sub={`${span(d.month.current)} vs ${span(d.month.previous)}`} flush><SegTable rows={d.countries}/></Card>
               {d.errors && Object.keys(d.errors).length ? <div className="muted xs">Shopify did not answer: {Object.keys(d.errors).join(', ')}.</div> : null}
               <div className="muted xs">Figures are for visits that started on exactly {path}; bots left out. Revenue = total sales of orders whose visit started here.</div>
             </>);

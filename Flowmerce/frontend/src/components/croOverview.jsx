@@ -117,9 +117,8 @@ export function GaugeCard({ value, scale, single, revenue, aov, perVisit }) {
     const gap = 0.012;
     const k = has ? pt(r, t(value)) : null;
     const a1 = scale ? pt(R - 13, t(scale.avg)) : null, a2 = scale ? pt(R + 13, t(scale.avg)) : null;
-    const note = !has ? 'Shopify reports visits for complete days only, so today has no conversion yet.'
-        : scale && single && scale.beats !== null ? (scale.beats === scale.days ? `The best day of the last ${scale.days}.` : `Better than ${scale.beats} of the last ${scale.days} days.`)
-            : scale ? `Average over the last ${scale.days} days: ${pct(scale.avg)}.` : null;
+    // Owner 2026-11-24: no sentences under the rate; only say why there is no rate (today is not complete yet).
+    const note = has ? null : 'Shopify reports visits for complete days only, so today has no conversion yet.';
     return (<div className="ov-halo">
       <section className="card ov-card" aria-labelledby="ov-conv">
         <div className="ov-card-head"><h2 id="ov-conv" className="serif ov-serif">Store conversion</h2></div>
@@ -138,7 +137,6 @@ export function GaugeCard({ value, scale, single, revenue, aov, perVisit }) {
           {k ? <span className="ov-gchip" style={{ left: `${(k[0] / 320) * 100}%`, top: `${(k[1] / 190) * 100}%` }}><span className="dot"/>{single ? 'This day' : 'Chosen days'}</span> : null}
           <div className="ov-gmid">
             <div className="ov-big num" style={{ fontSize: 46 }}>{has ? <CountUp value={pct(value)}/> : '—'}</div>
-            <div className="muted small">of visits ended in an order</div>
           </div>
         </div>
         {scale ? <div className="ov-gends"><span>{pct(scale.lo, 1)}</span><span>┃ average {pct(scale.avg)}</span><span>{pct(scale.hi, 1)}</span></div> : null}

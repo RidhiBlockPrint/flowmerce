@@ -72,14 +72,16 @@ def _who(user: dict[str, Any]) -> str:
 
 # ------------------------------------------------------------------------------------------ reports
 def _rq(request: Request, last: int | None = None, today: bool = True) -> service.RangeQuery:
-    """The range a report asks for: `from`/`to` (YYYY-MM-DD) and `compare`, or the older
-    `period` / `days` parameters when no range is given."""
+    """The range a report asks for: `from`/`to` (YYYY-MM-DD) and `compare` (with `cfrom`, the
+    first day of a custom comparison), or the older `period` / `days` parameters when no range is
+    given."""
     q = request.query_params
     days = q.get("days") or ""
     return service.RangeQuery(
         frm=(q.get("from") or "")[:10] or None,
         to=(q.get("to") or "")[:10] or None,
         compare=(q.get("compare") or "")[:20],
+        compare_from=(q.get("cfrom") or "")[:10] or None,
         period=(q.get("period") or "yesterday")[:20],
         last=_int(days, last or 0, 1, 366) if (days or last) else None,
         last_includes_today=today,

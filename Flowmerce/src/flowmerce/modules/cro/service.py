@@ -188,6 +188,7 @@ class RangeQuery:
     period: str = "yesterday"
     last: int | None = None  # "the last N days" when no range is given
     last_includes_today: bool = True
+    compare_from: str | None = None  # the first day of a custom comparison (compare='custom')
 
 
 def _plan(brand: str, rq: RangeQuery) -> tuple[str, ZoneInfo, datetime, Plan]:
@@ -198,7 +199,7 @@ def _plan(brand: str, rq: RangeQuery) -> tuple[str, ZoneInfo, datetime, Plan]:
             first = start or end
             last = end or start
             assert first is not None and last is not None  # noqa: S101 - narrowed above
-            p = range_plan(first, last, rq.compare, tz, now)
+            p = range_plan(first, last, rq.compare, tz, now, parse_day(rq.compare_from))
         elif rq.last:
             today = _today(tz, now)
             last = today if rq.last_includes_today else today - timedelta(days=1)

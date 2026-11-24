@@ -991,12 +991,63 @@ button.journey-flag:hover { filter: brightness(.96); text-decoration: underline;
 .act2-more > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--accent); }
 .act2-more[open] > summary { margin-bottom: 8px; }
 .act2-math { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-/* Landing pages week / month compare and one page's deep dive in the right-side panel (components/croLanding.jsx). */
-/* Owner 2026-11-23: the page deep dive opens on the left (other drawers stay on the right). */
-.drawer:has(.lp-dive) { width: min(1040px, 100%); left: 0; right: auto; animation-name: slide-left; }
-@keyframes slide-left { from { transform: translateX(-24px); opacity: 0.4; } }
+/* The CRO date and comparison pickers, laid out like Shopify Analytics' (components/croDates.jsx, 2026-11-24). */
+.dp { position: relative; }
+.dp-btn { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.dp-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; display: grid; grid-template-columns: 232px minmax(0, 1fr);
+  width: min(800px, calc(100vw - 32px)); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-2);
+  overflow: hidden; animation: pop 0.14s ease-out; }
+.dp-menu { display: flex; flex-direction: column; padding: 8px; background: var(--surface-2); border-right: 1px solid var(--line); max-height: 460px; overflow-y: auto; }
+.dp-menu hr { border: 0; border-top: 1px solid var(--line); margin: 6px 2px; }
+.dp-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px;
+  background: none; text-align: left; font-size: 13.5px; line-height: 1.35; color: var(--ink); cursor: pointer; }
+.dp-menu { overflow-x: hidden; }
+.dp-item:hover:not(:disabled) { background: var(--surface-3); }
+.dp-item.on { background: var(--surface-3); font-weight: 700; }
+.dp-item:disabled { color: var(--faint); cursor: default; }
+/* The tree: a parent's chevron turns down when open; its children sit indented on a guide line. */
+.dp-chev { color: var(--muted); transition: transform 0.15s ease; flex: none; }
+.dp-item.parent.open .dp-chev { transform: rotate(90deg); }
+.dp-item.parent.open:not(.on) { background: none; }
+.dp-kids { display: flex; flex-direction: column; margin: 2px 0 4px 16px; padding-left: 8px; border-left: 2px solid var(--line); }
+.dp-item.kid { font-size: 13px; padding: 6px 10px; }
+.dp-main { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; min-width: 0; }
+.dp-boxes { display: flex; align-items: center; gap: 8px; }
+.dp-boxes .icon { color: var(--faint); flex: none; }
+.dp-box { flex: 1; min-width: 0; }
+.dp-cal { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; }
+.dp-sep { width: 1px; background: var(--line); }
+.dp-nav { position: absolute; top: -2px; border: 0; background: none; cursor: pointer; padding: 4px; border-radius: 6px; color: var(--ink-2); }
+.dp-nav:hover:not(:disabled) { background: var(--surface-3); }
+.dp-nav:disabled { opacity: 0.3; cursor: default; }
+.dp-nav.prev { left: 0; } .dp-nav.next { right: 0; }
+.dp-mname { text-align: center; font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+.dp-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px 0; text-align: center; }
+.dp-dow { font-size: 12px; color: var(--muted); padding: 4px 0; }
+.dp-day { height: 32px; border: 0; background: none; font-size: 13.5px; color: var(--ink); cursor: pointer; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.dp-day:hover:not(:disabled) { background: var(--surface-3); }
+.dp-day:disabled { color: var(--faint); opacity: 0.55; cursor: default; }
+.dp-day.today { box-shadow: inset 0 0 0 1px var(--line-2); }
+.dp-day.mark { background: color-mix(in srgb, var(--info) 12%, transparent); }
+.dp-day.in { background: var(--surface-3); border-radius: 0; }
+.dp-day.edge { background: var(--ink); color: var(--surface); border-radius: 8px; font-weight: 700; }
+.dp-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.dp-err { color: var(--crit); font-size: 12.5px; }
+.dp-summary { display: grid; gap: 12px; padding: 6px 0; }
+.dp-summary > div { display: flex; flex-direction: column; gap: 2px; }
+@media (max-width: 760px) {
+  .dp-panel { grid-template-columns: minmax(0, 1fr); }
+  .dp-menu { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .dp-cal { grid-template-columns: minmax(0, 1fr); }
+  .dp-sep, .dp-cal > .dp-month:first-of-type { display: none; }   /* one month on a phone: the later one, with the end */
+}
+/* Landing pages week / month compare and one page's deep dive (components/croLanding.jsx). Owner 2026-11-24: the deep
+   dive covers the whole window (other drawers stay on the right), its cards in a readable centred column. */
+.drawer:has(.lp-dive) { inset: 0; width: 100%; max-width: none; animation: dive-in 0.16s ease-out; }
+@keyframes dive-in { from { transform: translateY(12px); opacity: 0.4; } }
 .drawer:has(.lp-dive) .drawer-body { background: var(--surface-2); }
-.lp-dive { gap: 14px; padding: 16px 18px 24px; }
+.drawer:has(.lp-dive) .drawer-head { padding-left: max(18px, calc((100% - 1200px) / 2)); padding-right: max(18px, calc((100% - 1200px) / 2)); }
+.lp-dive { gap: 14px; padding: 16px 18px 32px; max-width: 1200px; margin: 0 auto; }
 .lp-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .lp-title { font-size: 17px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lp-path { display: block; max-width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 600; }

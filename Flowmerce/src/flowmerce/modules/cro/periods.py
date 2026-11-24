@@ -138,7 +138,15 @@ def plan(period: str, compare: str, tz: ZoneInfo, now: datetime) -> Plan:
     )
 
 
-RANGE_COMPARES = ("previous", "last_week", "4week_avg", "none")
+RANGE_COMPARES = (
+    "previous",
+    "previous_year",
+    "previous_year_dow",
+    "last_week",
+    "4week_avg",
+    "custom",
+    "none",
+)
 MAX_RANGE_DAYS = 366
 
 
@@ -150,13 +158,32 @@ def _fmt(d: date) -> str:
     return f"{d.day} {d:%b %Y}"
 
 
-def range_plan(start: date, end: date, compare: str, tz: ZoneInfo, now: datetime) -> Plan:
+def _year_back(d: date) -> int:
+    """Days from the same calendar date a year earlier to `d` (29 Feb counts from 28 Feb)."""
+    try:
+        before = d.replace(year=d.year - 1)
+    except ValueError:  # 29 February
+        before = d.replace(year=d.year - 1, day=28)
+    return (d - before).days
+
+
+def range_plan(
+    start: date,
+    end: date,
+    compare: str,
+    tz: ZoneInfo,
+    now: datetime,
+    compare_start: date | None = None,
+) -> Plan:
     """Any local-day range start..end (inclusive), as the team picks it on the calendar.
 
-    compare: 'previous' = the same number of days just before; 'last_week' = the same days one week
-    earlier; '4week_avg' = for a single day, the average of the same weekday in the 4 weeks before
-    (longer ranges fall back to 'previous'); 'none' = no comparison. A range that reaches today runs
-    until now, and its comparison covers the same elapsed time.
+    compare (like Shopify's "Compare to"): 'previous' = the same number of days just before;
+    'previous_year' = the same dates a year earlier; 'previous_year_dow' = 52 weeks earlier, so
+    weekdays line up; 'last_week' = the same days one week earlier; '4week_avg' = for a single day,
+    the average of the same weekday in the 4 weeks before (longer ranges fall back to 'previous');
+    'custom' = the same number of days starting on `compare_start` (before `start`); 'none' = no
+    comparison. A range that reaches today runs until now, and its comparison covers the same
+    elapsed time.
     """
     today = now.astimezone(tz).date()
     if start > end:
@@ -170,6 +197,11 @@ def range_plan(start: date, end: date, compare: str, tz: ZoneInfo, now: datetime
     compare = compare if compare in RANGE_COMPARES else "previous"
     if compare == "4week_avg" and n != 1:
         compare = "previous"
+    if compare == "custom":
+        if compare_start is None:
+            compare = "previous"
+        elif compare_start >= start:
+            raise RangeError("The comparison must start before the chosen days.")
     partial = end == today
     first = day_window(start, tz).start
     current = Window(first, now if partial else day_window(end, tz).end)
@@ -198,6 +230,18 @@ def range_plan(start: date, end: date, compare: str, tz: ZoneInfo, now: datetime
     elif compare == "4week_avg":
         windows = [shifted(7 * w) for w in range(1, 5)]
         base_label = f"vs 4-week {WEEKDAYS[start.weekday()]} average"
+    elif compare == "previous_year":
+        windows = [shifted(_year_back(start))]
+        base_label = "vs same dates last year"
+    elif compare == "previous_year_dow":
+        windows = [shifted(364)]
+        base_label = "vs last year (same weekdays)"
+    elif compare == "custom" and compare_start is not None:
+        windows = [shifted((start - compare_start).days)]
+        c_end = compare_start + timedelta(days=n - 1)
+        base_label = (
+            f"vs {_fmt(compare_start)}" if n == 1 else f"vs {_fmt(compare_start)} - {_fmt(c_end)}"
+        )
     else:
         windows = [shifted(n)]
         base_label = "vs previous day" if n == 1 else f"vs previous {n} days"

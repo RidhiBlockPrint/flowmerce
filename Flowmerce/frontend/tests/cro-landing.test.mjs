@@ -44,12 +44,13 @@ test('date-wise: the busiest pages by default, chosen pages when asked', async (
     assert.equal(picked.pages[0].rows.length, 14);
 });
 
-test("one page's deep dive: week and month, days, sources, devices, countries, funnel, what changed", async () => {
+test("one page's deep dive: week and month, days, sources, devices, funnel, what changed (no countries)", async () => {
     resetDemo();
     const d = await get('/cro/landing-page?brand=ridhi&path=/collections/quilts');
     assert.equal(d.daily.length, 60);
     assert.equal(d.week.now.sessions, d.daily.slice(-7).reduce((a, r) => a + r.sessions, 0));
-    for (const k of ['sources_week', 'sources_month', 'devices_week', 'devices_month', 'countries']) assert.ok(d[k].length, k);
+    for (const k of ['sources_week', 'sources_month', 'devices_week', 'devices_month']) assert.ok(d[k].length, k);
+    assert.equal(d.countries, undefined);   // removed on 2026-11-24
     for (const mode of ['week', 'month']) {
         const f = d.funnel[mode];
         assert.deepEqual(f.now.all.steps.map((s) => s.key), STEPS);

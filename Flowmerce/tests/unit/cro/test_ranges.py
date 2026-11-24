@@ -60,6 +60,32 @@ def test_four_week_average_only_for_one_day_and_none_has_no_baseline() -> None:
     assert n.baselines == () and n.baseline_days == ()
 
 
+def test_shopify_compare_choices_previous_year_and_custom() -> None:
+    y = range_plan(date(2026, 11, 1), date(2026, 11, 15), "previous_year", NY, NOW)
+    assert y.baseline_days[0][0] == date(2025, 11, 1) and y.baseline_days[0][-1] == date(
+        2025, 11, 15
+    )
+    assert y.baseline_label == "vs same dates last year"
+    dow = range_plan(date(2026, 11, 19), date(2026, 11, 19), "previous_year_dow", NY, NOW)
+    assert dow.baseline_days == ((date(2025, 11, 20),),)  # 52 weeks back: also a Thursday
+    assert dow.baseline_days[0][0].weekday() == date(2026, 11, 19).weekday()
+    c = range_plan(date(2026, 11, 10), date(2026, 11, 16), "custom", NY, NOW, date(2026, 9, 1))
+    assert c.baseline_days[0][0] == date(2026, 9, 1) and c.baseline_days[0][-1] == date(2026, 9, 7)
+    assert c.baseline_label == "vs 1 Sep 2026 - 7 Sep 2026"
+    plain = range_plan(date(2026, 11, 10), date(2026, 11, 16), "custom", NY, NOW)
+    assert plain.compare == "previous"  # custom without a start day falls back
+    with pytest.raises(RangeError):
+        range_plan(date(2026, 11, 10), date(2026, 11, 16), "custom", NY, NOW, date(2026, 11, 12))
+    leap = range_plan(
+        date(2028, 2, 29),
+        date(2028, 2, 29),
+        "previous_year",
+        NY,
+        datetime(2028, 3, 5, 15, 0, tzinfo=UTC),
+    )
+    assert leap.baseline_days == ((date(2027, 2, 28),),)
+
+
 def test_a_range_reaching_today_runs_until_now_and_compares_the_same_elapsed_time() -> None:
     p = range_plan(date(2026, 11, 18), date(2026, 11, 30), "last_week", NY, NOW)
     assert p.is_partial and p.current_days[-1] == date(2026, 11, 20)  # the future is cut off

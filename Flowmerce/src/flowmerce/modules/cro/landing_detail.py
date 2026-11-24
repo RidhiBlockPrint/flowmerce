@@ -8,8 +8,9 @@ rates in % (2.5 = 2.5%), changes of rates in points:
 * compare_pages: every landing page Shopify lists (up to 200) with sessions, bounce, add to cart,
   conversion, orders, revenue and revenue per visit for both periods and the change.
 * page_detail: one page's day-by-day figures for the last 60 days (the week and month totals are
-  added up from them), its traffic sources and devices week on week and month on month, its
-  countries month on month, and "what changed": the biggest moves as plain sentences.
+  added up from them), its traffic sources and devices week on week and month on month, its own
+  funnel by device, and "what changed": the biggest moves as plain sentences. (Countries were
+  removed on 2026-11-24 at the owner's request.)
 * funnel_pages: every landing page's funnel (sessions, viewed a product, added to cart, reached
   checkout, purchased) week on week or month on month, each step as a share of sessions and of
   the step before.
@@ -248,7 +249,7 @@ def total(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def segment_rows(
     now: list[dict[str, Any]] | None, before: list[dict[str, Any]] | None, key: str, least: int
 ) -> list[dict[str, Any]]:
-    """A page's traffic sources, devices or countries in one period against the other (pure)."""
+    """A page's traffic sources or devices in one period against the other (pure)."""
     cur, prev = rate_rows(now, key), rate_rows(before, key)
     whole = sum(v["sessions"] for v in cur.values())
     out = []
@@ -382,15 +383,6 @@ def page_detail(
                 f"FROM sessions SHOW {FUNNEL_FIELDS} {only}GROUP BY session_device_type, "
                 f"session_viewed_product {since(w)}"
             )
-    month_cur, month_base = win["month"]
-    queries["countries"] = (
-        f"FROM sessions SHOW {SESSION_METRICS} {only}GROUP BY session_country {since(month_cur)} "
-        "ORDER BY sessions DESC LIMIT 50"
-    )
-    queries["countries_prev"] = (
-        f"FROM sessions SHOW {SESSION_METRICS} {only}GROUP BY session_country "
-        f"{since(month_base)} ORDER BY sessions DESC LIMIT 50"
-    )
     rows, errors = run_many(store, queries, gql)
     days = [first + timedelta(days=i) for i in range(DETAIL_DAYS)]
     daily = daily_rows(required(rows, errors, "daily"), rows.get("daily_sales"), days)
@@ -416,9 +408,6 @@ def page_detail(
         for mode in win
         for name, field in SEGMENTS.items()
     }
-    countries = segment_rows(
-        rows.get("countries"), rows.get("countries_prev"), "session_country", least["month"]
-    )[:10]
     return {
         "path": path,
         "days": DETAIL_DAYS,
@@ -426,7 +415,6 @@ def page_detail(
         "month": blocks["month"],
         "daily": daily,
         **segments,
-        "countries": countries,
         "funnel": {
             mode: {
                 "now": page_funnel(rows.get(f"funnel_{mode}")),

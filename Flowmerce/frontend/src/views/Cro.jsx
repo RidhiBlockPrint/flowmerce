@@ -9,8 +9,8 @@ import { useBrandParam } from '../lib/app';
 import { useSearchParams } from '../lib/nav';
 import { fmtDate, fmtDateTime, fmtDay, fmtInt, isoDay, timeAgo } from '../lib/format';
 import {
-    ADVICE_AREA, AREAS, EFFORT_TONE, IMPACT_TONE, PRIORITY_TONE, RANGE_PRESETS, RULE_KIND, STORES, TABS, storeTimezone,
-    RATING, VITALS, areaLabel, conversionScale, effectiveCompare, fmtVital, heatLevel, money, pct, presetRange, rangeDays, readable, seriesOf, shiftDay, signedPct,
+    ADVICE_AREA, AREAS, EFFORT_TONE, IMPACT_TONE, PRIORITY_TONE, RULE_KIND, STORES, TABS, storeTimezone,
+    RATING, VITALS, areaLabel, conversionScale, effectiveCompare, fmtVital, heatLevel, isRangeKey, money, pct, presetRange, rangeDays, readable, seriesOf, shiftDay, signedPct,
     signedPts, todayIn,
 } from '../lib/cro';
 import { LineChart } from '../components/charts';
@@ -46,17 +46,21 @@ export default function Cro() {
         }
         setSp(next, { replace: true });
     };
-    const r = sp.get('r') === 'custom' || RANGE_PRESETS.some((p) => p.key === sp.get('r')) ? sp.get('r') : 'yesterday';
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v ?? '');
+    const r = isRangeKey(sp.get('r')) ? sp.get('r') : 'yesterday';
     let range = null;
     if (today) {
-        const fixed = r === 'custom' && /^\d{4}-\d{2}-\d{2}$/.test(sp.get('from') ?? '') && /^\d{4}-\d{2}-\d{2}$/.test(sp.get('to') ?? '')
-            ? { from: sp.get('from'), to: sp.get('to') } : presetRange(r, today);
-        const cmp = sp.get('cmp') || (rangeDays(fixed.from, fixed.to) === 1 ? (fixed.to < today ? '4week_avg' : 'last_week') : 'previous');
-        range = { r: r === 'custom' && !sp.get('from') ? 'yesterday' : r, ...fixed, cmp: effectiveCompare(cmp, fixed.from, fixed.to) };
+        const fixed = r === 'custom' && isDay(sp.get('from')) && isDay(sp.get('to')) ? { from: sp.get('from'), to: sp.get('to') } : presetRange(r, today);
+        const cmp = sp.get('cmp') || 'previous';   // Shopify's default: the previous period
+        const cfrom = isDay(sp.get('cfrom')) ? sp.get('cfrom') : null;
+        range = { r: r === 'custom' && !sp.get('from') ? 'yesterday' : r, ...fixed, cmp: effectiveCompare(cmp, fixed.from, fixed.to, cfrom), cfrom };
     }
+    // From the date picker ({ r, from, to }; a moving pick keeps only its key) or the comparison picker ({ cmp, cfrom }).
+    // The comparison the team chose stays when the dates change, as in Shopify.
     const setRange = (patch) => {
-        if (patch.r && patch.r !== 'custom') update({ r: patch.r === 'yesterday' ? null : patch.r, from: null, to: null, cmp: null });
-        else update({ ...patch, r: patch.r ?? sp.get('r') });
+        if ('cmp' in patch) update({ cmp: patch.cmp, cfrom: patch.cmp === 'custom' ? patch.cfrom : null });
+        else if (patch.r && patch.r !== 'custom') update({ r: patch.r === 'yesterday' ? null : patch.r, from: null, to: null });
+        else update({ r: 'custom', from: patch.from, to: patch.to });
     };
     const syncNow = async () => {
         setSyncing(true);
@@ -72,7 +76,7 @@ export default function Cro() {
             setSyncing(false);
         }
     };
-    const rq = range ? { brand, from: range.from, to: range.to, compare: range.cmp } : null;
+    const rq = range ? { brand, from: range.from, to: range.to, compare: range.cmp, cfrom: range.cmp === 'custom' ? range.cfrom : undefined } : null;
     return (<>
       <PageHead title={tab === 'overview' ? 'Conversion (CRO)' : `Conversion (CRO) · ${TABS.find((t) => t.key === tab).label}`} sub="How visitors become orders, and what to do next."
         actions={<>
@@ -105,13 +109,10 @@ function trendRange(rq) {
 }
 
 /* ------------------------------------------------------------------ Overview */
-/** How a plan's impact (Claude) or a rule's priority shows as a calendar-lane chip. */
-const IMPACT_LANE = { High: 'lane-live', Medium: 'lane-research', Low: 'plain' };
-const PRIORITY_LANE = { High: 'lane-due', Medium: 'lane-event', Low: 'plain' };
-
 /**
  * Overview (design A2): the last 14 days as calendar tiles, then orders, conversion and visits side by side, the
- * sales chart, the shopper journey, the next actions and the monthly goal. The strip always shows the store's latest
+ * sales chart, the shopper journey and the monthly goal (the "What to do next" card was removed on 2026-11-24 at the
+ * owner's request; the plan lives on the Recommendations tab). The strip always shows the store's latest
  * 14 days; the gauge's bands, the orders blocks and the chart read the 28 days ending on the last chosen day (and the
  * 28 before, for the chart's comparison).
  *
@@ -125,15 +126,13 @@ function OverviewTab({ rq: wanted, today, onTab, onPickDay }) {
     const wStrip = { brand: wanted.brand, from: shiftDay(today, -13), to: today, compare: 'none' };
     const wMonth = presetRange('this_month', today);
     // Every request first, in a fixed order; the page is drawn from the last complete set (useSettled).
-    const [{ q, conv, conv28, trend, cal, recs, changes, advice, stripSales, stripConv, mtd, goal, movers, heat, trends, breakdown, health }, rq, updating] = useSettled({
+    const [{ q, conv, conv28, trend, cal, changes, stripSales, stripConv, mtd, goal, movers, heat, trends, breakdown, health }, rq, updating] = useSettled({
         q: useApi(`/cro/overview${qs(wanted)}`),
         conv: useApi(`/cro/conversion${qs(wanted)}`),
         conv28: useApi(`/cro/conversion${qs({ brand: wanted.brand, from: wFrom28, to: wanted.to, compare: 'previous' })}`),
         trend: useApi(`/cro/sales-trend${qs({ brand: wanted.brand, from: wFrom28, to: wanted.to, compare: 'previous' })}`),
         cal: useApi(`/calendar${qs({ brand: wanted.brand, from: shiftDay(wanted.to, -55), to: wanted.to })}`),
-        recs: useApi(`/cro/recommendations${qs({ brand: wanted.brand })}`),
         changes: useApi(`/cro/change-log${qs({ brand: wanted.brand, days: 63 })}`),
-        advice: useApi(`/cro/ai-advice${qs({ brand: wanted.brand })}`),
         // The strip always shows the store's latest 14 days (today included), so it stays put when a day is picked from it.
         stripSales: useApi(`/cro/sales-trend${qs(wStrip)}`),
         stripConv: useApi(`/cro/conversion${qs(wStrip)}`),
@@ -146,19 +145,13 @@ function OverviewTab({ rq: wanted, today, onTab, onPickDay }) {
         breakdown: useApi(`/cro/sales-breakdown${qs(wanted)}`),
         health: useApi(`/cro/site-health${qs({ brand: wanted.brand, from: shiftDay(today, -8), to: shiftDay(today, -2), compare: 'previous' })}`),
     }, wanted);
-    const actions = advice.data?.advice?.actions?.length
-        ? advice.data.advice.actions.slice(0, 3).map((a) => ({ title: a.title, why: a.diagnosis ? firstSentence(a.diagnosis) : a.evidence ? adviceFacts(a)[0] : firstSentence(a.why),
-            tags: [a.impact_usd ? { label: `≈ ${money(a.impact_usd, 'USD', 0)} / 30 days`, lane: IMPACT_LANE[a.impact] ?? 'plain' } : { label: `${a.impact} impact`, lane: IMPACT_LANE[a.impact] ?? 'plain' },
-                ...(AREA_LABEL[a.area] ? [{ label: AREA_LABEL[a.area], lane: 'lane-research' }] : [])] }))
-        : (recs.data?.recommendations ?? []).filter((r) => !['done', 'ignored'].includes(r.status)).slice(0, 3).map((r) => ({ title: r.title, why: r.evidence, tags: [{ label: r.priority, lane: PRIORITY_LANE[r.priority] ?? 'plain' }] }));
-    const planKey = advice.data?.advice?.actions?.length ? `ai-${advice.data.generated_at}` : `rules-${rq.brand}-${actions.map((a) => a.title).join('|').length}`;
     const history = conv28.data?.trend ?? [];
     const cvrByDate = new Map([...(stripConv.data?.trend ?? []), ...history].map((r) => [r.date, r.conversion_rate]));
     const stripDays = (stripSales.data?.current ?? []).map((r) => ({ date: r.date, orders: r.orders, cvr: cvrByDate.get(r.date) ?? null }));
     const days = (trend.data?.current ?? []).map((r) => ({ date: r.date, orders: r.orders, cvr: cvrByDate.get(r.date) ?? null }));
     // Calendar events (built-in ones apply to every store) shade the sales chart. No events is fine: the chart just has no bands.
     const events = (cal.data?.events ?? []).filter((e) => !e.brand_id || e.brand_id === rq.brand).map((e) => ({ date: e.date, name: e.name }));
-    const all = [q, conv, conv28, trend, cal, recs, changes, advice, stripSales, stripConv, mtd, goal, movers, heat, trends, breakdown, health];
+    const all = [q, conv, conv28, trend, cal, changes, stripSales, stripConv, mtd, goal, movers, heat, trends, breakdown, health];
     if (!all.every((x) => x.data !== null || x.error || !x.loading))
         return <OverviewLoading/>;
     return (<div className={`col cro-page${updating ? ' cro-stale' : ''}`} style={{ gap: 18 }} aria-busy={updating || undefined}>
@@ -182,14 +175,7 @@ function OverviewTab({ rq: wanted, today, onTab, onPickDay }) {
         {(x) => <SalesChart current={x.current} previous={x.previous} events={events} changes={changes.data?.entries ?? []} lastDay={rq.to}/>}
       </CroGate>
       <MoversCard q={movers}/>
-      <div className="ov-two">
-        <JourneyCard t={conv.data?.total}/>
-        <Card title="What to do next" sub={advice.data?.advice ? `Claude's plan · ${timeAgo(advice.data.generated_at)}` : 'From the rule-based checks'}
-          actions={<Button size="sm" variant="ghost" onClick={() => onTab('recommendations')}>See all</Button>}>
-          {actions.length ? <ActionList actions={actions} storeKey={`cro-done:${rq.brand}:${planKey}`}/>
-              : <div className="muted small">Nothing stands out in the current figures.</div>}
-        </Card>
-      </div>
+      <JourneyCard t={conv.data?.total}/>
       <div className="ov-two">
         <HeatmapCard q={heat}/>
         <TrendsRow q={trends}/>
@@ -268,29 +254,6 @@ function GoalBar({ brand, today, mtd, g }) {
         <span className="goal-pace" style={{ left: `${pace * 100}%` }}><span>Today&rsquo;s pace</span></span></div>
       <div className="goal-meta"><span>{share === null ? 'Reading this month…' : `${Math.round(share * 100)}% reached (${money(got, 'USD', 0)}), ${ahead >= 0 ? `${ahead} pts ahead of` : `${-ahead} pts behind`} pace`}</span>
         <span>{days - day} day{days - day === 1 ? '' : 's'} left</span></div>
-    </div>);
-}
-
-/** The next actions as a list to tick off. What is ticked is remembered in this browser for this plan only. */
-function ActionList({ actions, storeKey }) {
-    const read = () => { try { return JSON.parse(window.localStorage.getItem(storeKey) || '[]'); } catch { return []; } };
-    const [done, setDone] = useState([]);
-    useEffect(() => { setDone(read()); }, [storeKey]); // eslint-disable-line react-hooks/exhaustive-deps
-    const toggle = (i) => {
-        const next = done.includes(i) ? done.filter((x) => x !== i) : [...done, i];
-        setDone(next);
-        try { window.localStorage.setItem(storeKey, JSON.stringify(next)); } catch { /* private window: not remembered */ }
-    };
-    return (<div className="todo-list stagger">
-      {actions.map((a, i) => (<div key={i} className={`todo-row${done.includes(i) ? ' done' : ''}`}>
-        <button type="button" className="todo-check" onClick={() => toggle(i)} aria-pressed={done.includes(i)} aria-label={done.includes(i) ? 'Mark as not done' : 'Mark as done'}><Icon name="check" size="sm"/></button>
-        <div style={{ minWidth: 0 }}>
-          <div className="strong todo-title">{a.title}</div>
-          {a.why ? <div className="muted small">{a.why}</div> : null}
-          {a.tags?.length ? <div className="row mt-4" style={{ gap: 6 }}>{a.tags.map((t) => <span key={t.label} className={`lane-chip ${t.lane}`}>{t.label}</span>)}</div> : null}
-        </div>
-      </div>))}
-      {done.length && done.length === actions.length ? <div className="todo-cheer">All {actions.length} done. Check the figures again in a week to see the effect.</div> : null}
     </div>);
 }
 
