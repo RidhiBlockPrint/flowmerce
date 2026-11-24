@@ -561,10 +561,7 @@ export const routes = [
     const { cur, base } = sessionDays(p);
     const now = sum(cur, 'sessions');
     const aov = brand === 'ridhi' ? 104 : 92;
-    const PAGES = [['/collections/quilts', 'Collection', 0.34, 52, 0.9, 'social'], ['/', 'Homepage', 0.22, 38, 3.4, 'direct'], ['/collections/tablecloths', 'Collection', 0.14, 49, 1.6, 'social'],
-      ['/products/demo-indigo-quilt', 'Product', 0.08, 44, 2.8, 'search'], ['/collections/sale', 'Collection', 0.06, 61, 1.1, 'email'], ['/blogs/news/care-guide', 'Article', 0.03, 78, 0.3, 'search'],
-      ['/pages/about', 'Page', 0.004, 70, 0.4, 'direct']];
-    const pages = PAGES.map(([path, type, share, bounce, cvr, src], i) => {
+    const pages = DEMO_PAGES.map(([path, type, share, bounce, cvr, src], i) => {
       const s = Math.round(now * share);
       const change = i === 4 ? 7.2 : i % 2 ? -1.1 : 0.8;
       const revenue = round((s * cvr * aov) / 100);
@@ -899,7 +896,154 @@ export const routes = [
     db.cro.changes.splice(i, 1);
     return { deleted: Number(params.id) };
   }],
+  // Store notes for Claude (modules/cro/ai_advice.py notes / set_notes).
+  ['GET', '/cro/store-notes', ({ query, db }) => notesOf(db, storeOf(query).brand)],
+  ['PUT', '/cro/store-notes', ({ query, body, db }) => {
+    const { brand } = storeOf(query);
+    const text = String(body.text ?? '').trim();
+    if (text.length > 3000) throw new DemoError(400, 'Keep the notes to 3,000 characters or fewer.', 'bad_request');
+    db.cro.notes = { ...(db.cro.notes ?? {}), [brand]: { text, updated_at: new Date().toISOString(), updated_by: 'demo' } };
+    return notesOf(db, brand);
+  }],
+  // Landing pages week / month compare, funnel by page, date-wise and one page's deep dive (modules/cro/landing_detail.py).
+  ['GET', '/cro/landing-compare', ({ query, db }) => {
+    const { brand } = storeOf(query);
+    const mode = lpMode(query);
+    const { cur, base } = lpWindows(db, brand, mode);
+    const pages = DEMO_PAGES.map((pg) => {
+      const d = lpDaily(db, brand, pg);
+      const now = lpTotal(lpIn(d, cur)), before = lpTotal(lpIn(d, base));
+      return { path: pg[0], page_type: pg[1], now, before, change: lpChange(now, before), low_data: now.sessions < 100 || before.sessions < 100 };
+    }).sort((a, b) => b.now.sessions - a.now.sessions);
+    return { brand, mode, current: lpSpan(cur), previous: lpSpan(base), min_sessions: 100, revenue_available: true, pages, errors: {} };
+  }],
+  ['GET', '/cro/landing-funnel', ({ query, db }) => {
+    const { brand } = storeOf(query);
+    const mode = lpMode(query);
+    const { cur, base } = lpWindows(db, brand, mode);
+    const pages = DEMO_PAGES.map((pg) => {
+      const d = lpDaily(db, brand, pg);
+      const now = lpFunnel(lpTotal(lpIn(d, cur)), pg), before = lpFunnel(lpTotal(lpIn(d, base)), pg);
+      const step_change_pts = Object.fromEntries(now.steps.map((s, i) => [s.key, s.pct_of_sessions === null || before.steps[i].pct_of_sessions === null ? null : round(s.pct_of_sessions - before.steps[i].pct_of_sessions)]));
+      return { path: pg[0], page_type: pg[1], now, before, sessions_change: now.sessions - before.sessions,
+        sessions_change_pct: before.sessions ? round(((now.sessions - before.sessions) / before.sessions) * 100, 1) : null, step_change_pts, low_data: now.sessions < 100 || before.sessions < 100 };
+    }).sort((a, b) => b.now.sessions - a.now.sessions);
+    return { brand, mode, current: lpSpan(cur), previous: lpSpan(base), min_sessions: 100, pages, errors: {} };
+  }],
+  ['GET', '/cro/landing-daily', ({ query, db }) => {
+    const { brand } = storeOf(query);
+    const n = Math.max(7, Math.min(60, Number(query.days) || 60));
+    const choices = DEMO_PAGES.map((pg) => ({ path: pg[0], page_type: pg[1], sessions: lpTotal(lpDaily(db, brand, pg).slice(-30)).sessions })).sort((a, b) => b.sessions - a.sessions);
+    const asked = String(query.paths || '').split(',').map((p) => p.trim()).filter(Boolean);
+    const chosen = (asked.length ? asked.filter((p) => DEMO_PAGES.some((pg) => pg[0] === p)) : choices.slice(0, 8).map((c) => c.path)).slice(0, 12);
+    const pages = chosen.map((path) => {
+      const pg = DEMO_PAGES.find((x) => x[0] === path);
+      return { path, page_type: pg[1], rows: lpDaily(db, brand, pg).slice(-n) };
+    });
+    return { brand, from: pages[0]?.rows[0]?.date ?? null, to: pages[0]?.rows.at(-1)?.date ?? null, pages, choices, revenue_available: true, errors: {} };
+  }],
+  ['GET', '/cro/landing-page', ({ query, db }) => {
+    const { brand } = storeOf(query);
+    const pg = DEMO_PAGES.find((x) => x[0] === String(query.path || '').trim().toLowerCase());
+    if (!pg) throw new DemoError(400, 'Give a landing page path like /collections/quilts.', 'bad_request');
+    const daily = lpDaily(db, brand, pg);
+    const blocks = {};
+    const segs = {};
+    const funnel = {};
+    for (const mode of ['week', 'month']) {
+      const { cur, base } = lpWindows(db, brand, mode);
+      const now = lpTotal(lpIn(daily, cur)), before = lpTotal(lpIn(daily, base));
+      blocks[mode] = { current: lpSpan(cur), previous: lpSpan(base), now, before, change: lpChange(now, before) };
+      segs[`sources_${mode}`] = lpSegments(now, before, [['social', 0.66, 1.1], ['direct', 0.18, 0.8], ['search', 0.1, 1.3], ['email', 0.04, 1.8], ['unknown', 0.02, 0.5]], mode === 'week' ? 50 : 100);
+      segs[`devices_${mode}`] = lpSegments(now, before, [['mobile', 0.84, 0.95], ['desktop', 0.11, 1.3], ['tablet', 0.05, 1.0]], mode === 'week' ? 50 : 100);
+      const dev = (t, label, share, lift) => ({ label, ...lpFunnel({ ...t, sessions: Math.round(t.sessions * share), added_to_cart_rate: t.added_to_cart_rate * lift, orders: Math.round(t.orders * share * lift) }, pg) });
+      const split = (t) => ({ all: lpFunnel(t, pg), devices: [dev(t, 'Mobile', 0.84, 0.95), dev(t, 'Desktop', 0.11, 1.3), dev(t, 'Tablet', 0.05, 1.0)] });
+      funnel[mode] = { now: split(now), before: split(before) };
+    }
+    return { brand, path: pg[0], days: daily.length, week: blocks.week, month: blocks.month, daily, ...segs, funnel,
+      what_changed: lpWhatChanged(blocks.week, blocks.month, segs.sources_week), revenue_available: true, errors: {} };
+  }],
 ];
+
+/* ------------------------------------------------------------------ store notes and landing pages (demo) */
+function notesOf(db, brand) {
+  const n = db.cro.notes?.[brand];
+  return { brand, text: n?.text ?? '', updated_at: n?.updated_at ?? null, updated_by: n?.updated_by ?? null, max_length: 3000 };
+}
+
+/** The demo's landing pages: [path, page type, share of the store's visits, bounce %, conversion %, top source]. */
+const DEMO_PAGES = [['/collections/quilts', 'Collection', 0.34, 52, 0.9, 'social'], ['/', 'Homepage', 0.22, 38, 3.4, 'direct'], ['/collections/tablecloths', 'Collection', 0.14, 49, 1.6, 'social'],
+  ['/products/demo-indigo-quilt', 'Product', 0.08, 44, 2.8, 'search'], ['/collections/sale', 'Collection', 0.06, 61, 1.1, 'email'], ['/blogs/news/care-guide', 'Article', 0.03, 78, 0.3, 'search'],
+  ['/pages/about', 'Page', 0.004, 70, 0.4, 'direct']];
+const lpMode = (query) => (query.mode === 'month' ? 'month' : 'week');
+const lpSeed = (s) => [...s].reduce((a, c) => (Math.imul(a, 31) + c.charCodeAt(0)) >>> 0, 7);
+/** The page's last 60 complete days, generated from the store's own days so totals stay in line with the other tabs. */
+function lpDaily(db, brand, [path, , share, bounce, cvr]) {
+  const r = rng(lpSeed(`${brand}${path}`));
+  const aov = brand === 'ridhi' ? 104 : 92;
+  return complete(db, brand).slice(-60).map((d) => {
+    const s = Math.round(d.sessions * share * (0.85 + r() * 0.3));
+    const orders = Math.round((s * cvr * (0.7 + r() * 0.6)) / 100);
+    const revenue = round(orders * aov * (0.9 + r() * 0.2));
+    return { date: d.date, sessions: s, bounce_rate: round(bounce * (0.92 + r() * 0.16)), added_to_cart_rate: round(cvr * 3.2 * (0.85 + r() * 0.3)),
+      conversion_rate: s ? round((orders / s) * 100) : null, orders, revenue, revenue_per_session: s ? round(revenue / s) : null, aov: orders ? round(revenue / orders) : null };
+  });
+}
+function lpWindows(db, brand, mode) {
+  const days = complete(db, brand).slice(-60).map((d) => d.date);
+  const n = mode === 'month' ? 30 : 7;
+  return { cur: days.slice(-n), base: days.slice(-2 * n, -n) };
+}
+const lpIn = (daily, dates) => daily.filter((d) => dates.includes(d.date));
+const lpSpan = (dates) => ({ from: dates[0], to: dates[dates.length - 1] });
+function lpTotal(rows) {
+  const s = sum(rows, 'sessions');
+  const w = (k) => (s ? round(rows.reduce((a, r) => a + (r[k] || 0) * r.sessions, 0) / s) : null);
+  const revenue = round(sum(rows, 'revenue'));
+  const orders = sum(rows, 'orders');
+  return { sessions: s, bounce_rate: w('bounce_rate'), added_to_cart_rate: w('added_to_cart_rate'), conversion_rate: w('conversion_rate'), orders, revenue,
+    revenue_per_session: s ? round(revenue / s) : null, aov: orders ? round(revenue / orders) : null };
+}
+const lpPct = (a, b) => (a === null || !b ? null : round(((a - b) / Math.abs(b)) * 100, 1));
+const lpPts = (a, b) => (a === null || b === null ? null : round(a - b));
+const lpChange = (n, b) => ({ sessions: n.sessions - b.sessions, sessions_pct: lpPct(n.sessions, b.sessions), bounce_pts: lpPts(n.bounce_rate, b.bounce_rate),
+  added_to_cart_pts: lpPts(n.added_to_cart_rate, b.added_to_cart_rate), conversion_pts: lpPts(n.conversion_rate, b.conversion_rate), orders: n.orders - b.orders,
+  orders_pct: lpPct(n.orders, b.orders), revenue: round(n.revenue - b.revenue), revenue_pct: lpPct(n.revenue, b.revenue),
+  revenue_per_session_pct: lpPct(n.revenue_per_session, b.revenue_per_session), aov_pct: lpPct(n.aov, b.aov) });
+/** A page's funnel from its totals: product pages are a product view by definition; others about a third. */
+function lpFunnel(t, pg) {
+  const s = t.sessions;
+  const viewed = Math.round(s * (pg[1] === 'Product' ? 1 : 0.35));
+  const cart = Math.min(viewed, Math.round((s * (t.added_to_cart_rate || 0)) / 100));
+  const done = Math.min(cart, t.orders);
+  const checkout = Math.max(done, Math.round(cart * 0.45));
+  const counts = [['viewed_product', viewed], ['added_to_cart', cart], ['reached_checkout', checkout], ['completed_checkout', done]];
+  return { sessions: s, steps: counts.map(([key, count], i) => ({ key, count, pct_of_sessions: rate(count, s), step_pct: rate(count, i ? counts[i - 1][1] : s, 1) })),
+    purchase_rate: rate(done, s), checkout_abandonment: rate(checkout - done, checkout, 1) };
+}
+/** A page's sources or devices: the page's totals split by fixed shares, conversion lifted per segment. */
+function lpSegments(now, before, parts, least) {
+  const one = (t, share, lift, k) => ({ sessions: Math.round(t.sessions * share * (k ? 0.97 : 1)), bounce_rate: round((t.bounce_rate || 0) / Math.sqrt(lift)),
+    added_to_cart_rate: round((t.added_to_cart_rate || 0) * lift), conversion_rate: round((t.conversion_rate || 0) * lift) });
+  return parts.map(([label, share, lift], k) => {
+    const v = one(now, share, lift, 0), p = one(before, share, lift, k % 2);
+    const low = v.sessions < least || p.sessions < least;
+    return { label, ...v, share: round(share * 100, 1), previous_sessions: p.sessions, sessions_change: v.sessions - p.sessions, sessions_change_pct: lpPct(v.sessions, p.sessions),
+      bounce_change_pts: low ? null : lpPts(v.bounce_rate, p.bounce_rate), added_to_cart_change_pts: low ? null : lpPts(v.added_to_cart_rate, p.added_to_cart_rate),
+      conversion_change_pts: low ? null : lpPts(v.conversion_rate, p.conversion_rate), low_data: low };
+  });
+}
+function lpWhatChanged(week, month, sources) {
+  const out = [];
+  const c = week.change;
+  if (c.bounce_pts !== null && Math.abs(c.bounce_pts) >= 3) out.push({ text: `Bounce rate ${c.bounce_pts > 0 ? 'up' : 'down'} ${Math.abs(c.bounce_pts).toFixed(1)} pts week on week.`, tone: c.bounce_pts > 0 ? 'bad' : 'good' });
+  if (c.conversion_pts !== null && Math.abs(c.conversion_pts) >= 0.3) out.push({ text: `Conversion ${c.conversion_pts > 0 ? 'up' : 'down'} ${Math.abs(c.conversion_pts).toFixed(2)} pts week on week.`, tone: c.conversion_pts > 0 ? 'good' : 'bad' });
+  for (const [label, b] of [['WoW', week], ['MoM', month]]) {
+    if (b.change.sessions_pct !== null && Math.abs(b.change.sessions_pct) >= 5) out.push({ text: `Sessions ${b.change.sessions_pct > 0 ? '+' : ''}${Math.round(b.change.sessions_pct)}% ${label} (${b.before.sessions.toLocaleString()} -> ${b.now.sessions.toLocaleString()}).`, tone: b.change.sessions_pct > 0 ? 'good' : 'bad' });
+  }
+  if (sources[0]) out.push({ text: `Biggest traffic source: ${sources[0].label} (${sources[0].share}% of visits). Demo figures.`, tone: 'info' });
+  return out;
+}
 
 /* ------------------------------------------------------------------ Claude's action plan (demo) */
 function adviceState(db, brand) {

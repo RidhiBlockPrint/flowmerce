@@ -15,11 +15,12 @@ import { BarList, LineChart } from '../components/charts';
 import { Journey, MiniGrid, MiniStat, RingCard, SectionHead } from '../components/dash';
 import { ImportPreview, OrderDrawer, ShipmentsTable, ShopifyOrderLink, SourceGate, Tile } from '../components/shipping';
 
+/* The sections of the page. No tab bar: the sidebar's Shipping menu opens them (?tab=); the title names the open one. */
 const TABS = [
     { key: 'overview', label: 'Overview' },
     { key: 'shipments', label: 'Shipments' },
     { key: 'checks', label: 'Hand checks' },
-    // Read now and then, not every day: behind the tab bar's "Advanced" toggle and the sidebar's Advanced group.
+    // Read now and then, not every day: in the sidebar's Advanced group.
     { key: 'analytics', label: 'Analytics', advanced: true },
 ];
 

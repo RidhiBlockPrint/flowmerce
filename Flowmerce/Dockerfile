@@ -19,10 +19,12 @@ ARG LITESTREAM_VERSION=0.5.17
 ARG LITESTREAM_SHA256=cfb371176d164437ae869f8351cfde49bd1804ae71c61923f75c9cba9c9c006d
 # Memory (512 MB on Render's free plan): it ran out of memory twice and failed its health check twice on 2026-11-23
 # with the CRO warm-up on and up to 4,000 Shopify answers kept. The hosted copy keeps fewer, reads pages on demand,
-# and stops glibc giving each of its many threads its own memory arena (MALLOC_ARENA_MAX).
+# and stops glibc giving each of its many threads its own memory arena (MALLOC_ARENA_MAX). The deep recommendations
+# and landing page deep dive (2026-11-23) read more reports at once, so each report runs 3 Shopify queries at a time
+# instead of 8 (CRO_READ_WORKERS).
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 FLOWMERCE_ROOT=/app NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 FLOWMERCE_HOSTED=1 PORT=10000 \
-    CRO_WARM_VIEWS=false CRO_CACHE_MAX=500 MALLOC_ARENA_MAX=2
+    CRO_WARM_VIEWS=false CRO_CACHE_MAX=500 MALLOC_ARENA_MAX=2 CRO_READ_WORKERS=3
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
  && curl -fsSL -o /tmp/litestream.tgz \

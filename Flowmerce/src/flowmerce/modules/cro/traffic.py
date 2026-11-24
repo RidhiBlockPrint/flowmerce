@@ -20,6 +20,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import shopify
+from .config import cro_config
 from .conversion import HUMAN, run
 
 Window = tuple[date, date]
@@ -68,7 +69,8 @@ def run_many(
 
     rows: dict[str, list[dict[str, Any]] | None] = {}
     errors: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    workers = max(1, min(cro_config().read_workers, len(queries) or 1))  # CRO_READ_WORKERS
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         for name, result, err in pool.map(one, queries.items()):
             rows[name] = result
             if err:
