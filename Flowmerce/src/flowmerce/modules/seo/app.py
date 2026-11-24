@@ -2,8 +2,12 @@
 guard and the /api router. This is the backend API only; the Next.js frontend (frontend/) renders the pages
 and forwards /api/* here.
 
-Local operator mode: every request is refused with 403 unless it comes from a loopback address. The single exception is POST /api/hooks/workflow, which has its
-own X-Workflow-Secret check. Requests that pass act as the local administrator record; there is no sign-in."""
+Every request is refused with 403 unless it comes from a loopback address. The single exception is POST /api/hooks/workflow, which has its
+own X-Workflow-Secret check.
+
+Local operator mode (your own computer): requests that pass act as the local administrator record; there is no sign-in.
+Hosted mode (config.hosted): the loopback caller is the Next.js frontend, and each /api call acts as the person whose
+session cookie it carries (401 without one). Only the frontend's own sign-in call, POST /api/auth/login, runs without a session."""
 from __future__ import annotations
 
 import secrets
@@ -15,7 +19,9 @@ from fastapi.responses import JSONResponse
 
 from .api import api
 from .audit import audit
-from .auth import LOCAL_OPERATOR_PASSWORD_HASH, is_loopback_client, local_operator
+from starlette.concurrency import run_in_threadpool
+
+from .auth import LOCAL_OPERATOR_PASSWORD_HASH, is_internal_call, is_loopback_client, load_user, local_operator
 from .config import config
 from .db import get, now, open_db, run
 from .integrations.status import sweep_stuck_syncs
@@ -41,8 +47,24 @@ def create_app() -> FastAPI:
             resp = JSONResponse({"error": "Flowmerce is in local operator mode and only answers requests from this computer.",
                                  "code": "local_only"}, status_code=403)
         elif path.startswith("/api"):
-            request.state.user = None if is_webhook else local_operator()
-            if request.method not in ("GET", "HEAD", "OPTIONS") and not path.startswith("/api/hooks/") \
+            denied = None
+            if is_webhook:
+                request.state.user = None
+            elif not config.hosted:
+                request.state.user = local_operator()
+            elif request.method == "POST" and path == "/api/auth/login":
+                # Hosted sign-in: only the frontend gate may call it, and it proves that with the internal secret.
+                request.state.user = None
+                if not is_internal_call(request):
+                    denied = JSONResponse({"error": "Not allowed.", "code": "forbidden"}, status_code=403)
+            else:
+                # Hosted mode: every other call acts as the person whose session it carries, with their role.
+                request.state.user = await run_in_threadpool(load_user, request)
+                if request.state.user is None:
+                    denied = JSONResponse({"error": "Sign in to continue.", "code": "signed_out"}, status_code=401)
+            if denied is not None:
+                resp = denied
+            elif request.method not in ("GET", "HEAD", "OPTIONS") and not path.startswith("/api/hooks/") \
                     and request.headers.get("X-Requested-With") != "blog-ops":
                 resp = JSONResponse({"error": "Missing request header.", "code": "csrf"}, status_code=403)
             else:

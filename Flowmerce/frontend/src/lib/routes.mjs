@@ -66,6 +66,8 @@ export const SETTINGS = {
         { to: '/settings/integrations', label: 'Integrations', icon: 'plug' },
         { to: '/settings/brands', label: 'Brands', icon: 'store' },
         { to: '/settings/data', label: 'Data management', icon: 'sheet' },
+        // `hosted`: shown only in the online workspace, where people sign in. Not on your own computer or in the demo.
+        { to: '/settings/team', label: 'Team', icon: 'users', perm: 'users:manage', hosted: true },
         { to: '/settings/audit', label: 'Audit log', icon: 'audit', perm: 'audit:view' },
     ],
 };

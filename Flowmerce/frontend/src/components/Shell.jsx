@@ -6,7 +6,8 @@ import { useNavigate } from '../lib/nav';
 import { Icon } from './Icon';
 import { Logo } from './Logo';
 import { Button, Menu, BrandTag } from './ui';
-import { Dialog, Drawer } from './overlays';
+import { Dialog, Drawer, useToast } from './overlays';
+import { passwordProblem } from '../lib/passwords.mjs';
 import { api, useApi, qs } from '../lib/api';
 import { useApp, presetRange } from '../lib/app';
 import { fmtDate, timeAgo } from '../lib/format';
@@ -156,11 +157,14 @@ function ModuleNav({ entry, can, count, alert }) {
 }
 /** Settings replaces the module list with its own pages and a way back. */
 function SettingsNav({ can }) {
+    const { me } = useApp();
+    // `hosted` pages (Team) exist only where people sign in: not on your own computer, and not in the demo.
+    const signIn = !me.localOperator && !IS_DEMO;
     return (<nav aria-label="Settings">
       <Link href="/" className="nav-item nav-back"><Icon name="chevronLeft"/>Back to Flowmerce</Link>
       <div className="nav-label nav-settings-label"><Icon name={SETTINGS.icon} size="sm"/>{SETTINGS.label}</div>
       <ul className="nav-sub flat">
-        {SETTINGS.items.filter((i) => !i.perm || can(i.perm)).map((i) => (<li key={i.to}><NavItem to={i.to} icon={i.icon}>{i.label}</NavItem></li>))}
+        {SETTINGS.items.filter((i) => (!i.perm || can(i.perm)) && (!i.hosted || signIn)).map((i) => (<li key={i.to}><NavItem to={i.to} icon={i.icon}>{i.label}</NavItem></li>))}
       </ul>
     </nav>);
 }
@@ -295,32 +299,34 @@ function GlobalSearch() {
     </div>);
 }
 /**
- * Local operator mode: there is no account menu, password change or sign-out. This only states the mode and who
+ * The account area at the bottom of the sidebar.
+ * Online workspace (each person signs in): who is signed in and their role, with Change password and Sign out.
+ * Local operator mode: there is no account menu, password change or sign-out. It only states the mode and who
  * actions are recorded as; it is not a control.
  */
-/** Hosted copy: the signed-in username from the readable fm_hosted cookie the sign-in sets (null on your own computer). */
-function useHostedUser() {
-    const [user, setUser] = useState(null);
-    useEffect(() => {
-        const m = document.cookie.match(/(?:^|;\s*)fm_hosted=([^;]*)/);
-        setUser(m ? decodeURIComponent(m[1]) : null);
-    }, []);
-    return user;
-}
+const initials = (name) => (name.trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2) || '?').toUpperCase();
 function LocalOperatorBadge() {
     const { me } = useApp();
-    const hostedUser = useHostedUser();
-    if (hostedUser) {
-        return (<Menu up align="left" trigger={(toggle) => (<button type="button" className="user-chip" onClick={toggle} aria-label={`Signed in as ${hostedUser}. Account menu`}>
-          <span className="avatar">{hostedUser.slice(0, 2).toUpperCase()}</span>
-          <span style={{ minWidth: 0, flex: 1 }}>
-            <span className="strong small" style={{ display: 'block' }}>Signed in as {hostedUser}</span>
-            <span className="muted xs" style={{ display: 'block' }}>Online workspace</span>
-          </span>
-          <Icon name="chevronDown" size="sm"/>
-        </button>)}>
-          {() => (<a className="menu-item" href="/auth/logout"><Icon name="logout"/>Sign out</a>)}
-        </Menu>);
+    const [changing, setChanging] = useState(false);
+    if (!me.localOperator) {
+        const { name, roleLabel } = me.user;
+        return (<>
+          <Menu up align="left" trigger={(toggle) => (<button type="button" className="user-chip" onClick={toggle} aria-label={`Signed in as ${name}, ${roleLabel}. Account menu`}>
+            <span className="avatar">{initials(name)}</span>
+            <span style={{ minWidth: 0, flex: 1 }}>
+              <span className="strong small ellipsis" style={{ display: 'block' }}>{name}</span>
+              <span className="muted xs" style={{ display: 'block' }}>{roleLabel} · online workspace</span>
+            </span>
+            <Icon name="chevronDown" size="sm"/>
+          </button>)}>
+            {(close) => (<>
+              <div className="muted xs ellipsis" style={{ padding: '6px 10px', maxWidth: 240 }}>{me.user.email}</div>
+              <button type="button" className="menu-item" onClick={() => { close(); setChanging(true); }}><Icon name="key"/>Change password</button>
+              <a className="menu-item" href="/auth/logout"><Icon name="logout"/>Sign out</a>
+            </>)}
+          </Menu>
+          {changing ? <ChangePassword onClose={() => setChanging(false)}/> : null}
+        </>);
     }
     return (<div className="user-chip" role="status" style={{ cursor: 'default', background: 'none' }} title={`Local operator mode: no sign-in, this computer only. Actions are recorded as ${me.user.name} (${me.user.email}).`}>
       <span className="avatar"><Icon name="shield" size="sm"/></span>
@@ -329,6 +335,53 @@ function LocalOperatorBadge() {
         <span className="muted xs" style={{ display: 'block' }}>This computer only · no sign-in</span>
       </span>
     </div>);
+}
+/** A signed-in person chooses their own password. Their other devices are signed out; this one stays signed in. */
+function ChangePassword({ onClose }) {
+    const toast = useToast();
+    const [f, setF] = useState({ current: '', next: '', again: '' });
+    const [show, setShow] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+    const set = (k) => (e) => { setError(''); setF((v) => ({ ...v, [k]: e.target.value })); };
+    const problem = f.next ? passwordProblem(f.next) || (f.again && f.again !== f.next ? 'The two new passwords are not the same.' : '') : '';
+    const ready = f.next && f.again && !problem;
+    const save = async (e) => {
+        e?.preventDefault();
+        if (!ready || busy)
+            return;
+        setBusy(true);
+        try {
+            await api.post('/auth/password', { current: f.current, next: f.next });
+            toast.ok('Password changed. Your other devices were signed out.');
+            onClose();
+        }
+        catch (err) {
+            setError(err.message);
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    const type = show ? 'text' : 'password';
+    return (<Dialog title="Change password" sub="Use at least 12 characters. A few unrelated words work well." onClose={onClose} footer={<>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="primary" onClick={save} disabled={!ready} loading={busy}>Change password</Button>
+      </>}>
+      <form className="col gap-12" onSubmit={save}>
+        {error ? <div className="callout crit" role="alert"><Icon name="alert"/>{error}</div> : null}
+        <div className="field"><label htmlFor="cp-current">Current password</label>
+          <input id="cp-current" data-autofocus className="input" type={type} value={f.current} onChange={set('current')} autoComplete="current-password" maxLength={200}/>
+          <div className="hint">Signed in with the owner key and never set a password? Leave this empty.</div></div>
+        <div className="field"><label htmlFor="cp-next">New password</label>
+          <input id="cp-next" className="input" type={type} value={f.next} onChange={set('next')} autoComplete="new-password" maxLength={200}/></div>
+        <div className="field"><label htmlFor="cp-again">New password again</label>
+          <input id="cp-again" className="input" type={type} value={f.again} onChange={set('again')} autoComplete="new-password" maxLength={200}/>
+          {problem ? <div className="hint" style={{ color: 'var(--crit)' }}>{problem}</div> : null}</div>
+        <label className="row small" style={{ gap: 8, cursor: 'pointer' }}><input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)}/>Show passwords</label>
+        <button type="submit" hidden/>
+      </form>
+    </Dialog>);
 }
 /** Demo only: act as a different role to see who can approve what. Changes permissions in this browser, nothing else. */
 const DEMO_ROLES = [['admin', 'Admin', 'Everything, including settings'], ['seo_manager', 'SEO Manager', 'Writes, runs automation, requests publishing'], ['reviewer', 'Reviewer / Approver', 'Reviews content and authorizes publishing']];

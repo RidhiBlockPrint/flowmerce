@@ -10,12 +10,16 @@ Used only by the Dockerfile; on your own computer keep using scripts/run_flowmer
        Without it the database lives only on the container's temporary disk (a warning is printed).
     4. Starts the API on 127.0.0.1:18787 (inside the container only, proxy headers ignored so every call is
        "local" to it) and the Next.js frontend on 0.0.0.0:$PORT, which is the only public entry and holds the gate.
+       Each person signs in with their own account; FLOWMERCE_LOGIN_PASSWORD is the owner key (it signs in as the
+       first administrator and signs the session cookies). A secret generated here at every start
+       (FLOWMERCE_INTERNAL_SECRET) lets only the frontend call the API's sign-in.
     If any process stops, the others are stopped too and the container exits, so the host restarts it.
 """
 
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -43,8 +47,12 @@ def fail(message: str) -> None:
 def check_password() -> None:
     password = os.environ.get("FLOWMERCE_LOGIN_PASSWORD", "")
     if len(password) < 16:
-        fail("set FLOWMERCE_LOGIN_PASSWORD to at least 16 characters (Render generates one for you).")
+        fail("set FLOWMERCE_LOGIN_PASSWORD to at least 16 characters (Render generates one for you). It is the owner key.")
     os.environ["FLOWMERCE_HOSTED"] = "1"
+    # Known only to the two processes started below, and new at every start: the API accepts a sign-in call
+    # only with it, so nothing but the frontend gate can ask it to check a password.
+    os.environ["FLOWMERCE_INTERNAL_SECRET"] = secrets.token_urlsafe(32)
+    os.environ["FLOWMERCE_API_ORIGIN"] = f"http://127.0.0.1:{API_PORT}"
 
 
 def setup_google_key() -> None:

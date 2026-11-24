@@ -62,12 +62,17 @@ async function request(method, path, body, init = {}) {
         throw new ApiError(res.status, json?.error || `Request failed (${res.status})`, json?.code, json?.details);
     return json;
 }
-/** Hosted copy: the sign-in session ended (expired, or the password changed). Go to the sign-in page and come back. */
+/**
+ * Hosted copy: the sign-in session ended (it expired, the person was signed out or deactivated, or a password
+ * changed). /auth/logout?expired=1 clears the old cookie and shows the sign-in page, which then comes back here.
+ */
+let leaving = false;
 function toSignIn() {
-    if (typeof window === 'undefined' || window.location.pathname === '/login')
+    if (typeof window === 'undefined' || leaving || window.location.pathname === '/login')
         return;
+    leaving = true;
     const here = window.location.pathname + window.location.search;
-    window.location.assign(here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`);
+    window.location.assign(`/auth/logout?expired=1${here === '/' ? '' : `&next=${encodeURIComponent(here)}`}`);
 }
 /**
  * Answers already shown in this tab, by path, so going back to a tab, filter or page shows its last answer at once

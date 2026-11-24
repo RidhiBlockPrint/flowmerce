@@ -19,7 +19,15 @@ test('the menu has exactly the agreed modules and pages, in order, with rarely u
         ['Shipping', ['Overview', 'Shipments', 'Hand checks'], ['Analytics']],
         ['Conversion (CRO)', ['Overview', 'Conversion', 'Landing pages', 'Cart & checkout', 'Products', 'Sales'], ['Site health', 'Recommendations', 'Experiments', 'Alarms', 'Change log']],
     ]);
-    assert.deepEqual(SETTINGS.items.map((i) => i.label), ['Integrations', 'Brands', 'Data management', 'Audit log']);
+    assert.deepEqual(SETTINGS.items.map((i) => i.label), ['Integrations', 'Brands', 'Data management', 'Team', 'Audit log']);
+});
+
+test('Team is for administrators and only where people sign in (the online workspace)', () => {
+    const team = SETTINGS.items.find((i) => i.label === 'Team');
+    assert.equal(team.to, '/settings/team');
+    assert.equal(team.perm, 'users:manage');
+    assert.equal(team.hosted, true);
+    assert.deepEqual(SETTINGS.items.filter((i) => i.hosted).map((i) => i.label), ['Team']);
 });
 
 test('Automation lives inside SEO & Blog (Advanced), and Shipping and CRO open their own page', () => {

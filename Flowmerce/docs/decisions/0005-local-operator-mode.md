@@ -2,6 +2,7 @@
 
 - Status: approved (owner instruction, 2026-10-29); implemented; phase 2 (Next.js frontend, one launcher, smoke test) completed the same day
 - Date: 2026-10-29
+- Amended 2026-11-24 by [ADR 0011](0011-hosted-team-sign-in.md): the hosted copy (`FLOWMERCE_HOSTED=1`) no longer acts as one local operator; each person signs in with their own account. Everything below still describes the app on the owner's computer.
 
 ## Decision
 Phase 1 of removing sign-in. Flowmerce becomes a **local-only operator tool**, not an internet-facing application with authentication removed.

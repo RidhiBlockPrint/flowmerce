@@ -1,7 +1,8 @@
 'use client';
 /**
- * Sign-in page for the hosted copy. The form posts to /auth/login, which src/middleware.js handles (it checks
- * the password and sets the session cookie), so it works even before JavaScript loads. On your own computer
+ * Sign-in page for the hosted copy. Each person signs in with their own email and password. The form posts to
+ * /auth/login, which src/middleware.js handles (the API checks the password, the middleware sets the session
+ * cookie), so it works even before JavaScript loads. On your own computer
  * (no FLOWMERCE_LOGIN_PASSWORD) the middleware sends /login straight to Home, and the demo build does the same.
  */
 import { Suspense, useEffect, useState } from 'react';
@@ -29,8 +30,10 @@ function Pattern() {
 }
 
 const MESSAGES = {
-  invalid: ['crit', 'alert', 'That username and password do not match. Check them and try again.'],
+  invalid: ['crit', 'alert', 'That email and password do not match. Check them and try again.'],
   locked: ['crit', 'lock', 'Too many attempts. Sign-in is paused for 15 minutes; try again after that.'],
+  unavailable: ['crit', 'alert', 'Sign-in is not answering right now. Wait a minute and try again.'],
+  expired: ['info', 'lock', 'Your session has ended. Sign in again to continue.'],
   signed_out: ['info', 'checkCircle', 'You have been signed out.'],
 };
 
@@ -62,15 +65,15 @@ function SignInForm() {
 
       <input type="hidden" name="next" value={next} />
       <div className="field">
-        <label htmlFor="username">Username</label>
+        <label htmlFor="username">Email</label>
         <input id="username" name="username" className="input login-input" autoComplete="username" autoCapitalize="none"
-          spellCheck={false} required defaultValue="admin" />
+          inputMode="email" spellCheck={false} required autoFocus />
       </div>
       <div className="field">
         <label htmlFor="password">Password</label>
         <div className="login-password">
           <input id="password" name="password" className="input login-input" type={show ? 'text' : 'password'}
-            autoComplete="current-password" required autoFocus />
+            autoComplete="current-password" required />
           <button type="button" className="login-reveal" onClick={() => setShow((s) => !s)}
             aria-label={show ? 'Hide password' : 'Show password'} aria-pressed={show}>
             <Icon name="eye" size="sm" />

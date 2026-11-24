@@ -2,6 +2,35 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-24 (Hosted copy: each person signs in with their own account)
+
+Owner request 2026-11-24: separate logins for each team member; everyone can open every section; the admin creates
+accounts and hands over the password. Verified: the Python suite (820, 31 new in `test_hosted_auth.py`), frontend tests
+(113, 8 new), `next build` in hosted and local mode, the local smoke test (`ci_smoke.py --web`), the hosted probe (23
+checks) against a hosted-mode copy on this computer with an empty database, and in the browser: sign-in, Team page,
+adding a person, a reviewer's menu, and an ended session returning to sign-in. Not checked: the Docker image (no Docker
+on this computer; the CI job "Hosted container" covers it) and the live Render workspace.
+
+- **Architecture** [ADR 0011](docs/decisions/0011-hosted-team-sign-in.md): on the hosted copy the Python API decides who
+  is signed in. Every `/api` call acts as the person whose session it carries, with their role; the Next.js middleware
+  stays the public gate and hands sign-in to the API. Local operator mode and the demo are unchanged. No database change.
+- **Added** Settings → Team (administrators, hosted copy only): add a person with a generated password shown once,
+  edit name, email and role, reset a password, deactivate and reactivate. Deactivating, resetting or changing a role
+  signs that person out at once.
+- **Added** Account menu on the hosted copy: the signed-in person's name and role, Change password (their other
+  devices are signed out) and Sign out.
+- **Added** The owner key: `admin` with `FLOWMERCE_LOGIN_PASSWORD` signs in as the first administrator. It is the first
+  way in and the way back in; changing it in Render signs everyone out once.
+- **Changed** The sign-in page asks for an email. Wrong passwords pause sign-in per person (8 from one address, 20 from
+  any) instead of pausing everyone behind one address after 5. Sign-ins, failed sign-ins for real accounts, sign-outs
+  and password changes are in the audit log under the person's own name.
+- **Changed** `PATCH /api/users/{id}` can correct an email, checks a new password before changing anything, and keeps
+  an administrator's own session when they edit their own name or email.
+- **Changed** `scripts/hosted_probe.py` also checks that a person signs in as themselves, that a role is enforced, that
+  a browser cannot call the sign-in API or pose as the server, and that deactivating signs a person out
+  (`--gate-only` leaves those out).
+- **Removed** `frontend/src/views/Users.jsx` (unmounted read-only list), replaced by `views/Team.jsx`.
+
 ## 2026-11-24 (CRO: Shopify-style date picker and comparison; tidier Overview)
 
 Owner requests 2026-11-24: a date picker and comparison like Shopify's; remove the sentences under the conversion

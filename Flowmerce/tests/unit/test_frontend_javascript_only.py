@@ -68,8 +68,11 @@ def test_next_app_router_and_loopback_only_frontend() -> None:
 def test_unfinished_pages_are_not_mounted() -> None:
     app_dir = FRONTEND / "src" / "app"
     mounted = "\n".join(p.read_text(encoding="utf-8") for p in app_dir.rglob("page.jsx"))
-    for unfinished in ("Login", "Planned", "Users"):
+    for unfinished in ("Login", "Planned"):
         assert f"views/{unfinished}'" not in mounted
+    # The read-only views/Users.jsx was replaced by Settings → Team (views/Team.jsx) on 24 Nov 2026.
+    assert not (FRONTEND / "src" / "views" / "Users.jsx").exists()
+    assert "views/Team'" in (app_dir / "settings" / "team" / "page.jsx").read_text(encoding="utf-8")
     # /login is the hosted sign-in page (its own page.jsx since 18 Nov 2026), not the unfinished views/Login.jsx
     assert not (app_dir / "users").exists()
     assert "views/Login" not in (app_dir / "login" / "page.jsx").read_text(encoding="utf-8")

@@ -18,7 +18,9 @@ services:
         - Flowmerce/docs/**
         - Flowmerce/tests/**
     envVars:
-      # Sign-in. Render generates the password; find it under the service's Environment tab.
+      # The owner key. Each person signs in with their own account (Settings → Team); this username and password
+      # sign in as the first administrator and are the way back in. Render generates the password; find it under
+      # the service's Environment tab. Changing it signs everyone out once.
       - key: FLOWMERCE_LOGIN_USER
         value: admin
       - key: FLOWMERCE_LOGIN_PASSWORD

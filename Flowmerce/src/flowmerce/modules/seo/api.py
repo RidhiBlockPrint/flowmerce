@@ -85,32 +85,104 @@ def ip(request: Request) -> str | None:
 
 # ---------------- auth ----------------
 
+def _client_address(body: dict) -> str:
+    """The browser's address as reported by the hosted frontend (for throttling and the audit log only)."""
+    return s(body.get("address"), 60).strip() or "unknown"
+
+
 @api.post("/auth/login")
 def login(body: dict = JSONBody):
-    """Obsolete in local operator mode: nothing is verified, no session is created, no user record is read."""
-    raise HttpError(410, "Sign-in is turned off: Flowmerce runs in local operator mode on this computer.", "login_disabled")
+    """Hosted mode only: check one person's email and password and start their session.
+
+    Called by the frontend gate, never by a browser (app.py's guard requires the internal secret). Returns
+    the session token for the frontend to keep in its cookie. The username FLOWMERCE_LOGIN_USER with
+    FLOWMERCE_LOGIN_PASSWORD is the owner key and signs in as the first administrator.
+    In local operator mode nothing is verified, no session is created and no user record is read."""
+    if not config.hosted:
+        raise HttpError(410, "Sign-in is turned off: Flowmerce runs in local operator mode on this computer.", "login_disabled")
+    username = s(body.get("username"), 200).strip().lower()
+    password = body.get("password") if isinstance(body.get("password"), str) else ""
+    address = _client_address(body)
+    owner = username == config.login_user.lower()
+    # The owner key is a long generated secret, so it is not paused per name: nobody can lock the owner out.
+    keys = [(f"{username}|{address}", 8), (address, 40)] + ([] if owner else [(username, 20)])
+    for key, limit in keys:
+        auth.login_throttle(key, limit)
+
+    user = None
+    if username and password and len(password) <= 200:
+        if owner:
+            user = auth.local_operator() if auth.is_owner_key(username, password) else None
+        else:
+            user = auth.check_credentials(username, password)
+    if not user:
+        for key, _limit in keys:
+            auth.login_failed(key)
+        # Only a real account's failures are logged: what was typed for an unknown name is never stored (it may be
+        # a password in the wrong box), and a flood of made-up names cannot fill the audit log.
+        known = owner or get("SELECT 1 FROM users WHERE email = ?", username)
+        if known:
+            audit(None, "auth.login_failed", "user", summary=f"{'owner key' if owner else username}: wrong password", ip=address)
+        raise HttpError(401, "That email and password do not match.", "invalid")
+
+    auth.login_succeeded(keys[0][0])
+    seconds = auth.LONG_SESSION_SECONDS if body.get("remember") else config.session_hours * 3600
+    token = auth.issue_session(user["id"], seconds)
+    run("UPDATE users SET last_login_at = ? WHERE id = ?", now(), user["id"])
+    audit(user, "auth.login", "user", user["id"], summary="Signed in with the owner key" if owner else "Signed in", ip=address)
+    return {"token": token, "seconds": seconds, "user": {**user, "roleLabel": ROLE_LABELS[user["role"]]}}
 
 
 @api.post("/auth/logout")
-def logout(response: Response):
-    """Harmless: there is no session to end. It only clears a leftover cookie from before local operator
-    mode; no session record is deleted and nothing is written to the audit log."""
+def logout(request: Request, response: Response):
+    """Hosted mode: end this session. Local operator mode: harmless, there is no session to end; it only
+    clears a leftover cookie from before local operator mode, deletes no session record and writes nothing
+    to the audit log."""
+    if config.hosted:
+        u = auth.require_user(request)
+        if auth.end_session(request):
+            audit(u, "auth.logout", "user", u["id"], summary="Signed out")
+        return {"ok": True}
     response.delete_cookie(auth.COOKIE, path="/", httponly=True, samesite="strict", secure=config.cookie_secure)
     return {"ok": True}
 
 
 @api.get("/auth/me")
 def me(request: Request):
-    """The local operator: the administrator record every local request acts as, with its permissions."""
+    """Who this request acts as, with their permissions: the signed-in person (hosted mode) or the local
+    operator, the administrator record every local request acts as."""
     u = auth.require_user(request)
     return {"user": {**u, "roleLabel": ROLE_LABELS[u["role"]]}, "permissions": perms_for(u["role"]), "brands": all_brands(),
-            "livePublishing": config.allow_live_publish, "demoLoaded": demo_loaded(), "demoMode": config.demo_mode, "localOperator": True}
+            "livePublishing": config.allow_live_publish, "demoLoaded": demo_loaded(), "demoMode": config.demo_mode,
+            "localOperator": not config.hosted}
 
 
 @api.post("/auth/password")
-def change_password(body: dict = JSONBody):
-    """Obsolete in local operator mode: passwords no longer protect anything, so none is verified or changed."""
-    raise HttpError(410, "Password changes are turned off: Flowmerce runs in local operator mode on this computer.", "password_disabled")
+def change_password(request: Request, body: dict = JSONBody):
+    """Hosted mode only: a signed-in person changes their own password. Their other sessions are ended.
+
+    The current password is required, except for the first administrator record while it still has no
+    password at all (it can then only have been reached with the owner key).
+    In local operator mode passwords protect nothing, so none is verified or changed."""
+    if not config.hosted:
+        raise HttpError(410, "Password changes are turned off: Flowmerce runs in local operator mode on this computer.", "password_disabled")
+    u = auth.require_user(request)
+    key = f"password|{u['id']}"
+    auth.login_throttle(key)
+    stored = get("SELECT password_hash FROM users WHERE id = ?", u["id"])["password_hash"]
+    current = body.get("current") if isinstance(body.get("current"), str) else ""
+    if stored != auth.LOCAL_OPERATOR_PASSWORD_HASH and not auth.verify_password(current[:200], stored):
+        auth.login_failed(key)
+        raise HttpError(400, "The current password is not right.", "wrong_password")
+    err = auth.validate_password(body.get("next"))
+    if err:
+        raise HttpError(400, err)
+    auth.login_succeeded(key)
+    run("UPDATE users SET password_hash = ? WHERE id = ?", auth.hash_password(body["next"]), u["id"])
+    token = auth.session_token(request)
+    run("DELETE FROM sessions WHERE user_id = ? AND id != ?", u["id"], auth.sha256(token) if token else "")
+    audit(u, "auth.password_change", "user", u["id"], summary="Changed their own password")
+    return {"ok": True}
 
 
 # ---------------- brands ----------------
@@ -1118,14 +1190,26 @@ def patch_user(uid: str, request: Request, body: dict = JSONBody):
     name = (s(body["name"], 120).strip() or target["name"]) if "name" in body else target["name"]
     if name != target["name"]:
         changes.append("name")
-    run("UPDATE users SET role = ?, active = ?, name = ? WHERE id = ?", role, active, name, target["id"])
+    email = s(body["email"], 200).strip().lower() if "email" in body else target["email"].lower()
+    if email != target["email"].lower():
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            raise HttpError(400, "Enter a valid email.")
+        if get("SELECT 1 FROM users WHERE email = ? AND id != ?", email, target["id"]):
+            raise HttpError(409, "A user with this email exists.")
+        changes.append(f"email {target['email']}→{email}")
+    else:
+        email = target["email"]
     if body.get("password"):
         err = auth.validate_password(body["password"])
         if err:
             raise HttpError(400, err)
+    run("UPDATE users SET role = ?, active = ?, name = ?, email = ? WHERE id = ?", role, active, name, email, target["id"])
+    if body.get("password"):
         run("UPDATE users SET password_hash = ? WHERE id = ?", auth.hash_password(body["password"]), target["id"])
         changes.append("password reset")
-    if not active or role != target["role"] or body.get("password"):
-        run("DELETE FROM sessions WHERE user_id = ?", target["id"])
+    if not active or role != target["role"] or body.get("password") or email != target["email"]:
+        # Sign that person out everywhere. An administrator editing their own record keeps the session in use.
+        own = auth.session_token(request) if target["id"] == u["id"] and active and role == target["role"] else None
+        run("DELETE FROM sessions WHERE user_id = ? AND id != ?", target["id"], auth.sha256(own) if own else "")
     audit(u, "user.update", "user", target["id"], summary=f"{target['email']}: {', '.join(changes) or 'no change'}")
     return {"ok": True}

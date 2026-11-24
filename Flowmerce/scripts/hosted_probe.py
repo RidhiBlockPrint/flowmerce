@@ -1,13 +1,17 @@
-"""Probe a running hosted Flowmerce (CI uses it against the container): the sign-in gate must hold and the app must
-work after signing in through the /login form.
+"""Probe a running hosted Flowmerce (CI uses it against the container): the sign-in gate must hold, the app must
+work after signing in through the /login form, and each person must act under their own account and role.
 
-    python scripts/hosted_probe.py http://127.0.0.1:10000 <password> [user]
+    python scripts/hosted_probe.py http://127.0.0.1:10000 <owner key password> [user] [--gate-only]
+
+The team checks add a person ("Probe reviewer") and deactivate them again. Pass --gate-only to leave them out,
+for example against a live workspace.
 """
 
 from __future__ import annotations
 
 import http.cookiejar
 import json
+import secrets
 import sys
 import urllib.error
 import urllib.parse
@@ -35,9 +39,75 @@ def fetch(op: urllib.request.OpenerDirector, url: str, form: dict[str, str] | No
         return e.code, e.headers.get("Location") or url, e.read().decode("utf-8", "replace")
 
 
+def call(op: urllib.request.OpenerDirector, method: str, url: str, body: dict[str, object] | None = None,
+         headers: dict[str, str] | None = None) -> tuple[int, dict[str, object]]:
+    """A JSON API call the way the app's own pages make it (with the X-Requested-With header)."""
+    req = urllib.request.Request(url, method=method, data=json.dumps(body).encode() if body is not None else None,  # noqa: S310
+                                 headers={"X-Requested-With": "blog-ops", "Content-Type": "application/json", **(headers or {})})
+    try:
+        with op.open(req, timeout=30) as resp:
+            status, text = resp.status, resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        status, text = e.code, e.read().decode("utf-8", "replace")
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = {}
+    return status, data if isinstance(data, dict) else {}
+
+
+PROBE_EMAIL = "probe-reviewer@flowmerce.invalid"
+
+
+def team_checks(base: str, owner: urllib.request.OpenerDirector) -> list[tuple[str, bool]]:
+    """Each person signs in as themselves, their role is enforced by the API, and deactivating signs them out."""
+    checks: list[tuple[str, bool]] = []
+    status, me = call(owner, "GET", f"{base}/api/auth/me")
+    who = me.get("user") if isinstance(me.get("user"), dict) else {}
+    checks.append(("the owner key signs in as an administrator",
+                   status == 200 and who.get("role") == "admin" and me.get("localOperator") is False))
+
+    probe_password = secrets.token_urlsafe(18)
+    status, made = call(owner, "POST", f"{base}/api/users",
+                        {"email": PROBE_EMAIL, "name": "Probe reviewer", "role": "reviewer", "password": probe_password})
+    uid = made.get("id")
+    if status == 409:   # left from an earlier run: reuse the record
+        _, listing = call(owner, "GET", f"{base}/api/users")
+        rows = listing.get("users") if isinstance(listing.get("users"), list) else []
+        uid = next((u["id"] for u in rows if u.get("email") == PROBE_EMAIL), None)
+        status, _ = call(owner, "PATCH", f"{base}/api/users/{uid}", {"active": True, "role": "reviewer", "password": probe_password})
+    checks.append((f"an administrator can add a person (HTTP {status})", status == 200 and uid is not None))
+
+    reviewer = opener(http.cookiejar.CookieJar())
+    fetch(reviewer, f"{base}/auth/login", {"username": PROBE_EMAIL, "password": probe_password, "next": "/"})
+    status, me = call(reviewer, "GET", f"{base}/api/auth/me")
+    who = me.get("user") if isinstance(me.get("user"), dict) else {}
+    checks.append(("that person signs in as themselves, with their own role",
+                   status == 200 and who.get("email") == PROBE_EMAIL and who.get("role") == "reviewer"))
+    checks.append(("they can open the app", call(reviewer, "GET", f"{base}/api/home")[0] == 200))
+    status, refused = call(reviewer, "POST", f"{base}/api/users",
+                           {"email": "x@flowmerce.invalid", "name": "x", "role": "admin", "password": secrets.token_urlsafe(18)})
+    checks.append(("their role is enforced: a reviewer cannot manage the team", status == 403 and refused.get("code") == "forbidden"))
+    status, _ = call(reviewer, "POST", f"{base}/api/auth/login", {"username": PROBE_EMAIL, "password": probe_password})
+    checks.append(("a browser cannot call the sign-in API directly", status == 403))
+    status, _ = call(reviewer, "GET", f"{base}/api/home", headers={"X-Flowmerce-Internal": "guess"})
+    checks.append(("a browser cannot pose as the server", status == 403))
+
+    status, _ = call(owner, "PATCH", f"{base}/api/users/{uid}", {"active": False})
+    checks.append(("an administrator can deactivate them", status == 200))
+    checks.append(("a deactivated person is signed out at once", call(reviewer, "GET", f"{base}/api/auth/me")[0] == 401))
+    status, location, _ = fetch(opener(follow=False), f"{base}/auth/login",
+                                {"username": PROBE_EMAIL, "password": probe_password, "next": "/"})
+    checks.append(("and cannot sign in again", status == 303 and "error=invalid" in location))
+    checks.append(("the administrator is still signed in", call(owner, "GET", f"{base}/api/auth/me")[0] == 200))
+    return checks
+
+
 def main() -> None:
-    base, password = sys.argv[1].rstrip("/"), sys.argv[2]
-    user = sys.argv[3] if len(sys.argv) > 3 else "admin"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    gate_only = "--gate-only" in sys.argv
+    base, password = args[0].rstrip("/"), args[1]
+    user = args[2] if len(args) > 2 else "admin"
     raw = opener(follow=False)
     checks: list[tuple[str, bool]] = []
 
@@ -75,6 +145,12 @@ def main() -> None:
     except ValueError:
         api_ok = False
     checks.append((f"API answers after sign-in (HTTP {status})", api_ok))
+
+    forged = opener(follow=False)
+    forged.addheaders = [("Cookie", "fm_session=v2.4102444800.made-up-session-token-0123456789.made-up-signature")]
+    checks.append(("a made-up session cookie is refused", fetch(forged, f"{base}/api/home")[0] == 401))
+    if not gate_only:
+        checks.extend(team_checks(base, session))
 
     status, final, _ = fetch(session, f"{base}/auth/logout")
     checks.append(("sign out returns to the sign-in page", "/login" in final))

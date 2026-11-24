@@ -86,6 +86,16 @@ class Config:
     cookie_secure = flag("COOKIE_SECURE", env("APP_ENV", env("NODE_ENV")) == "production")
     session_hours = int(env("SESSION_HOURS", "12"))
 
+    # Hosted mode (the cloud copy, started by scripts/run_hosted.py): each person signs in with their own
+    # account and every /api call needs their session (docs/decisions/0011-hosted-team-sign-in.md).
+    # Off on your own computer, where the app stays in local operator mode with no sign-in.
+    hosted = flag("FLOWMERCE_HOSTED", False)
+    # Shared only between the hosted frontend and this API, generated at every start by run_hosted.py.
+    internal_secret = env("FLOWMERCE_INTERNAL_SECRET")
+    # The owner key: this username and password sign in as the first administrator (hosted mode only).
+    login_user = env("FLOWMERCE_LOGIN_USER", "admin")
+    login_password = env("FLOWMERCE_LOGIN_PASSWORD")
+
     # Safety switch. Until an admin sets this, the server refuses every request that would make an
     # article visible on a storefront, whoever asks. Hidden Shopify drafts are still allowed.
     allow_live_publish = flag("ALLOW_LIVE_PUBLISH", False)
