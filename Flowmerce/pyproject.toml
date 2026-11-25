@@ -54,7 +54,9 @@ extend-exclude = ["src/flowmerce/modules/seo", "tests/unit/seo", "tests/integrat
 select = ["E", "F", "I", "B", "UP", "N", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+# S101: tests assert. S105/S106: tests hand the API clients obviously fake tokens and secrets
+# ("test-token", "client-secret"); a real credential in a test would be the bug, not a hardcoded one.
+"tests/**" = ["S101", "S105", "S106"]
 # Launcher and smoke test: long user-facing messages and a friendly early Python-version check.
 "scripts/*.py" = ["E501", "UP036"]
 

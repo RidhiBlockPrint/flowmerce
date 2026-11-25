@@ -76,6 +76,8 @@ def create_app() -> FastAPI:
     app.include_router(api)
     _include_shipping(app)   # must come before the /api catch-all below
     _include_cro(app)        # likewise
+    _include_ads(app)        # likewise
+    _include_creative(app)   # likewise
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
     def api_not_found(rest: str):
@@ -104,6 +106,27 @@ def _include_cro(app: FastAPI) -> None:
         print(f"CRO module not loaded:\n{traceback.format_exc()}")
         return
     app.include_router(cro)
+
+
+def _include_ads(app: FastAPI) -> None:
+    """Mount the Ads module's /api/ads routes. Kept independent like Shipping and CRO: if it cannot
+    load, the other modules still start."""
+    try:
+        from ..ads.api import ads
+    except Exception:  # noqa: BLE001 - a broken optional module must never stop SEO
+        print(f"Ads module not loaded:\n{traceback.format_exc()}")
+        return
+    app.include_router(ads)
+
+
+def _include_creative(app: FastAPI) -> None:
+    """Mount the Creative module's /api/creative routes. Kept independent like the rest."""
+    try:
+        from ..creative.api import creative
+    except Exception:  # noqa: BLE001 - a broken optional module must never stop SEO
+        print(f"Creative module not loaded:\n{traceback.format_exc()}")
+        return
+    app.include_router(creative)
 
 
 def _start_cro_scheduler() -> None:

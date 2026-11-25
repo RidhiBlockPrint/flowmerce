@@ -84,10 +84,12 @@ Shopify's `themeFilesUpsert` mutation needs `write_themes` **and an exemption gr
 
 ## 3. Advertising
 
-### 3.1 Meta Marketing API  (Verify)
+### 3.1 Meta Marketing API  (Checked against the live documentation on 2026-11-25)
 
-- **Auth**: Business Manager **System User** token with `ads_read` (and `ads_management` only on the write connection) plus `business_management`. Token reference in the secret manager; expiry tracked.
-- **Version**: Graph API versions are released a few times a year and retired roughly two years later. Pin in config.
+- **Auth**: Business Manager **System User** token with `ads_read` (and `ads_management` only on the write connection) plus `business_management`. Token reference in the secret manager; expiry tracked. Flowmerce reads only, so it asks for `ads_read` + `business_management` and nothing more.
+- **Version**: Graph API versions are released a few times a year and retired roughly two years later. Pin in config. Flowmerce pins the Marketing API release **v25.0** (released 2026-02-18); `META_API_VERSION` overrides it.
+- **Throttling**: every insights response carries `x-fb-ads-insights-throttle` with `app_id_util_pct`, `acc_id_util_pct` and `ads_api_access_tier`; back off as those approach 100%. Insights calls also count against the ad account limits in `x-ad-account-usage`. `modules/ads/meta.py` reads the first header on every response.
+- **Async reports**: a long pull is `POST <object>/insights`, which returns a `report_run_id` (valid 30 days), then polling `async_status` and `async_percent_completion`, then reading `<report_run_id>/insights`. Flowmerce does not use this path yet: a 90-day ad-level pull over two accounts stays inside the synchronous limits. If it starts timing out, the async path is the fix, not a longer timeout.
 - **Reads**:
   - Structure: `/act_{id}/campaigns`, `/adsets`, `/ads`, `/adcreatives`, ad images and videos.
   - Insights: `/act_{id}/insights` at `level=ad`, `time_increment=1`. Fields include spend, impressions, reach, frequency, clicks, inline link clicks, actions (landing page view, add to cart, initiate checkout, purchase), action values and video plays. Large pulls use **async report runs** (create the job, then poll it).
@@ -99,10 +101,13 @@ Shopify's `themeFilesUpsert` mutation needs `write_themes` **and an exemption gr
 - **UTM template on every ad**: `utm_source=meta&utm_medium=paid_social&utm_campaign={{campaign.id}}&utm_content={{ad.id}}`. This is what joins ads to Shopify orders.
 - **Conversions API**: Shopify's Facebook & Instagram sales channel normally sends server events already. Flowmerce does not send a second copy, to avoid double counting.
 
-### 3.2 Google Ads API  (Verify)
+### 3.2 Google Ads API  (Checked against the live documentation on 2026-11-25)
 
-- **Auth**: OAuth 2.0 refresh token + **developer token** + `login-customer-id` when accessed through a manager (MCC) account. Developer token access level (test, basic, standard) limits daily operations.
-- **Version**: several versions a year, each retired after roughly a year. Pin in config.
+> **Developer tokens are gone.** They were sunset on 2026-09-09 and API access levels now belong to the **Google Cloud project** that issued the OAuth credentials. The `developer-token` header is still accepted but ignored, and Google says it will be rejected in a future major version, so Flowmerce does not send one (`modules/ads/google.py`). The levels are Test (test accounts only), Explorer (2,880 operations a day on production accounts), Basic (15,000 a day, needs brand verification) and Standard (unlimited, needs an audit). A project still at Test level answers `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` when it reads a real account. Sources: `developers.google.com/google-ads/api/docs/api-policy/access-levels` and `.../docs/deprecations`.
+
+- **Auth**: OAuth 2.0 refresh token exchanged for an access token at `https://www.googleapis.com/oauth2/v3/token`, sent as `Authorization: Bearer`, plus `login-customer-id` (digits only) when the account is reached through a manager (MCC) account. No developer token.
+- **REST shape**: `POST https://googleads.googleapis.com/<version>/customers/<id>/googleAds:searchStream` with `{"query": "<GAQL>"}`; the answer is a JSON **array of batches**, each holding its own `results`. `googleAds:search` is the paged alternative (10,000 rows a page, `nextPageToken`). `GET /customers:listAccessibleCustomers` needs no customer id, so it proves the OAuth half on its own.
+- **Version**: several versions a year, each retired after roughly a year. Pin in config. Flowmerce pins **v26** (v26.2 was the current release on 2026-11-11); `GOOGLE_ADS_API_VERSION` overrides it.
 - **Reads** with GAQL through `GoogleAdsService.SearchStream`: `campaign`, `campaign_budget`, `ad_group`, `ad_group_ad`, `asset_group` (Performance Max), `keyword_view`, `search_term_view`, and `segments.date` metrics: cost (micros), impressions, clicks, conversions, conversions value.
 - **Writes (approved)**: campaign budget amount, ad group / ad status, negative keywords.
 - **Optional for SEO**: `KeywordPlanIdeaService.GenerateKeywordIdeas` for keyword ideas. It needs an active Google Ads account but no spend. The current blog rules forbid creating campaigns or spending, so this stays off unless the owner allows it.

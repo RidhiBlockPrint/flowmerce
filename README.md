@@ -8,7 +8,10 @@ Flowmerce is one application with separate modules on one shared foundation (one
 |---|---|
 | **SEO & Blog** | Working (SQLite today). Articles, topics & keywords, approvals, publishing safeguards, Search Console / GA4, Claude AI jobs |
 | **Shipping** | Built (2026-11-17). Reads the central Supabase database (schema `ops`), which refreshes itself from the *Delayed Orders Tracker* tables. Needs the one-time Supabase setup below |
-| Meta & Google Ads, Creative Strategist, Landing Page Builder, CRO | Planned only. No menu entries or pages |
+| **Meta & Google Ads** | Backend started (2026-11-25), reading only. Schema `ads` and the Meta and Google clients are written and unit-tested; **nothing has run against a live ad account**, and `db/central/115_ads.sql` has not been run. Shows sample figures until credentials arrive. No page yet |
+| **Creative Strategist** | Backend started (2026-11-25). Groups ad performance by creative format and hook, and Claude writes concepts with hooks, ad copy, carousels, Reel shot lists, UGC briefs, one-variable tests and variations of a winning concept. Checked against the live Claude API on 2026-11-25. `db/central/116_creative.sql` has not been run and the figures Claude reads are still samples, because no ad account is connected. No page yet |
+| Landing Page Builder | Planned only. No menu entry or page |
+| **CRO** | In progress. See `Flowmerce/docs/development/roadmap.md` |
 
 ---
 

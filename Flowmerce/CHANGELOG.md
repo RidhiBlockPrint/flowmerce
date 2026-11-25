@@ -2,6 +2,112 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-25 (Creative Strategist: Claude writes the creative)
+
+Owner request 2026-11-25, from a product spec the owner shared (purpose, what it monitors, main outputs). Read against
+the repository's own handoff (section 3.4) first: the spec is more concrete than the handoff and adds product context,
+UGC scripts, carousels, Reels and Stories, and fresh variations from winning concepts. This change covers the output
+half. Verified: the Python suite (876 tests, 24 new, all passing), ruff on every new file, `mypy --strict` with no
+error in either new module, the route tests through the real application, and **three calls to the live Claude API**
+with the owner's approval (two billed, $0.65 in total on a $3.00 daily limit). The third produced four concepts across
+the funnel, every field filled, a 63-word summary and a 31-word caveat, with the brand guide's own forbidden claims
+("thread count", "women artisans", "exotic, ethnic or tribal") appearing in each concept's do-not-say list and the
+offer stated only on the bottom-of-funnel concept, citing the published store policy. **Not verified:** the live read
+path from a real ad account, since the figures Claude saw were the samples.
+
+- **Added** `modules/creative/prompts.py`: the two asks and their JSON schemas. A **creative pack** gives 3-5 concepts,
+  each with a hook, two or three alternative hooks, the angle and the figures behind it, a static ad, a 3-5 frame
+  carousel, a 15-30 second Reel shot list, a UGC creator brief with the claims it must not make, and a one-variable
+  test. **Variations** rework one concept that already performs, changing a single variable.
+- **Added** `modules/creative/generate.py`: the call itself, in a background thread like CRO's action plan, with the
+  answer cleaned before it is stored (an unknown enum, a wrong type or a missing object becomes a safe default, never
+  invented text) and one pack kept per store in `app_settings`.
+- **Fixed** The output schema asked for content that structured outputs cannot enforce. The first live call obeyed
+  the schema and still returned one concept with an empty Reel shot list, no UGC talking points and no test variants,
+  because `required` is satisfied by an empty array; adding `minItems: 3` then had the second call refused outright
+  ("For 'array' type, 'minItems' values other than 0 or 1 are not supported"). Structured outputs accept `minItems` of
+  0 or 1 and no `maxItems` at all, so every array now carries `minItems: 1` (which does force content), the counts are
+  stated as hard rules in the prompt, and the ceilings are applied in `clean_pack`. A test walks both schemas and
+  fails on any array constraint the API would refuse, so this costs no further round trips to discover.
+- **Added** Routes `GET /api/creative/pack` (reads, never spends), `POST /api/creative/pack` (asks Claude in the
+  background) and `POST /api/creative/variations` (answers in the request, stores nothing). Both writes are audited.
+- **Added** `ai_budget.ESTIMATE_USD` entries `creative_pack` (0.60) and `creative_variations` (0.20), so the existing
+  daily Claude limit refuses a request that does not fit before anything is sent.
+- **Changed** Only a brand's voice and claims files are sent to Claude, capped at 30,000 characters. Ridhi's full
+  knowledge set is about 195,000 characters; the master brief and the AEO playbook say little about ad copy and would
+  cost more per call than the answer is worth.
+- **Fixed** The samples broke the brand guide, which the first live call flagged: "Flat 50% off" exceeds the guide's
+  "up to 40% off", "free shipping over 1999" contradicts free standard shipping on all orders, the copy was in Hindi
+  for a brand whose guide sets US customers aged 35-70, and the figures were in rupees for stores that sell in USD.
+  All four are corrected. In dollars a $1,000 spend floor is a real bar for a brand of this size, so several sample
+  groups are now honestly marked "too early to judge" instead of all being judged.
+- **Fixed** The sample figures and concepts now talk about tablecloths and pillow covers. Read from Shopify on
+  2026-11-25: Ridhi has 1,045 products (196 tablecloths, 88 pillow covers, placemats, napkins, runners) and Cotton
+  Print Club 493. The samples written earlier that day were about clothing, which made the page look like it belonged
+  to another shop.
+- **Architecture** The spec's "product, print, color, category and season" is **not built**, because the data is not
+  there to build it on. Read-only from Shopify on 2026-11-25: `productType` is empty on 569 of Ridhi's 1,045 products
+  and 361 of CPC's 493, and is inconsistently cased where it is set ("quilt" beside "Pillow Cover"); colour and print
+  appear only inside the product title, where the most common opening words are "Block", "Hand", "Cotton" and
+  "Ruffle", so a first-word rule would not find a colour; the only variant option is Size; and season is recorded
+  nowhere, since tags such as "Thanksgiving Table Cover" sit on 58 of any 60 products and so carry no information.
+  Season would have to be derived from sales history instead. Left with the owner: whether the team will fill in
+  category and colour in Shopify, or whether Flowmerce should guess from the title and label the guess as one.
+- **Architecture** No AI output is written to Supabase. A pack lives in the local `app_settings` table like CRO's
+  plan; saving a concept to `creative.concept` waits until `116_creative.sql` has actually been run.
+
+## 2026-11-25 (Ads and Creative Strategist: read-only foundation, demo mode)
+
+Owner request 2026-11-25: build the AI-powered marketing intelligence tool, starting with what can be done before the
+manager hands over the Meta and Google Ads credentials. Read-only throughout: nothing in this change creates, pauses
+or alters an ad, a budget or a campaign, and the Meta write scope (`ads_management`) is deliberately not asked for.
+Verified: the Python suite (852 tests, 63 new, all passing), ruff on every new file, `mypy --strict` with no error in
+either new module, the eight route tests that drive the real application, and the local app itself: the API was started on 127.0.0.1 and every new route answered 200 with demo figures, checked from the terminal and from /api/docs in a browser. **Not verified:** nothing has been run
+against a live Meta or Google Ads account, and neither new SQL file has been run in Supabase, so the live read path
+is written but untested. The pre-existing `mypy` findings in `modules/shipping/` and the project-wide ruff findings
+in legacy files are unchanged.
+
+- **Added** `db/central/115_ads.sql`: schema `ads` with `ad_account`, `campaign`, `ad_group`, `ad` (keeping the ad's
+  own headline and body, which Creative Strategist reads), `daily_metric` (one row per day per entity, with the
+  platform's own purchase figures), `sync_state`, the `begin_sync`/`end_sync` lock pair modelled on CRO's, and the
+  `v_ad_daily` view. RLS on with no policies, service_role only, like 080 and 112.
+- **Added** `db/central/116_creative.sql`: schema `creative` with `insight`, `concept`, `brief` and `test`, plus
+  `delete_concept` and `delete_test`. A brief cannot leave draft without a recorded approver, and a test cannot be
+  concluded without a learning, because the loop depends on that learning.
+- **Added** `src/flowmerce/modules/ads/`: credentials read per store from `.env`, a Meta Marketing API client (pinned
+  Graph version, cursor paging, insights with `time_increment=1`, purchases read as `omni_purchase` falling back to
+  `purchase`, and the `x-fb-ads-insights-throttle` header read so a sync can slow down), a Google Ads REST client
+  (refresh-token exchange with an in-memory access token, `googleAds:searchStream`, `listAccessibleCustomers`, GAQL
+  reads, micros converted to currency), a connection status that calls no platform, and a per-platform spend and
+  performance summary. Routes `/api/ads/status` and `/api/ads/summary`.
+- **Added** `src/flowmerce/modules/creative/`: grouping of ad-level figures by creative format, by hook (the first six
+  words of the ad's copy, normalised so the same opening groups together) and by platform, with CTR, ROAS, CPA, hook
+  rate and hold rate, and a best/worst/median comparison that ignores groups with too little data. Briefs are written
+  by rule for now, not by a model. Routes `/api/creative/insights`, `/concepts` and `/concepts/{id}/brief`.
+- **Added** `scripts/ads_check_access.py`: a read-only check to run once the credentials arrive. It lists what is
+  missing, which accounts the credentials can see, and the recent spend. It prints no token, secret or URL.
+- **Fixed** Hook rate is left empty for a group with no video views at all (an image or a search ad)
+  instead of being reported as 0%. Found by running the local app on 2026-11-25: a flat 0% put still
+  images into the "best and worst video opening" comparison, where they came last by definition. A
+  hook-rate comparison now weighs only the formats that actually have video.
+- **Added** Demo mode for both modules: while no ad account is connected, every answer is built from fixed sample
+  figures and carries `"source": "demo"`, so the pages can be built and reviewed first. `DEMO_MODE=true` forces it on
+  and `ADS_DEMO=false` cannot defeat it.
+- **Changed** `modules/seo/app.py` mounts the two new routers the way Shipping and CRO are mounted: if either module
+  fails to import, the others still start. Because that makes a broken module silent, the route tests drive the real
+  application to prove both are actually mounted.
+- **Changed** `pyproject.toml`: ruff's test-only ignores now include `S105`/`S106`, since the API client tests hand
+  the clients obviously fake tokens ("test-token", "client-secret"); a real credential in a test would be the bug.
+- **Architecture** Google Ads developer tokens were sunset on 2026-09-09 and API access now follows the Google Cloud
+  project that issued the OAuth credentials. The header is accepted but ignored today and Google says it will be
+  rejected in a future major version, so the client never sends one. What matters instead is the project's access
+  level: at Test level a production account cannot be read at all, and the API answers
+  `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`. This replaces the developer-token plan in
+  `docs/02-connectors-and-apis.md` section 3.2 and is the open roadmap item B7 ("Google Ads developer token level")
+  in a new form: the question is now which access level the Cloud project holds.
+- **Architecture** Both ad APIs are called over REST with `httpx`, already a project dependency. Google's official
+  `google-ads` package would be a new dependency, which the project rules require the owner to approve first.
+
 ## 2026-11-24 (CRO: Shopify-style date picker and comparison; tidier Overview)
 
 Owner requests 2026-11-24: a date picker and comparison like Shopify's; remove the sentences under the conversion

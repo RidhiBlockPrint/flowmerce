@@ -32,6 +32,52 @@ Runtime dependencies of the core package: none (standard library only). The `seo
 
 CRO uses Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` and each brand's existing Shopify keys (`RIDHI_SHOPIFY_*`, `CPC_SHOPIFY_*`). Supabase must expose the `cro` schema (Data API → Exposed schemas), and `db/central/112_cro.sql`, `113_cro_orders.sql` and `114_cro_tracking.sql` (recommendation status, experiments, free-shipping amount) must have been run. Conversion figures need each store's app to have the `read_reports` scope and Level 2 protected customer data access. The Products tab's views and product groups use GA4 through the SEO module's Google service account (`GOOGLE_SERVICE_ACCOUNT_FILE`, `RIDHI_GA4_PROPERTY_ID`, `CPC_GA4_PROPERTY_ID`); without them the tab still shows sales, refunds, price bands and products bought together.
 
+### Ads module (Meta Ads and Google Ads, reading only)
+
+Flowmerce reads these accounts and never changes them: no ad, budget or campaign is created, paused or altered, and
+Meta's write scope (`ads_management`) is deliberately not requested. **Nothing below has been run against a live ad
+account yet.** While none of it is set, the Ads and Creative pages answer from sample figures and say so.
+
+Credentials (no default; put them in `.env`, which is git-ignored, and never paste them into chat or a document):
+
+| Variable | What it is |
+|---|---|
+| `META_SYSTEM_USER_TOKEN` | Business Manager system user token with `ads_read` + `business_management`, shared by both stores. Note its expiry |
+| `RIDHI_META_AD_ACCOUNT_ID`, `CPC_META_AD_ACCOUNT_ID` | Each store's Meta ad account (`act_<digits>`; a bare number is accepted and the prefix added) |
+| `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET` | OAuth client of the Google Cloud project that has the Google Ads API enabled |
+| `GOOGLE_ADS_REFRESH_TOKEN` | Obtained once, with consent from somebody who can read the Ads account |
+| `RIDHI_GOOGLE_ADS_CUSTOMER_ID`, `CPC_GOOGLE_ADS_CUSTOMER_ID` | Each store's customer id (10 digits; dashes are stripped) |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | The manager (MCC) account id, only when the accounts sit under one |
+
+There is **no Google developer token**: it was sunset on 2026-09-09 and access levels now belong to the Google Cloud
+project that issued the OAuth credentials. A project still at Test level cannot read a real account at all, so check
+its level on the Google Ads API Overview page in the Cloud console (see `docs/02-connectors-and-apis.md` section 3.2).
+
+Optional settings:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ADS_DEMO` | on while nothing is connected | Sample figures instead of calling the platforms. `DEMO_MODE=true` forces it on and `false` cannot defeat that |
+| `ADS_SYNC_MINUTES` | `180` | Reserved for the background sync, which is not written yet; `0` turns it off |
+| `ADS_TIMEOUT_SECONDS` | `30` | HTTP timeout for one platform request (5-120) |
+| `ADS_MAX_DAYS` | `90` | How many days a first read covers at most |
+| `META_API_VERSION` | `v25.0` | Pinned Graph/Marketing API version |
+| `GOOGLE_ADS_API_VERSION` | `v26` | Pinned Google Ads API version |
+| `CREATIVE_DEMO` | follows `ADS_DEMO` | Sample insights and concepts for the Creative module |
+| `CREATIVE_INSIGHT_DAYS` | `28` | How many complete days one round of insights reads (7-180) |
+| `CREATIVE_MIN_IMPRESSIONS` | `1000` | Below this a group is marked "too early to judge" rather than acted on |
+
+Claude writes the creative through the SEO module's existing connection: the same `ANTHROPIC_API_KEY`, the same model
+and the same daily limit (`seo/services/ai_budget.py`), recorded under the kinds `creative_pack` (about $0.60 a call)
+and `creative_variations` (about $0.20). No new key and no new package. A request that does not fit in what is left of
+today's limit is refused before anything is sent, and only a brand's voice and claims files are included in the prompt,
+capped at 30,000 characters. Nothing runs by itself: opening the Creative page never spends, unlike CRO's action plan.
+
+Ads and Creative use Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`. Supabase must expose the `ads` and
+`creative` schemas (Data API → Exposed schemas), and `db/central/115_ads.sql` and `116_creative.sql` must have been
+run; **neither has been run yet**, so only the demo path works today. Once the credentials are in place,
+`.venv\Scripts\python.exe scripts\ads_check_access.py` checks them read-only and prints no secret.
+
 ## Configuration
 
 | Variable | Default | Allowed values |
