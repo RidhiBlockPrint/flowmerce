@@ -50,7 +50,24 @@ The hosted app loads this copy on its **first** start only. After that the hoste
 5. **Manual Deploy → Deploy latest commit** (the first build takes several minutes).
 6. Your link is shown at the top of the service page (yours: `https://flowmerce-vzuz.onrender.com`). Sign in on the Flowmerce sign-in page with `admin` and the `FLOWMERCE_LOGIN_PASSWORD` value from the Environment tab (click the eye icon). This is the owner key.
 
+## Sign-in through Supabase (the ERP project)
+
+Set these two in Render → Environment and people sign in with their Supabase account instead (ADR 0012):
+
+- `FLOWMERCE_SUPABASE_URL` = the project address
+- `FLOWMERCE_SUPABASE_KEY` = the `flowmerce` publishable key (`sb_publishable_…`). Never the service role key.
+
+Then:
+
+- People, roles, stores and sections are set in Supabase (`flowmerce.member`). **Settings → Team** only shows the list.
+- Switching someone off in Supabase signs them out of Flowmerce within a minute.
+- `admin` with the Render password no longer signs anyone in. Keep `FLOWMERCE_LOGIN_PASSWORD` set all the same: it protects the session cookies and the stored tokens, and changing it signs everyone out once.
+- "Your team" below does not apply.
+- Not yet covered: Shipping, CRO and SEO & Blog still read their earlier data, so the new database's per-person rules (only their stores, costs hidden) do not apply to those screens yet.
+
 ## Your team
+
+(Only without the two Supabase settings above.)
 
 1. Sign in with the owner key (step 6 above). Open **Settings → Team** and check the list: deactivate any record you do not recognise (an old record with a password would be able to sign in).
 2. Give yourself a normal account: account menu (bottom left) → **Change password** (leave "Current password" empty the first time), then **Settings → Team → Edit** on the "Administrator" row to put in your own name and email. From then on you sign in with your email.

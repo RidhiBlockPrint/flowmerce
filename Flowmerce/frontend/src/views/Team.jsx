@@ -31,7 +31,51 @@ export default function Team() {
         </>);
     if (!can('users:manage'))
         return <ErrorState error={new Error('Only administrators can manage the team.')}/>;
-    return <TeamList />;
+    return me.identity === 'supabase' ? <SupabaseTeam /> : <TeamList />;
+}
+
+/**
+ * People come from Supabase (the owner adds, changes and removes them there). This is the list as the database
+ * shows it to the signed-in administrator; nothing can be changed here.
+ */
+function SupabaseTeam() {
+    const q = useApi('/users', { remember: false });
+    const members = q.data?.members ?? [];
+    return (<>
+      <PageHead title="Team" sub="Who can sign in to the online workspace, and what each person can open."/>
+      <div className="callout info mb-16" role="note">
+        <Icon name="info"/>
+        <div><b>People are managed in Supabase.</b> The owner adds a person, sets their role, stores and sections, and switches them off there.
+          A person who is switched off is signed out of Flowmerce within a minute. Everyone changes their own password from the account menu (bottom left).</div>
+      </div>
+      <ErrorState error={q.error} onRetry={q.reload}/>
+      {q.data?.membersError ? <div className="callout crit mb-16" role="alert"><Icon name="alert"/><div>{q.data.membersError}</div></div> : null}
+      {!q.data ? <LoadingBlock /> : (<div className="col gap-16">
+        <div className="card flush">
+          <div className="table-wrap">
+            <table className="t">
+              <thead><tr><th>Person</th><th>Role</th><th>Sections</th><th className="hide-sm">Stores</th><th className="hide-sm">Costs</th><th>Status</th></tr></thead>
+              <tbody>
+                {members.map((m) => (<tr key={m.id}>
+                    <td className="title-cell"><span className="ttl">{m.name}{m.you ? <span className="faint"> (you)</span> : null}</span></td>
+                    <td><span className="pill outline">{m.roleLabel}</span></td>
+                    <td className="small">{m.sections.length ? m.sections.join(', ') : <span className="faint">none</span>}</td>
+                    <td className="hide-sm small">{m.allStores ? 'All stores' : 'Selected stores'}</td>
+                    <td className="hide-sm small">{m.canSeeCosts || m.role === 'owner' || m.role === 'admin' ? 'Can see' : <span className="faint">Hidden</span>}</td>
+                    <td>{m.active ? <Pill tone="ok" dot>Active</Pill> : <Pill dot>Switched off</Pill>}</td>
+                  </tr>))}
+                {!members.length && !q.data.membersError ? <tr><td colSpan={6} className="muted small">No people to show.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <Card title="What each role can do" sub="Roles come from Supabase. Sections decide which parts of Flowmerce a person can open.">
+          <dl className="kv">
+            {(q.data.memberRoles ?? []).map((r) => (<div key={r.key} style={{ display: 'contents' }}><dt>{r.label}</dt><dd>{r.note}</dd></div>))}
+          </dl>
+        </Card>
+      </div>)}
+    </>);
 }
 
 function TeamList() {

@@ -27,9 +27,13 @@ ROLE_PERMS: dict[str, list[str]] = {
         "publish:request", "workflow:run", "analytics:sync", "data:import", "audit:view",
     ],
     "reviewer": ["view", "article:review", "publish:authorize", "analytics:sync", "audit:view"],
+    # Only reachable through Supabase sign-in (identity.py): looks at everything, changes nothing.
+    "viewer": ["view"],
 }
 
 ROLE_LABELS = {"admin": "Admin", "seo_manager": "SEO Manager", "reviewer": "Reviewer / Approver"}
+# The roles a record in the local `users` table may hold (its CHECK constraint). "viewer" is not one of them.
+LOCAL_ROLES = tuple(ROLE_LABELS)
 
 
 def can(role: str, perm: str) -> bool:
@@ -41,4 +45,4 @@ def perms_for(role: str) -> list[str]:
 
 
 def is_role(v: object) -> bool:
-    return v in ROLE_PERMS
+    return v in LOCAL_ROLES

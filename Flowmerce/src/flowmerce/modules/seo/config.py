@@ -95,6 +95,12 @@ class Config:
     # The owner key: this username and password sign in as the first administrator (hosted mode only).
     login_user = env("FLOWMERCE_LOGIN_USER", "admin")
     login_password = env("FLOWMERCE_LOGIN_PASSWORD")
+    # Sign-in through Supabase Auth (the ERP project, schema `flowmerce`; docs/decisions/0012-supabase-sign-in.md).
+    # When both are set on the hosted copy, people and their access come from Supabase and the owner key no
+    # longer signs anyone in. The key is the *publishable* one: on its own it can read nothing.
+    identity_url = env("FLOWMERCE_SUPABASE_URL").rstrip("/")
+    identity_key = env("FLOWMERCE_SUPABASE_KEY")
+    identity_schema = env("FLOWMERCE_SUPABASE_SCHEMA", "flowmerce")
 
     # Safety switch. Until an admin sets this, the server refuses every request that would make an
     # article visible on a storefront, whoever asks. Hidden Shopify drafts are still allowed.

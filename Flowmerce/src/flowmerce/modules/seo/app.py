@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from . import identity
 from .api import api
 from .audit import audit
 from starlette.concurrency import run_in_threadpool
@@ -32,6 +33,28 @@ from .util import HttpError
 
 # The backend only returns JSON (and the /api/docs page, which is exempt below), so nothing may load or embed.
 CSP = "default-src 'none'; frame-ancestors 'none'"
+
+# Sections a person can be given in Supabase (flowmerce.member.sections) -> the API paths that belong to them.
+SECTION_PATHS = {"shipping": "/api/shipping", "cro": "/api/cro"}
+
+
+def access_refusal(user: dict, method: str, path: str) -> str | None:
+    """Why this person's access (from Supabase, identity.py) rules the call out, or None.
+
+    Checked before any handler, on top of the per-route permission checks:
+      * a viewer changes nothing, anywhere (Shipping and CRO routes only ask for "view");
+      * Shipping and CRO are closed to people who were not given that section.
+    SEO & Blog routes are not matched to a section here; the menu hides them. A person without Supabase access
+    (local operator mode, or the earlier local accounts) is not affected."""
+    access = user.get("access")
+    if not access:
+        return None
+    for section, prefix in SECTION_PATHS.items():
+        if (path == prefix or path.startswith(prefix + "/")) and section not in access["sections"]:
+            return f"You have not been given the {section.upper() if section == 'cro' else section.capitalize()} section."
+    if access["supabase_role"] == "viewer" and method not in ("GET", "HEAD", "OPTIONS") and not path.startswith("/api/auth/"):
+        return "Your role can look at everything but cannot change anything."
+    return None
 
 
 def create_app() -> FastAPI:
@@ -62,6 +85,10 @@ def create_app() -> FastAPI:
                 request.state.user = await run_in_threadpool(load_user, request)
                 if request.state.user is None:
                     denied = JSONResponse({"error": "Sign in to continue.", "code": "signed_out"}, status_code=401)
+                else:
+                    refusal = access_refusal(request.state.user, request.method, path)
+                    if refusal:
+                        denied = JSONResponse({"error": refusal, "code": "forbidden"}, status_code=403)
             if denied is not None:
                 resp = denied
             elif request.method not in ("GET", "HEAD", "OPTIONS") and not path.startswith("/api/hooks/") \
@@ -175,6 +202,13 @@ def bootstrap_admin() -> None:
 def startup(with_scheduler: bool = True) -> FastAPI:
     open_db()
     bootstrap_admin()
+    if identity.enabled():
+        identity.ensure_tables()
+        print("Sign-in: people and their access come from Supabase (schema "
+              f"{config.identity_schema}). The owner key does not sign anyone in.")
+    elif config.hosted and (config.identity_url or config.identity_key):
+        print("Sign-in: FLOWMERCE_SUPABASE_URL and FLOWMERCE_SUPABASE_KEY must both be set to use Supabase; "
+              "using Flowmerce's own accounts.")
     swept = sweep_interrupted_runs()
     if swept:
         print(f"Marked {swept} interrupted workflow run(s) as failed.")

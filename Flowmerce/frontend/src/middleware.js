@@ -96,6 +96,7 @@ async function handleLogin(request, user, password) {
     return back('unavailable');
   }
   if (answer.status === 429) return back('locked');
+  if (answer.status === 403 && data?.code === 'no_access') return back('no_access');   // right password, not on the people list
   if (answer.status === 401) {
     await new Promise((r) => setTimeout(r, FAILURE_DELAY_MS));
     return back('invalid');

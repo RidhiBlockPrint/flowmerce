@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { REDIRECTS } from '../redirects.mjs';
-import { NAV, NAV_ITEMS, SETTINGS, hrefOf, itemActive, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../src/lib/routes.mjs';
+import { NAV, NAV_ITEMS, SECTION_MODULES, SETTINGS, hrefOf, itemActive, moduleAllowed, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../src/lib/routes.mjs';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'app');
 const pageExists = (path) => existsSync(join(APP, path.replace(/^\//, '').replace(/:id/g, '[id]').replace(/:brand/g, '[brand]'), 'page.jsx'));
@@ -28,6 +28,16 @@ test('Team is for administrators and only where people sign in (the online works
     assert.equal(team.perm, 'users:manage');
     assert.equal(team.hosted, true);
     assert.deepEqual(SETTINGS.items.filter((i) => i.hosted).map((i) => i.label), ['Team']);
+});
+
+test('a person only gets the modules of the sections they were given; Home and Settings are always there', () => {
+    const open = (sections) => ['home', 'seo', 'shipping', 'cro', 'settings', null].filter((m) => moduleAllowed(m, sections));
+    assert.deepEqual(open(undefined), ['home', 'seo', 'shipping', 'cro', 'settings', null]);   // your own computer, the demo
+    assert.deepEqual(open(null), ['home', 'seo', 'shipping', 'cro', 'settings', null]);
+    assert.deepEqual(open(['home', 'shipping']), ['home', 'shipping', 'settings', null]);
+    assert.deepEqual(open([]), ['home', 'settings', null]);
+    assert.deepEqual(open(['home', 'shipping', 'seo', 'cro', 'ads']), ['home', 'seo', 'shipping', 'cro', 'settings', null]);
+    assert.deepEqual(SECTION_MODULES, NAV.filter((e) => e.kind === 'module').map((e) => e.id));   // every module is a section
 });
 
 test('Automation lives inside SEO & Blog (Advanced), and Shipping and CRO open their own page', () => {

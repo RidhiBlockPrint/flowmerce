@@ -11,6 +11,10 @@ internal secret) and keeps the session token in the `fm_session` cookie. Every o
 live session: app.py's guard loads the person with `load_user` and answers 401 without one.
 See docs/decisions/0011-hosted-team-sign-in.md.
 
+With FLOWMERCE_SUPABASE_URL and FLOWMERCE_SUPABASE_KEY set, the hosted copy takes its people from Supabase
+instead (identity.py, docs/decisions/0012-supabase-sign-in.md): Supabase Auth checks the password, the person's
+role and access come from `flowmerce.my_access`, and the owner key and the local passwords sign nobody in.
+
 Mutating requests must still carry the X-Requested-With header, which a cross-site form cannot set — that
 is the CSRF guard (also in app.py)."""
 from __future__ import annotations
@@ -25,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Request, Response
 
+from . import identity
 from .config import config
 from .db import get, now, run
 from .permissions import can
@@ -99,6 +104,10 @@ def load_user(request: Request) -> dict | None:
     token = session_token(request)
     if not token:
         return None
+    if identity.enabled():
+        # People come from Supabase: only a session that began with a Supabase sign-in counts, and the person's
+        # access is the one the database gives them now (identity.py).
+        return identity.load_person(sha256(token))
     row = get(
         """SELECT u.id, u.email, u.name, u.role FROM sessions s JOIN users u ON u.id = s.user_id
            WHERE s.id = ? AND s.expires_at > ? AND u.active = 1""",

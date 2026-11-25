@@ -2,6 +2,31 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-25 (Hosted copy: sign-in through Supabase Auth)
+
+Owner request 2026-11-25, after the handover for the ERP's Supabase project (schema `flowmerce`, publishable key only):
+build sign-in on that design. Verified: the Python suite (848, 28 new in `test_supabase_identity.py`), frontend tests
+(114, 1 new), `next build` in hosted mode, and a hosted-mode copy on this computer signing in against the real project
+with the supplied login, read-only (11 checks: wrong password refused, owner key refused, sign-in, who is signed in, no
+token in any answer, people list from Supabase, people cannot be added here, sign-out), plus the Team page in the
+browser. Not checked: a viewer or a restricted person on the real project (the supplied login is an admin), changing a
+password on the real project, the Docker image, and the live Render workspace.
+
+- **Architecture** [ADR 0012](docs/decisions/0012-supabase-sign-in.md): with `FLOWMERCE_SUPABASE_URL` and
+  `FLOWMERCE_SUPABASE_KEY` set, Supabase Auth checks the password and `flowmerce.my_access` says what the person may
+  open. Their tokens stay on the server, encrypted. Access is read again at most once a minute.
+- **Added** `modules/seo/identity.py`: Supabase sign-in, token renewal, sign-out, password change, `my_access`, the
+  member list, and the `identity_sessions` table.
+- **Added** Role "viewer" (looks, changes nothing). Supabase roles map to Flowmerce permissions: owner and admin to
+  Admin, manager and editor to SEO Manager, viewer to Viewer. A viewer's changing request is refused on every route.
+- **Added** Sections: the menu shows only the modules a person was given, and the Shipping and CRO APIs refuse a
+  person without that section. The brand switch offers only the person's stores.
+- **Changed** Settings → Team is a read-only list from Supabase in this mode; adding or changing people in Flowmerce
+  answers 409. The owner key signs nobody in.
+- **Changed** `is_role` accepts only the three roles the local `users` table allows.
+- **Added** Dependency `cryptography` (seals the stored tokens).
+- **Not done** Shipping, CRO and SEO & Blog still read their earlier data sources; see the ADR's "Not done here".
+
 ## 2026-11-24 (Hosted copy: each person signs in with their own account)
 
 Owner request 2026-11-24: separate logins for each team member; everyone can open every section; the admin creates

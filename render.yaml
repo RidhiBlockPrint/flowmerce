@@ -27,6 +27,12 @@ services:
         generateValue: true
       - key: APP_ENV
         value: production
+      # Optional: sign-in through Supabase Auth (the ERP project, schema flowmerce). With both set, people and their
+      # access come from Supabase and the owner key above signs nobody in. The key is the publishable one.
+      - key: FLOWMERCE_SUPABASE_URL
+        sync: false
+      - key: FLOWMERCE_SUPABASE_KEY
+        sync: false
       # SEO database backup in Supabase Storage (S3). Entered by you in the Render dashboard.
       - key: LITESTREAM_BUCKET
         sync: false

@@ -16,7 +16,7 @@ import { AmbientBackground } from './AmbientBackground';
 import { LoadGate, PagePlaceholder } from './LoadGate';
 import { BudgetWarning } from './claude';
 import { IS_DEMO } from '../demo';
-import { NAV, SETTINGS, hrefOf, itemActive, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../lib/routes.mjs';
+import { NAV, SETTINGS, hrefOf, itemActive, moduleAllowed, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../lib/routes.mjs';
 export function Shell({ children }) {
     const { me, can, brand } = useApp();
     const [navOpen, setNavOpen] = useState(false);
@@ -58,7 +58,7 @@ export function Shell({ children }) {
           <button type="button" className="btn ghost icon-only sidebar-close" aria-label="Close navigation" onClick={() => setNavOpen(false)}><Icon name="close"/></button>
           {inSettings ? (<SettingsNav can={can}/>) : (<nav aria-label="Modules">
             <Suspense fallback={null}>
-              {NAV.map((e) => (e.kind === 'module'
+              {NAV.filter((e) => moduleAllowed(e.id, me.access?.sections)).map((e) => (e.kind === 'module'
                   ? <ModuleNav key={e.id} entry={e} can={can} count={pendingPublish} alert={failedPublish}/>
                   : <NavItem key={e.id} to={e.to} icon={e.icon} end={e.end} module={e.id}>{e.label}</NavItem>))}
             </Suspense>
@@ -85,7 +85,11 @@ export function Shell({ children }) {
             {loc.pathname !== '/' ? <div className="page-back"><BackButton /></div> : null}
             {moduleOf(loc.pathname) === 'seo' && !IS_DEMO ? <ClaudeBudgetBanner pathname={loc.pathname}/> : null}
             {/* Each page (and each ?tab=) appears all at once, when its data has answered: components/LoadGate.jsx */}
-            <Suspense fallback={<PagePlaceholder/>}><LoadGate>{children}</LoadGate></Suspense>
+            {moduleAllowed(moduleOf(loc.pathname), me.access?.sections)
+              ? <Suspense fallback={<PagePlaceholder/>}><LoadGate>{children}</LoadGate></Suspense>
+              : (<div className="callout info" role="note"><Icon name="lock"/>
+                  <div><b>You have not been given this section.</b> Ask the owner to add it to your access if you need it.</div>
+                </div>)}
           </main>
         </div>
       </div>
@@ -339,13 +343,15 @@ function LocalOperatorBadge() {
 /** A signed-in person chooses their own password. Their other devices are signed out; this one stays signed in. */
 function ChangePassword({ onClose }) {
     const toast = useToast();
+    const { me } = useApp();
+    const viaSupabase = me.identity === 'supabase';   // the password lives in Supabase: the current one is always needed
     const [f, setF] = useState({ current: '', next: '', again: '' });
     const [show, setShow] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const set = (k) => (e) => { setError(''); setF((v) => ({ ...v, [k]: e.target.value })); };
     const problem = f.next ? passwordProblem(f.next) || (f.again && f.again !== f.next ? 'The two new passwords are not the same.' : '') : '';
-    const ready = f.next && f.again && !problem;
+    const ready = f.next && f.again && !problem && (!viaSupabase || f.current);
     const save = async (e) => {
         e?.preventDefault();
         if (!ready || busy)
@@ -372,7 +378,7 @@ function ChangePassword({ onClose }) {
         {error ? <div className="callout crit" role="alert"><Icon name="alert"/>{error}</div> : null}
         <div className="field"><label htmlFor="cp-current">Current password</label>
           <input id="cp-current" data-autofocus className="input" type={type} value={f.current} onChange={set('current')} autoComplete="current-password" maxLength={200}/>
-          <div className="hint">Signed in with the owner key and never set a password? Leave this empty.</div></div>
+          {viaSupabase ? null : <div className="hint">Signed in with the owner key and never set a password? Leave this empty.</div>}</div>
         <div className="field"><label htmlFor="cp-next">New password</label>
           <input id="cp-next" className="input" type={type} value={f.next} onChange={set('next')} autoComplete="new-password" maxLength={200}/></div>
         <div className="field"><label htmlFor="cp-again">New password again</label>

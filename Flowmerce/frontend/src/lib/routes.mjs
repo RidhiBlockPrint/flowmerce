@@ -95,6 +95,14 @@ export function moduleOf(pathname) {
     }
     return null;
 }
+/**
+ * Whether a person may open a module. `sections` is the list they were given in Supabase (the online workspace);
+ * without one (your own computer, the demo) everything is open. Home and Settings are not sections.
+ */
+export const SECTION_MODULES = ['seo', 'shipping', 'cro'];
+export function moduleAllowed(moduleId, sections) {
+    return !Array.isArray(sections) || !SECTION_MODULES.includes(moduleId) || sections.includes(moduleId);
+}
 export const usesRange = (pathname) => RANGE_PATHS.some((p) => (p.endsWith('/') ? pathname.startsWith(p) : pathMatches(pathname, p)));
 export const showsSearch = (pathname) => !NO_SEARCH_PATHS.some((p) => pathMatches(pathname, p));
 

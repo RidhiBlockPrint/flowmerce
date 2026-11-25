@@ -13,7 +13,7 @@ from urllib.parse import unquote
 from fastapi import APIRouter, Body, Request, Response
 from starlette.concurrency import run_in_threadpool
 
-from . import auth
+from . import auth, identity
 from .audit import audit
 from .config import BRAND_IDS, config, is_brand
 from .db import all_rows, get, now, run
@@ -103,6 +103,8 @@ def login(body: dict = JSONBody):
     username = s(body.get("username"), 200).strip().lower()
     password = body.get("password") if isinstance(body.get("password"), str) else ""
     address = _client_address(body)
+    if identity.enabled():
+        return _supabase_login(username, password, address, bool(body.get("remember")))
     owner = username == config.login_user.lower()
     # The owner key is a long generated secret, so it is not paused per name: nobody can lock the owner out.
     keys = [(f"{username}|{address}", 8), (address, 40)] + ([] if owner else [(username, 20)])
@@ -130,7 +132,52 @@ def login(body: dict = JSONBody):
     token = auth.issue_session(user["id"], seconds)
     run("UPDATE users SET last_login_at = ? WHERE id = ?", now(), user["id"])
     audit(user, "auth.login", "user", user["id"], summary="Signed in with the owner key" if owner else "Signed in", ip=address)
-    return {"token": token, "seconds": seconds, "user": {**user, "roleLabel": ROLE_LABELS[user["role"]]}}
+    return {"token": token, "seconds": seconds, "user": _public_user(user)}
+
+
+def _public_user(u: dict) -> dict:
+    """What a response may say about a person. Never their tokens; their access is reported separately."""
+    return {"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"],
+            "roleLabel": u.get("role_label") or ROLE_LABELS.get(u["role"], u["role"])}
+
+
+def _supabase_login(email: str, password: str, address: str, remember: bool) -> dict:
+    """Sign-in when people come from Supabase (identity.py): Supabase Auth checks the password, the database
+    says what the person may open, and the tokens stay here, encrypted. The owner key signs nobody in."""
+    keys = [(f"{email}|{address}", 8), (address, 40), (email, 20)]
+    for key, limit in keys:
+        auth.login_throttle(key, limit)
+    tokens = None
+    try:
+        if email and password and len(password) <= 200:
+            tokens = identity.sign_in(email, password)
+        access = identity.read_access(tokens.access) if tokens else None
+    except identity.IdentityError as e:
+        if e.code == "throttled":
+            raise HttpError(429, "Too many sign-in attempts. Try again in a few minutes.", "throttled")
+        if e.code != "invalid":
+            raise HttpError(503, "Sign-in is not answering right now. Try again in a minute.", "unavailable")
+        tokens = access = None
+    if not tokens:
+        for key, _limit in keys:
+            auth.login_failed(key)
+        if get("SELECT 1 FROM users WHERE email = ?", email):       # only someone who has signed in before is logged
+            audit(None, "auth.login_failed", "user", summary=f"{email}: wrong password", ip=address)
+        raise HttpError(401, "That email and password do not match.", "invalid")
+    if not access:
+        identity.sign_out(tokens.access)
+        audit(None, "auth.login_refused", "user", summary=f"{tokens.email}: signed in, but has no access to Flowmerce", ip=address)
+        raise HttpError(403, "This account has no access to Flowmerce. Ask the owner to add you.", "no_access")
+
+    auth.login_succeeded(keys[0][0])
+    name = identity.read_display_name(tokens.access, tokens.user_id, tokens.email)
+    user = identity.mirror_user(tokens.email, name, access)
+    seconds = auth.LONG_SESSION_SECONDS if remember else config.session_hours * 3600
+    token = auth.issue_session(user["id"], seconds)
+    identity.save_session(auth.sha256(token), tokens, access)
+    person = {**user, "role": access["role"], "role_label": identity.ROLE_LABELS[access["supabase_role"]]}
+    audit(person, "auth.login", "user", user["id"], summary=f"Signed in ({access['supabase_role']})", ip=address)
+    return {"token": token, "seconds": seconds, "user": _public_user(person)}
 
 
 @api.post("/auth/logout")
@@ -140,6 +187,11 @@ def logout(request: Request, response: Response):
     to the audit log."""
     if config.hosted:
         u = auth.require_user(request)
+        token = auth.session_token(request)
+        if identity.enabled() and token:
+            tokens = identity.tokens_for(auth.sha256(token))
+            if tokens:
+                identity.sign_out(tokens.access)          # end the Supabase session too
         if auth.end_session(request):
             audit(u, "auth.logout", "user", u["id"], summary="Signed out")
         return {"ok": True}
@@ -152,9 +204,19 @@ def me(request: Request):
     """Who this request acts as, with their permissions: the signed-in person (hosted mode) or the local
     operator, the administrator record every local request acts as."""
     u = auth.require_user(request)
-    return {"user": {**u, "roleLabel": ROLE_LABELS[u["role"]]}, "permissions": perms_for(u["role"]), "brands": all_brands(),
+    brands = all_brands()
+    access = u.get("access")
+    if access:
+        # Only the stores this person was given. (The menu and brand switch follow this; data the database serves
+        # is limited by the database itself.)
+        allowed = {identity.STORE_BRANDS.get(code) for code in access["stores"]}
+        brands = [b for b in brands if b["id"] in allowed]
+    return {"user": _public_user(u), "permissions": perms_for(u["role"]), "brands": brands,
             "livePublishing": config.allow_live_publish, "demoLoaded": demo_loaded(), "demoMode": config.demo_mode,
-            "localOperator": not config.hosted}
+            "localOperator": not config.hosted,
+            "identity": "supabase" if access else "local",
+            "access": {"role": access["supabase_role"], "sections": access["sections"], "stores": access["stores"],
+                       "canSeeCosts": access["can_see_costs"], "workspace": access["workspace"]} if access else None}
 
 
 @api.post("/auth/password")
@@ -169,6 +231,8 @@ def change_password(request: Request, body: dict = JSONBody):
     u = auth.require_user(request)
     key = f"password|{u['id']}"
     auth.login_throttle(key)
+    if identity.enabled():
+        return _supabase_change_password(request, u, body, key)
     stored = get("SELECT password_hash FROM users WHERE id = ?", u["id"])["password_hash"]
     current = body.get("current") if isinstance(body.get("current"), str) else ""
     if stored != auth.LOCAL_OPERATOR_PASSWORD_HASH and not auth.verify_password(current[:200], stored):
@@ -179,6 +243,37 @@ def change_password(request: Request, body: dict = JSONBody):
         raise HttpError(400, err)
     auth.login_succeeded(key)
     run("UPDATE users SET password_hash = ? WHERE id = ?", auth.hash_password(body["next"]), u["id"])
+    token = auth.session_token(request)
+    run("DELETE FROM sessions WHERE user_id = ? AND id != ?", u["id"], auth.sha256(token) if token else "")
+    audit(u, "auth.password_change", "user", u["id"], summary="Changed their own password")
+    return {"ok": True}
+
+
+def _supabase_change_password(request: Request, u: dict, body: dict, key: str) -> dict:
+    """The password lives in Supabase Auth. The current one is checked by signing in with it (a fresh sign-in is
+    also what Supabase wants before a password change); the new one is set with that sign-in and it is then ended."""
+    current = body.get("current") if isinstance(body.get("current"), str) else ""
+    err = auth.validate_password(body.get("next"))
+    if err:
+        raise HttpError(400, err)
+    try:
+        fresh = identity.sign_in(u["email"], current[:200])
+    except identity.IdentityError as e:
+        if e.code == "invalid":
+            auth.login_failed(key)
+            raise HttpError(400, "The current password is not right.", "wrong_password")
+        raise HttpError(503, "Supabase is not answering right now. Try again in a minute.", "unavailable")
+    try:
+        identity.set_password(fresh.access, body["next"])
+    except identity.IdentityError as e:
+        messages = {"weak_password": "Supabase did not accept that password: choose a stronger one.",
+                    "same_password": "The new password is the same as the current one."}
+        if e.code in messages:
+            raise HttpError(400, messages[e.code], e.code)
+        raise HttpError(503, "The password could not be changed right now. Try again in a minute.", "unavailable")
+    finally:
+        identity.sign_out(fresh.access)
+    auth.login_succeeded(key)
     token = auth.session_token(request)
     run("DELETE FROM sessions WHERE user_id = ? AND id != ?", u["id"], auth.sha256(token) if token else "")
     audit(u, "auth.password_change", "user", u["id"], summary="Changed their own password")
@@ -1141,15 +1236,41 @@ def audit_log(request: Request):
 def users(request: Request):
     u = auth.require_user(request)
     full = "users:manage" in perms_for(u["role"])
-    rows = all_rows("SELECT id, email, name, role, active, created_at, last_login_at FROM users ORDER BY active DESC, name")
+    rows = all_rows("SELECT id, email, name, role, active, created_at, last_login_at, password_hash FROM users ORDER BY active DESC, name")
+    extra: dict[str, Any] = {}
+    if identity.enabled():
+        # People are kept in Supabase. `users` stays the local records work is assigned to (only people who have
+        # signed in); `members` is the real list, read as this person, for administrators to look at.
+        rows = [x for x in rows if x["password_hash"] == identity.MIRROR_PASSWORD_HASH]
+        extra = {"managedBy": "supabase", "members": [], "memberRoles": [
+            {"key": k, "label": v, "note": identity.ROLE_NOTES[k]} for k, v in identity.ROLE_LABELS.items()]}
+        token = auth.session_token(request)
+        tokens = identity.tokens_for(auth.sha256(token)) if full and token else None
+        if tokens:
+            try:
+                extra["members"] = [{
+                    "id": m.get("user_id"), "name": m.get("display_name"), "role": m.get("role"),
+                    "roleLabel": identity.ROLE_LABELS.get(str(m.get("role")), m.get("role")), "active": bool(m.get("is_active")),
+                    "allStores": bool(m.get("all_stores")), "sections": m.get("sections") or [],
+                    "canSeeCosts": bool(m.get("can_see_costs")), "you": m.get("user_id") == tokens.user_id,
+                } for m in identity.list_members(tokens.access)]
+            except identity.IdentityError:
+                extra["membersError"] = "The people list could not be read from Supabase right now."
+    rows = [{k: v for k, v in x.items() if k != "password_hash"} for x in rows]
     return {"users": rows if full else [{k: x[k] for k in ("id", "name", "role", "active")} for x in rows],
             "roles": [{"key": k, "label": v, "permissions": perms_for(k)} for k, v in ROLE_LABELS.items()],
-            "permissions": PERMISSIONS}
+            "permissions": PERMISSIONS, **extra}
+
+
+def _people_are_managed_here() -> None:
+    if identity.enabled():
+        raise HttpError(409, "People are added, changed and removed in Supabase, not in Flowmerce.", "managed_elsewhere")
 
 
 @api.post("/users")
 def create_user(request: Request, body: dict = JSONBody):
     u = auth.require_perm(request, "users:manage")
+    _people_are_managed_here()
     email = s(body.get("email"), 200).strip().lower()
     name = s(body.get("name"), 120).strip()
     role = body.get("role")
@@ -1172,6 +1293,7 @@ def create_user(request: Request, body: dict = JSONBody):
 @api.patch("/users/{uid}")
 def patch_user(uid: str, request: Request, body: dict = JSONBody):
     u = auth.require_perm(request, "users:manage")
+    _people_are_managed_here()
     target = get("SELECT * FROM users WHERE id = ?", to_int(uid))
     if not target:
         raise HttpError(404, "User not found.")

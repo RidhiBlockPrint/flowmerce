@@ -32,6 +32,7 @@ function Pattern() {
 const MESSAGES = {
   invalid: ['crit', 'alert', 'That email and password do not match. Check them and try again.'],
   locked: ['crit', 'lock', 'Too many attempts. Sign-in is paused for 15 minutes; try again after that.'],
+  no_access: ['crit', 'lock', 'Your password is right, but this account has not been given access to Flowmerce. Ask the owner to add you.'],
   unavailable: ['crit', 'alert', 'Sign-in is not answering right now. Wait a minute and try again.'],
   expired: ['info', 'lock', 'Your session has ended. Sign in again to continue.'],
   signed_out: ['info', 'checkCircle', 'You have been signed out.'],
