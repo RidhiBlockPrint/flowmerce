@@ -1723,12 +1723,12 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
    and a coloured top edge, with the headline figure in a bold sans (tabular numerals) rather than
    the page's serif, which reads as a book numeral at this size, not a dashboard metric. */
 .creative-page .cc-kpi { --kpi: var(--ink-2); position: relative; overflow: hidden; }
-.creative-page .cc-kpi::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--kpi); }
-.creative-page .cc-kpi .card-body { background: color-mix(in srgb, var(--kpi) 6%, var(--surface)); padding-top: 16px; }
-.creative-page .cc-kpi .card-title { color: color-mix(in srgb, var(--kpi) 80%, var(--ink)); font-family: var(--sans); font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
-.creative-page .cc-kpi-value { font-family: var(--sans); font-size: 30px; font-weight: 800; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; color: var(--kpi); line-height: 1.1; }
+.creative-page .cc-kpi::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--kpi); }
+.creative-page .cc-kpi .card-body { background: color-mix(in srgb, var(--kpi) 4%, var(--surface)); padding-top: 16px; }
+.creative-page .cc-kpi .card-title { color: color-mix(in srgb, var(--kpi) 70%, var(--ink)); font-family: var(--sans); font-size: 13.5px; font-weight: 650; letter-spacing: 0; }
+.creative-page .cc-kpi-value { font-family: var(--sans); font-size: 28px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; color: var(--ink); line-height: 1.1; }
 .creative-page .cc-kpi.has-spark .cc-kpi-value { margin-bottom: 2px; }
-.creative-page .cc-kpi svg path { opacity: 0.9; }
+.creative-page .cc-kpi svg path { opacity: 0.85; }
 
 /* Blog pipeline (views/BlogPipeline.jsx): the six stages of a blog stacked full width, in building order. Empty stages
    take one line, so the next stage follows straight on without a gap. */
