@@ -120,8 +120,8 @@ function ComparisonCard({ title, cmp, money }) {
 /** One headline figure: a big number, a sparkline of the days behind it (when there is a daily
  * series for it), and a one-line caption. Matches the CRO Overview's big-number tile style. */
 function KpiTile({ label, value, caption, values, color }) {
-    return (<Card title={label} flush className="pad-sm">
-      <div className="ov-big num">{value}</div>
+    return (<Card title={label} flush className={`pad-sm cc-kpi${values?.length > 1 ? ' has-spark' : ''}`} style={{ '--kpi': color }}>
+      <div className="cc-kpi-value">{value}</div>
       {caption ? <div className="muted xs mt-4">{caption}</div> : null}
       {values && values.length > 1 ? <div className="mt-8"><Sparkline values={values} color={color}/></div> : null}
     </Card>);
@@ -140,7 +140,7 @@ function KpiRow({ days, money, bestHookRate }) {
       <KpiTile label="Spend" value={money(totalSpend)} caption="Over the period" values={days.map((d) => d.spend)} color="var(--info)"/>
       <KpiTile label="ROAS" value={overallRoas === null ? '—' : `${overallRoas}x`} caption="Value per unit spent" values={days.map((d) => d.roas).filter((v) => v !== null)} color="var(--ok)"/>
       <KpiTile label="CTR" value={pct1(overallCtr)} caption="Clicks per 100 impressions" values={days.map((d) => d.ctr).filter((v) => v !== null)} color="var(--warn)"/>
-      <KpiTile label="Best hook rate" value={pct1(bestHookRate?.hookRate ?? null)} caption={bestHookRate ? `${bestHookRate.label || bestHookRate.key} format, 3s video views` : 'No video format yet'}/>
+      <KpiTile label="Best hook rate" value={pct1(bestHookRate?.hookRate ?? null)} caption={bestHookRate ? `${bestHookRate.label || bestHookRate.key} format, 3s video views` : 'No video format yet'} color="#c2488f"/>
     </div>);
 }
 
