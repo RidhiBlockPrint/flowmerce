@@ -96,13 +96,28 @@ def test_brief_for_an_unknown_concept_is_a_400(app: Any) -> None:
     assert response.json()["code"] == "bad_request"
 
 
-def test_no_route_here_can_change_anything(app: Any) -> None:
-    """Both modules are read-only: a write to either prefix must not find a handler."""
+def test_saving_a_concept_in_demo_mode_is_refused(app: Any) -> None:
+    """Demo concepts already behave as if saved; there is nothing real yet to attach a save to."""
+    response = local_client(app).post(
+        "/api/creative/concepts?brand=ridhi",
+        json={"title": "A new idea"},
+        headers={"X-Requested-With": "blog-ops"},
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == "bad_request"
+
+
+def test_ads_module_stays_read_only(app: Any) -> None:
+    """Ads has no write route at all: a write to its prefix must not find a handler."""
     client = local_client(app)
-    for method, url in (
-        ("post", "/api/ads/summary"),
-        ("post", "/api/creative/concepts"),
-        ("delete", "/api/creative/concepts/1"),
-    ):
+    for method, url in (("post", "/api/ads/summary"), ("delete", "/api/ads/summary")):
         response = getattr(client, method)(url, headers={"X-Requested-With": "blog-ops"})
         assert response.status_code in (404, 405), f"{method.upper()} {url} should not be handled"
+
+
+def test_no_route_here_can_delete_a_concept(app: Any) -> None:
+    """The Concepts page can save, but nothing here can delete through the API yet."""
+    response = local_client(app).delete(
+        "/api/creative/concepts/1", headers={"X-Requested-With": "blog-ops"}
+    )
+    assert response.status_code in (404, 405)

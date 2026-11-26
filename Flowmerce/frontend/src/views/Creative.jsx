@@ -230,7 +230,30 @@ function Formats({ formats }) {
     </div>);
 }
 
-function PackConcept({ concept }) {
+function SaveConceptButton({ brand, concept }) {
+    const [state, setState] = useState('idle');   // idle | saving | saved
+    const toast = useToast();
+    const save = async () => {
+        setState('saving');
+        try {
+            await api.post(`/creative/concepts${qs({ brand })}`, {
+                title: concept.title, hook: concept.hook, angle: concept.angle, message: concept.message,
+                offer: concept.offer, funnel_stage: concept.funnel_stage, persona: concept.persona,
+                evidence: concept.evidence, origin: 'ai',
+            });
+            setState('saved');
+        }
+        catch (e) {
+            toast.error(e);
+            setState('idle');
+        }
+    };
+    if (state === 'saved')
+        return <Pill tone="ok">Saved to Concepts</Pill>;
+    return <Button size="sm" variant="ghost" icon="star" loading={state === 'saving'} onClick={save}>Save to Concepts</Button>;
+}
+
+function PackConcept({ brand, concept }) {
     const [open, setOpen] = useState(false);
     return (<Card title={concept.title}
       actions={<Pill tone={FUNNEL_TONE[concept.funnel_stage] ?? 'neutral'}>{FUNNEL_LABEL[concept.funnel_stage] ?? concept.funnel_stage}</Pill>}>
@@ -241,7 +264,10 @@ function PackConcept({ concept }) {
       {concept.offer ? <div className="small mt-4"><b>Offer:</b> {concept.offer}</div> : null}
       {concept.persona ? <div className="small faint mt-4"><b>Who it's for:</b> {concept.persona}</div> : null}
       {concept.evidence?.length ? <ul className="small faint" style={{ margin: '8px 0 0', paddingLeft: 18 }}>{concept.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul> : null}
-      <div className="mt-12"><Button size="sm" variant="ghost" onClick={() => setOpen((o) => !o)}>{open ? 'Hide production notes' : 'Show production notes'}</Button></div>
+      <div className="row-wrap mt-12" style={{ gap: 8 }}>
+        <SaveConceptButton brand={brand} concept={concept}/>
+        <Button size="sm" variant="ghost" onClick={() => setOpen((o) => !o)}>{open ? 'Hide production notes' : 'Show production notes'}</Button>
+      </div>
       {open ? (<div className="mt-12 col" style={{ gap: 12 }}>
           <Formats formats={concept.formats}/>
           {concept.test ? (<div>
@@ -307,7 +333,7 @@ function PackTab({ brand }) {
               <span className="muted small">{d.generated_at ? `Written ${d.generated_at}` : ''}{d.by ? ` by ${d.by}` : ''}{d.model ? ` · ${d.model}` : ''}{d.cost_usd ? ` · ${usd(d.cost_usd)}` : ''}</span>
             </div>
             {d.pack.summary ? <Card flush className="pad-sm mb-16"><div className="small">{d.pack.summary}</div>{d.pack.data_caveat ? <div className="small faint mt-4">{d.pack.data_caveat}</div> : null}</Card> : null}
-            <div className="col" style={{ gap: 16 }}>{d.pack.concepts.map((c, i) => <PackConcept key={i} concept={c}/>)}</div>
+            <div className="col" style={{ gap: 16 }}>{d.pack.concepts.map((c, i) => <PackConcept key={i} brand={brand} concept={c}/>)}</div>
           </>)}
       </div>
     </>);

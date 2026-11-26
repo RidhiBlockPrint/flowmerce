@@ -211,3 +211,26 @@ def test_brief_markdown_says_what_is_missing_rather_than_leaving_a_gap() -> None
     text = service.brief_markdown({"title": "Bare idea"})
     assert "(hook not set)" in text
     assert "(angle not set)" in text
+
+
+def test_brief_markdown_joins_a_list_of_evidence_into_one_line() -> None:
+    text = service.brief_markdown({"title": "X", "evidence": ["roas 2.1", "ctr 1.7%"]})
+    assert "roas 2.1; ctr 1.7%" in text
+
+
+# ---------------------------------------------------------------- saving a concept
+def test_saving_a_concept_is_refused_in_demo_mode() -> None:
+    with pytest.raises(service.InputError, match="demo mode"):
+        service.save_concept("ridhi", {"title": "A new idea"}, "owner")
+
+
+def test_saving_a_concept_needs_at_least_a_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CREATIVE_DEMO", "false")
+    with pytest.raises(service.InputError, match="needs at least a title"):
+        service.save_concept("ridhi", {"hook": "no title here"}, "owner")
+
+
+def test_saving_a_concept_rejects_an_unknown_brand(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CREATIVE_DEMO", "false")
+    with pytest.raises(ValueError, match="Unknown brand"):
+        service.save_concept("nope", {"title": "A new idea"}, "owner")

@@ -84,6 +84,25 @@ def concepts(request: Request, brand: str = "ridhi") -> dict[str, Any]:
     return _call(lambda: service.concepts(brand))
 
 
+@creative.post("/concepts")
+def save_concept(
+    request: Request, brand: str = "ridhi", body: dict[str, Any] = _BODY
+) -> dict[str, Any]:
+    """Save one concept (from the AI pack, or written by hand) so it persists and gets a brief."""
+    user = require_perm(request, "view")
+    who = str(user.get("email") or user.get("name") or "team")
+    out = _call(lambda: service.save_concept(brand, body, who))
+    audit(
+        user,
+        "creative.concept.save",
+        "creative_store",
+        None,
+        brand,
+        f"Saved concept: {str(body.get('title') or '')[:100]}",
+    )
+    return out
+
+
 @creative.get("/concepts/{concept_id}/brief")
 def brief(request: Request, concept_id: int, brand: str = "ridhi") -> dict[str, Any]:
     """The brief for one concept, as markdown ready to send to a designer or editor."""

@@ -253,6 +253,8 @@ def brief_markdown(concept: dict[str, Any]) -> str:
         "- One variable changes against the current ad, nothing else",
     ]
     evidence = concept.get("evidence")
+    if isinstance(evidence, list):
+        evidence = "; ".join(str(e) for e in evidence if e)
     if evidence:
         lines += ["", "## Why this idea", f"```\n{evidence}\n```"]
     return "\n".join(lines)
@@ -337,6 +339,59 @@ def concepts(brand: str) -> dict[str, Any]:
         "concepts": page.rows,
         "note": "Concepts saved in Flowmerce. Writing them from the AI step is a later task.",
     }
+
+
+_FUNNEL_STAGES = ("tof", "mof", "bof")
+
+
+def _clip(value: Any, limit: int) -> str | None:
+    text = str(value or "").strip()
+    return text[:limit] or None
+
+
+def save_concept(brand: str, concept: dict[str, Any], by: str) -> dict[str, Any]:
+    """Keep one concept (from the AI pack, or written by hand) in ``creative.concept``.
+
+    Not available in demo mode: there is nothing real yet to attach a saved idea to, and the demo
+    concepts already behave as if saved. The row keeps `evidence` as a list, same shape as a pack
+    concept's, so a later re-read and `brief_markdown` both already know what to do with it.
+    """
+    cfg = creative_config()
+    if cfg.demo:
+        raise InputError("Switch off demo mode before saving a concept.")
+    store = store_for(brand)
+    title = _clip(concept.get("title"), 300)
+    if not title:
+        raise InputError("A concept needs at least a title.")
+    stage = str(concept.get("funnel_stage") or concept.get("funnelStage") or "tof").lower()
+    evidence = concept.get("evidence")
+    if isinstance(evidence, str):
+        evidence = [evidence] if evidence.strip() else []
+    elif not isinstance(evidence, list):
+        evidence = []
+    row = {
+        "store": store,
+        "title": title,
+        "hook": _clip(concept.get("hook"), 500),
+        "angle": _clip(concept.get("angle"), 500),
+        "message": _clip(concept.get("message"), 1000),
+        "offer": _clip(concept.get("offer"), 500),
+        "funnel_stage": stage if stage in _FUNNEL_STAGES else "tof",
+        "persona": _clip(concept.get("persona"), 300),
+        "evidence": [str(e) for e in evidence if str(e).strip()][:10],
+        "origin": concept.get("origin")
+        if concept.get("origin") in ("ai", "human", "mixed")
+        else "ai",
+        "status": "idea",
+        "created_by": by,
+    }
+    from ..shipping.supabase import SupabaseClient
+    from .config import creative_client
+
+    client = creative_client()
+    assert isinstance(client, SupabaseClient)  # noqa: S101 - narrows the lazily built client
+    saved = client.insert_returning("concept", row)
+    return {"brand": brand, "source": "live", "concept": saved}
 
 
 def brief_for(concept_id: int, brand: str) -> dict[str, Any]:
