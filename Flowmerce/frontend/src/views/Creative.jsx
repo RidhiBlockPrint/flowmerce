@@ -23,7 +23,10 @@ const FUNNEL_LABEL = { tof: 'Top of funnel', mof: 'Middle of funnel', bof: 'Bott
 const FUNNEL_TONE = { tof: 'info', mof: 'neutral', bof: 'ok' };
 
 const pct1 = (v) => (v === null || v === undefined ? '—' : `${v}%`);
-const money = (v) => (v === null || v === undefined ? '—' : fmtMoney(v, 'USD'));
+// Ridhi's Meta account reports spend in INR, CPC's in USD: never a hardcoded currency for ad figures.
+const moneyIn = (currency) => (v) => (v === null || v === undefined ? '—' : fmtMoney(v, currency || 'USD'));
+// Claude's own cost is always billed in USD, regardless of the store's ad spend currency.
+const usd = moneyIn('USD');
 
 function Seg({ options, value, onChange, label }) {
     return (<div className="seg sm" role="group" aria-label={label} style={{ flexWrap: 'wrap', maxWidth: '100%' }}>
@@ -61,7 +64,7 @@ export default function Creative() {
 }
 
 /* ------------------------------------------------------------------ Insights */
-function GroupTable({ title, note, rows, metricKey, metricLabel, metricFmt = pct1 }) {
+function GroupTable({ title, note, rows, metricKey, metricLabel, metricFmt = pct1, money }) {
     return (<Card title={title} sub={note} flush>
       {!rows.length ? <Empty icon="analytics" title="No data yet">Nothing to compare for this period.</Empty> : (
           <div className="table-wrap"><table className="t compact">
@@ -82,10 +85,10 @@ function GroupTable({ title, note, rows, metricKey, metricLabel, metricFmt = pct
     </Card>);
 }
 
-function ComparisonCard({ title, cmp }) {
+function ComparisonCard({ title, cmp, money }) {
     if (!cmp || !cmp.usable)
         return (<Card title={title}><Empty icon="analytics" title="Not enough data">No group has enough spend and impressions yet to compare on this.</Empty></Card>);
-    const fmt = cmp.metric === 'ctr' || cmp.metric === 'hook_rate' ? pct1 : (v) => (v === null ? '—' : `${v}x`);
+    const fmt = cmp.metric === 'ctr' || cmp.metric === 'hook_rate' ? pct1 : cmp.metric === 'cpa' ? money : (v) => (v === null ? '—' : `${v}x`);
     return (<Card title={title} sub={`${cmp.usable} group${cmp.usable === 1 ? '' : 's'} had enough data; median ${fmt(cmp.median)}`}>
       <div className="grid cols-2">
         <div><div className="muted xs">Best</div><div className="strong">{cmp.best.label || cmp.best.key}</div><div className="small">{fmt(cmp.best[cmp.metric === 'hook_rate' ? 'hookRate' : cmp.metric])}</div></div>
@@ -101,19 +104,20 @@ function InsightsTab({ brand }) {
     if (!q.data)
         return <LoadingBlock rows={6}/>;
     const d = q.data;
+    const money = moneyIn(d.currency);
     return (<>
       <div className="row-wrap mb-12" style={{ alignItems: 'center', gap: 8 }}>
         <SourceTag source={d.source}/>
-        <span className="muted small">{d.from} to {d.to} · {fmtInt(d.adsSeen)} ads seen</span>
+        <span className="muted small">{d.from} to {d.to} · {fmtInt(d.adsSeen)} ads seen{d.currency ? ` · spend in ${d.currency}` : ''}</span>
       </div>
       <div className="grid cols-3 mb-16">
-        <ComparisonCard title="Format: ROAS" cmp={d.comparisons.formatRoas}/>
-        <ComparisonCard title="Hook: click-through rate" cmp={d.comparisons.hookCtr}/>
-        <ComparisonCard title="Format: hook rate (3s video views)" cmp={d.comparisons.formatHookRate}/>
+        <ComparisonCard title="Format: ROAS" cmp={d.comparisons.formatRoas} money={money}/>
+        <ComparisonCard title="Hook: click-through rate" cmp={d.comparisons.hookCtr} money={money}/>
+        <ComparisonCard title="Format: hook rate (3s video views)" cmp={d.comparisons.formatHookRate} money={money}/>
       </div>
-      <GroupTable title="By format" note="Image, video, carousel and search, compared on spend and results." rows={d.formats} metricKey="hookRate" metricLabel="Hook rate"/>
-      <div className="mt-16"><GroupTable title="By hook" note="Grouped by the first words of the ad's own copy." rows={d.hooks} metricKey="holdRate" metricLabel="Hold rate"/></div>
-      <div className="mt-16"><GroupTable title="By platform" note="Meta and Google, side by side." rows={d.platforms} metricKey="cpa" metricLabel="Cost per purchase" metricFmt={money}/></div>
+      <GroupTable title="By format" note="Image, video, carousel and search, compared on spend and results." rows={d.formats} metricKey="hookRate" metricLabel="Hook rate" money={money}/>
+      <div className="mt-16"><GroupTable title="By hook" note="Grouped by the first words of the ad's own copy. Not available until the ad's own copy text is synced." rows={d.hooks} metricKey="holdRate" metricLabel="Hold rate" money={money}/></div>
+      <div className="mt-16"><GroupTable title="By platform" note="Meta and Google, side by side." rows={d.platforms} metricKey="cpa" metricLabel="Cost per purchase" metricFmt={money} money={money}/></div>
       <div className="muted xs mt-16">{d.note} Minimum for &ldquo;enough data&rdquo;: {fmtInt(d.thresholds.minImpressions)} impressions and {money(d.thresholds.minSpend)} spend.</div>
     </>);
 }
@@ -289,8 +293,8 @@ function PackTab({ brand }) {
         actions={<Button icon="sparkle" loading={asking || running} disabled={!d.configured} onClick={ask}>{running ? 'Writing…' : 'Ask Claude'}</Button>}>
         {!d.configured ? <div className="small" style={{ color: 'var(--warn)' }}>ANTHROPIC_API_KEY is not set, so Claude cannot write a pack yet.</div> : null}
         <div className="row-wrap" style={{ gap: 16 }}>
-          <span className="small muted">Estimated cost: {money(d.estimate_usd)}</span>
-          {budget ? <span className="small muted">Remaining today: {money(budget.remainingTodayUsd)} of {money(budget.dailyLimitUsd)}</span> : null}
+          <span className="small muted">Estimated cost: {usd(d.estimate_usd)}</span>
+          {budget ? <span className="small muted">Remaining today: {usd(budget.remainingTodayUsd)} of {usd(budget.dailyLimitUsd)}</span> : null}
         </div>
         {d.error ? <div className="small mt-8" style={{ color: 'var(--crit)' }}>{d.error}</div> : null}
       </Card>
@@ -300,7 +304,7 @@ function PackTab({ brand }) {
                 : (<>
             <div className="row-wrap mb-12" style={{ alignItems: 'center', gap: 8 }}>
               <SourceTag source={d.source}/>
-              <span className="muted small">{d.generated_at ? `Written ${d.generated_at}` : ''}{d.by ? ` by ${d.by}` : ''}{d.model ? ` · ${d.model}` : ''}{d.cost_usd ? ` · ${money(d.cost_usd)}` : ''}</span>
+              <span className="muted small">{d.generated_at ? `Written ${d.generated_at}` : ''}{d.by ? ` by ${d.by}` : ''}{d.model ? ` · ${d.model}` : ''}{d.cost_usd ? ` · ${usd(d.cost_usd)}` : ''}</span>
             </div>
             {d.pack.summary ? <Card flush className="pad-sm mb-16"><div className="small">{d.pack.summary}</div>{d.pack.data_caveat ? <div className="small faint mt-4">{d.pack.data_caveat}</div> : null}</Card> : null}
             <div className="col" style={{ gap: 16 }}>{d.pack.concepts.map((c, i) => <PackConcept key={i} concept={c}/>)}</div>

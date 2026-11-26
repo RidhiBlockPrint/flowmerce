@@ -3,7 +3,10 @@
 Two sources, never mixed in one answer:
   * demo   fixed sample ads and findings, so the page can be built and reviewed before any ad
            account is connected. Every answer carries ``"source": "demo"``.
-  * live   ads.v_ad_daily through Supabase.
+  * live   the Ads teammate's own sync tables in schema `ads` (``accounts``, ``ads``, ``daily``),
+           read through Supabase. That sync is Meta-only today and does not yet store the ad's own
+           headline or primary text, so hooks cannot be grouped from live data: `by_hook` comes back
+           empty rather than guessing from the ad's internal name, which is not real ad copy.
 
 The AI step (Claude writing concepts and briefs from these findings) is deliberately not here yet:
 the figures have to be right and checkable first. The brief template below is written by rule, not
@@ -90,33 +93,80 @@ _DEMO_ADS: list[dict[str, Any]] = [
 ]
 
 
-def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], str]:
-    """The ad-level rows one round of insights works from, and where they came from."""
+def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], str, str]:
+    """The ad-level rows one round of insights works from, where they came from, and their currency.
+
+    Live rows are built from three of the Ads teammate's tables, none of which this module ever
+    writes to: ``ads.accounts`` (one row per ad account, to find this brand's account keys, each
+    one's platform, and the currency it reports spend in), ``ads.ads`` (the ad's format and name,
+    synced once), and ``ads.daily`` (the figures for the period, one row per ad per day). There is
+    no view joining them yet, so this builds the join itself, in memory, from a handful of small
+    reads. A brand's accounts are assumed to share one currency (true today: one Meta account per
+    brand); spend is not converted or added across currencies.
+    """
     cfg = creative_config()
     if cfg.demo:
-        return list(_DEMO_ADS), "demo"
-    store = store_for(brand)
-    from ..shipping.supabase import SupabaseClient
-    from .config import creative_client
-
-    client = creative_client()
-    assert isinstance(client, SupabaseClient)  # noqa: S101 - narrows the lazily built client
-    # ads.v_ad_daily is in schema `ads`, which the Ads module exposes; read it with that profile.
+        return list(_DEMO_ADS), "demo", "USD"
+    store_for(brand)  # raises for an unknown brand; the real tables key by brand text, not store id
     from ..ads.config import ads_client
+    from ..shipping.supabase import SupabaseClient
 
     ads = ads_client()
-    assert isinstance(ads, SupabaseClient)  # noqa: S101
-    page = ads.select(
-        "v_ad_daily",
+    assert isinstance(ads, SupabaseClient)  # noqa: S101 - narrows the lazily built client
+
+    accounts = ads.select(
+        "accounts", [("select", "key,platform,currency"), ("brand", f"eq.{brand}")], limit=50
+    ).rows
+    keys = [str(a["key"]) for a in accounts if a.get("key")]
+    if not keys:
+        return [], "live", "USD"
+    platform_of = {str(a["key"]): str(a.get("platform") or "") for a in accounts}
+    currency = str(accounts[0].get("currency") or "USD").strip() or "USD"
+    key_list = ",".join(keys)
+
+    ad_rows = ads.select(
+        "ads",
+        [("select", "id,account_key,format,name"), ("account_key", f"in.({key_list})")],
+        limit=20_000,
+    ).rows
+    ad_info = {str(a["id"]): a for a in ad_rows if a.get("id")}
+
+    daily_rows = ads.select(
+        "daily",
         [
-            ("store", f"eq.{store}"),
-            ("metric_date", f"gte.{since.isoformat()}"),
-            ("metric_date", f"lte.{until.isoformat()}"),
-            ("select", "*"),
+            ("select", "ad_id,account_key,day,spend,impressions,clicks,purchases,value,v3,p75"),
+            ("account_key", f"in.({key_list})"),
+            ("day", f"gte.{since.isoformat()}"),
+            ("day", f"lte.{until.isoformat()}"),
         ],
-        limit=10_000,
-    )
-    return page.rows, "live"
+        limit=20_000,
+    ).rows
+
+    out: list[dict[str, Any]] = []
+    for row in daily_rows:
+        ad_id = str(row.get("ad_id") or "")
+        info = ad_info.get(ad_id, {})
+        out.append(
+            {
+                "ad_id": ad_id,
+                "platform": platform_of.get(str(row.get("account_key") or ""), ""),
+                "ad_name": info.get("name") or "",
+                "ad_format": info.get("format") or "",
+                # Not synced yet: the ad's own headline/primary text, so hooks cannot be grouped.
+                "headline": None,
+                "primary_text": None,
+                "spend": row.get("spend"),
+                "impressions": row.get("impressions"),
+                "clicks": row.get("clicks"),
+                "purchases": row.get("purchases"),
+                "purchase_value": row.get("value"),
+                "video_3s_views": row.get("v3"),
+                # No distinct "thruplay" event is synced; p75 (watched at least three-quarters of
+                # the video) is the closest available signal for whether the middle held attention.
+                "video_thruplays": row.get("p75"),
+            }
+        )
+    return out, "live", currency
 
 
 # ------------------------------------------------------------------ insights
@@ -130,7 +180,7 @@ def findings(brand: str, days: int | None = None) -> dict[str, Any]:
     # None means "the configured default"; any other value is checked, so days=0 is an error rather
     # than a silent fall back to 28.
     since, until = _range(cfg.insight_days if days is None else days)
-    rows, source = _rows(brand, since, until)
+    rows, source, currency = _rows(brand, since, until)
     by_format = insights.by_format(rows)
     by_hook = insights.by_hook(rows)
     by_platform = insights.by_platform(rows)
@@ -138,6 +188,7 @@ def findings(brand: str, days: int | None = None) -> dict[str, Any]:
     return {
         "brand": brand,
         "source": source,
+        "currency": currency,
         "from": since.isoformat(),
         "to": until.isoformat(),
         "adsSeen": len({str(r.get("ad_id") or "") for r in rows if r.get("ad_id")}),
