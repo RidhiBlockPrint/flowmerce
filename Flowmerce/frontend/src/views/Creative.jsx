@@ -56,7 +56,7 @@ export default function Creative() {
     return (<>
       <PageHead title={title} sub={globalBrand ? undefined
             : <Seg options={STORES} value={brand} onChange={(store) => update({ store })} label="Store"/>}/>
-      <div className="mt-16">
+      <div className="mt-16 creative-page">
         {tab === 'concepts' ? <ConceptsTab brand={brand}/>
             : tab === 'pack' ? <PackTab brand={brand}/>
                 : <InsightsTab brand={brand}/>}
@@ -92,8 +92,8 @@ function ComparisonCard({ title, cmp, money }) {
     const fmt = cmp.metric === 'ctr' || cmp.metric === 'hook_rate' ? pct1 : cmp.metric === 'cpa' ? money : (v) => (v === null ? '—' : `${v}x`);
     return (<Card title={title} sub={`${cmp.usable} group${cmp.usable === 1 ? '' : 's'} had enough data; median ${fmt(cmp.median)}`}>
       <div className="grid cols-2">
-        <div><div className="muted xs">Best</div><div className="strong">{cmp.best.label || cmp.best.key}</div><div className="small">{fmt(cmp.best[cmp.metric === 'hook_rate' ? 'hookRate' : cmp.metric])}</div></div>
-        <div><div className="muted xs">Worst</div><div className="strong">{cmp.worst.label || cmp.worst.key}</div><div className="small">{fmt(cmp.worst[cmp.metric === 'hook_rate' ? 'hookRate' : cmp.metric])}</div></div>
+        <div><div className="muted xs cc-label">Best</div><div className="strong">{cmp.best.label || cmp.best.key}</div><div className="small cc-value">{fmt(cmp.best[cmp.metric === 'hook_rate' ? 'hookRate' : cmp.metric])}</div></div>
+        <div><div className="muted xs cc-label">Worst</div><div className="strong">{cmp.worst.label || cmp.worst.key}</div><div className="small cc-value">{fmt(cmp.worst[cmp.metric === 'hook_rate' ? 'hookRate' : cmp.metric])}</div></div>
       </div>
     </Card>);
 }
@@ -297,21 +297,21 @@ function Formats({ formats }) {
         return null;
     return (<div className="col" style={{ gap: 12 }}>
       {formats.static?.headline || formats.static?.primary_text ? (<div>
-          <div className="muted xs">Static image</div>
+          <div className="muted xs cc-label">Static image</div>
           <div className="small"><b>{formats.static.headline}</b></div>
           <div className="small">{formats.static.primary_text}</div>
           {formats.static.visual_note ? <div className="small faint">{formats.static.visual_note}</div> : null}
         </div>) : null}
       {formats.carousel?.length ? (<div>
-          <div className="muted xs">Carousel</div>
+          <div className="muted xs cc-label">Carousel</div>
           <ol className="small" style={{ margin: 0, paddingLeft: 18 }}>{formats.carousel.map((f) => <li key={f.frame}><b>{f.visual}</b> — {f.caption}</li>)}</ol>
         </div>) : null}
       {formats.reel?.shots?.length ? (<div>
-          <div className="muted xs">Reel ({formats.reel.length_seconds}s)</div>
+          <div className="muted xs cc-label">Reel ({formats.reel.length_seconds}s)</div>
           <ol className="small" style={{ margin: 0, paddingLeft: 18 }}>{formats.reel.shots.map((s, i) => <li key={i}>{s.at_second}s — {s.visual}{s.on_screen_text ? ` ("${s.on_screen_text}")` : ''}</li>)}</ol>
         </div>) : null}
       {formats.ugc?.creator_brief ? (<div>
-          <div className="muted xs">UGC brief</div>
+          <div className="muted xs cc-label">UGC brief</div>
           <div className="small">{formats.ugc.creator_brief}</div>
           {formats.ugc.talking_points?.length ? (<div className="small mt-4"><b>Talking points:</b> {formats.ugc.talking_points.join('; ')}</div>) : null}
           {formats.ugc.do_not_say?.length ? (<div className="small faint mt-4"><b>Do not say:</b> {formats.ugc.do_not_say.join('; ')}</div>) : null}
@@ -360,7 +360,7 @@ function PackConcept({ brand, concept }) {
       {open ? (<div className="mt-12 col" style={{ gap: 12 }}>
           <Formats formats={concept.formats}/>
           {concept.test ? (<div>
-              <div className="muted xs">One-variable test</div>
+              <div className="muted xs cc-label">One-variable test</div>
               <div className="small">{concept.test.hypothesis}</div>
               <div className="small faint">Changing: {concept.test.variable} · success metric: {concept.test.success_metric}</div>
               {concept.test.variants?.length ? <ul className="small" style={{ margin: '4px 0 0', paddingLeft: 18 }}>{concept.test.variants.map((v, i) => <li key={i}>{v}</li>)}</ul> : null}

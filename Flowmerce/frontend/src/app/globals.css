@@ -1671,3 +1671,15 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
 .cro-page { transition: opacity 0.15s ease; }
 .cro-page.cro-stale { opacity: 0.55; transition: opacity 0.2s ease 0.35s; }
 
+/* Creative Strategist: the same layout and interactions, a more editorial reading of the type.
+   Section titles take the app's serif (the same face Home's headings use) instead of the plain
+   sans card title, and the few numbers a reader actually scans (a Best/Worst figure, a table's
+   right-aligned column) get a touch more weight so they read at a glance rather than blending
+   into the surrounding prose. Nothing here changes size, color saturation or layout. */
+.creative-page .card-title { font-family: var(--serif); font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+.creative-page .cc-label { font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+.creative-page .cc-value { font-weight: 650; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.creative-page table.t td b { font-weight: 650; }
+.creative-page table.t td.r { font-weight: 600; }
+.creative-page .pill { font-weight: 650; letter-spacing: 0.01em; }
+
