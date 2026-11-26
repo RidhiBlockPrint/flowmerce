@@ -12,7 +12,7 @@ import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
 import { fmtInt } from '../lib/format';
 import { fmtMoney } from '../lib/shipping';
-import { LineChart } from '../components/charts';
+import { LineChart, Sparkline } from '../components/charts';
 import { DateRangePicker } from '../components/croDates';
 import { fmtSpan, isRangeKey, presetRange, rangeDays } from '../lib/cro';
 
@@ -117,26 +117,56 @@ function ComparisonCard({ title, cmp, money }) {
     </Card>);
 }
 
+/** One headline figure: a big number, a sparkline of the days behind it (when there is a daily
+ * series for it), and a one-line caption. Matches the CRO Overview's big-number tile style. */
+function KpiTile({ label, value, caption, values, color }) {
+    return (<Card title={label} flush className="pad-sm">
+      <div className="ov-big num">{value}</div>
+      {caption ? <div className="muted xs mt-4">{caption}</div> : null}
+      {values && values.length > 1 ? <div className="mt-8"><Sparkline values={values} color={color}/></div> : null}
+    </Card>);
+}
+
+/** Total spend, overall ROAS and CTR (with a sparkline of the days behind each), and the best
+ * hook rate seen (a single figure: hooks have no daily series, only a per-group total). */
+function KpiRow({ days, money, bestHookRate }) {
+    const totalSpend = days.reduce((n, d) => n + (d.spend || 0), 0);
+    const totalImpressions = days.reduce((n, d) => n + (d.impressions || 0), 0);
+    const totalClicks = days.reduce((n, d) => n + (d.clicks || 0), 0);
+    const totalValue = days.reduce((n, d) => n + (d.purchaseValue || 0), 0);
+    const overallCtr = totalImpressions ? Math.round((totalClicks / totalImpressions) * 10000) / 100 : null;
+    const overallRoas = totalSpend ? Math.round((totalValue / totalSpend) * 100) / 100 : null;
+    return (<div className="grid cols-4 mb-16">
+      <KpiTile label="Spend" value={money(totalSpend)} caption="Over the period" values={days.map((d) => d.spend)} color="var(--info)"/>
+      <KpiTile label="ROAS" value={overallRoas === null ? '—' : `${overallRoas}x`} caption="Value per unit spent" values={days.map((d) => d.roas).filter((v) => v !== null)} color="var(--ok)"/>
+      <KpiTile label="CTR" value={pct1(overallCtr)} caption="Clicks per 100 impressions" values={days.map((d) => d.ctr).filter((v) => v !== null)} color="var(--warn)"/>
+      <KpiTile label="Best hook rate" value={pct1(bestHookRate?.hookRate ?? null)} caption={bestHookRate ? `${bestHookRate.label || bestHookRate.key} format, 3s video views` : 'No video format yet'}/>
+    </div>);
+}
+
 /** Daily spend and daily ROAS/CTR, so a trend shows up instead of only one period total. */
-function TrendCharts({ brand, range, currency }) {
+function TrendCharts({ brand, range, currency, bestHookRate }) {
     const t = useApi(`/creative/trend${qs({ brand, from: range.from, to: range.to })}`);
     const money = moneyIn(currency);
     if (t.error || !t.data || !t.data.days.length)
         return null;
     const days = t.data.days;
-    return (<div className="grid cols-2 mb-16">
-      <Card title="Daily spend" sub={`In ${t.data.currency}`}>
-        <LineChart ariaLabel="Daily spend" height={180} yFormat={money}
-          series={[{ key: 'spend', label: 'Spend', color: 'var(--info)', points: days.map((d) => ({ x: d.date, y: d.spend })) }]}/>
-      </Card>
-      <Card title="Daily ROAS and CTR">
-        <LineChart ariaLabel="Daily ROAS and click-through rate" height={180}
-          series={[
-              { key: 'roas', label: 'ROAS (x)', color: 'var(--ok)', points: days.map((d) => ({ x: d.date, y: d.roas })) },
-              { key: 'ctr', label: 'CTR (%)', color: 'var(--warn)', points: days.map((d) => ({ x: d.date, y: d.ctr })) },
-          ]}/>
-      </Card>
-    </div>);
+    return (<>
+      <KpiRow days={days} money={money} bestHookRate={bestHookRate}/>
+      <div className="grid cols-2 mb-16">
+        <Card title="Daily spend" sub={`In ${t.data.currency}`}>
+          <LineChart ariaLabel="Daily spend" height={180} yFormat={money}
+            series={[{ key: 'spend', label: 'Spend', color: 'var(--info)', points: days.map((d) => ({ x: d.date, y: d.spend })) }]}/>
+        </Card>
+        <Card title="Daily ROAS and CTR">
+          <LineChart ariaLabel="Daily ROAS and click-through rate" height={180}
+            series={[
+                { key: 'roas', label: 'ROAS (x)', color: 'var(--ok)', points: days.map((d) => ({ x: d.date, y: d.roas })) },
+                { key: 'ctr', label: 'CTR (%)', color: 'var(--warn)', points: days.map((d) => ({ x: d.date, y: d.ctr })) },
+            ]}/>
+        </Card>
+      </div>
+    </>);
 }
 
 const PRIORITY_TONE = { high: 'crit', medium: 'warn', low: 'neutral' };
@@ -219,7 +249,7 @@ function InsightsTab({ brand, range, setRange, today }) {
         <span className="muted small">{fmtInt(d.adsSeen)} ads seen{d.currency ? ` · spend in ${d.currency}` : ''}</span>
       </div>
       <div className="muted xs mb-12">{n === 1 ? fmtSpan(d.from, d.from) : `${fmtSpan(d.from, d.to)} · ${n} days`}{range.to > d.to ? ' · today is not in yet: figures run through yesterday' : ''}</div>
-      <TrendCharts brand={brand} range={range} currency={d.currency}/>
+      <TrendCharts brand={brand} range={range} currency={d.currency} bestHookRate={d.comparisons.formatHookRate.best}/>
       <div className="grid cols-3 mb-16">
         <ComparisonCard title="Format: ROAS" cmp={d.comparisons.formatRoas} money={money}/>
         <ComparisonCard title="Hook: click-through rate" cmp={d.comparisons.hookCtr} money={money}/>

@@ -229,6 +229,24 @@ def test_trend_covers_every_day_of_the_period_with_the_demo_totals() -> None:
     assert round(sum(d["spend"] for d in out["days"]), 2) == round(total_spend, 2)
 
 
+def test_trend_ctr_and_roas_actually_move_day_to_day() -> None:
+    """Every metric scaling by the same weekday weight makes a ratio of two of them constant: the
+    first version of _demo_trend did that, and the chart showed a dead-flat CTR and ROAS line."""
+    out = service.trend("ridhi", days=28)
+    ctr_values = {d["ctr"] for d in out["days"] if d["ctr"] is not None}
+    roas_values = {d["roas"] for d in out["days"] if d["roas"] is not None}
+    assert len(ctr_values) > 1
+    assert len(roas_values) > 1
+    # Each day's impressions/clicks are truncated to an int, so the sum across 28 days can be a
+    # few short of the true total; it must still land within a fraction of a percent of it.
+    total_impressions = sum(a["impressions"] for a in service._DEMO_ADS)
+    total_clicks = sum(a["clicks"] for a in service._DEMO_ADS)
+    impressions_sum = sum(d["impressions"] for d in out["days"])
+    clicks_sum = sum(d["clicks"] for d in out["days"])
+    assert abs(impressions_sum - total_impressions) < total_impressions * 0.01
+    assert abs(clicks_sum - total_clicks) < total_clicks * 0.01
+
+
 def test_trend_rejects_an_impossible_range() -> None:
     with pytest.raises(service.InputError):
         service.trend("ridhi", days=0)

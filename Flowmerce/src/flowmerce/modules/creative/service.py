@@ -16,6 +16,7 @@ by a model, so the page has something real to show in the meantime.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -257,6 +258,26 @@ def _day_point(day: str, acc: dict[str, float]) -> dict[str, Any]:
 _DEMO_DAY_WEIGHT = (0.85, 0.95, 1.0, 0.95, 1.1, 1.35, 1.2)
 
 
+def _demo_shares(since: date, n: int, amplitude: float, period: float, phase: float) -> list[float]:
+    """One metric's share of each day in the period: the same weekday shape every metric uses,
+    bent by its own gentle wave so CTR and ROAS move day to day instead of staying flat.
+
+    If every metric scaled by the identical weekday weight, spend and clicks would rise and fall
+    together in lockstep, and a ratio of two such series is mathematically constant: the first
+    version of this function did exactly that, and the chart showed a dead-flat CTR and ROAS line.
+    Each metric here gets its own normalised share list (summing to 1 across the period, so the
+    metric's own total is unchanged), with a different wave period and phase so the shapes diverge.
+    """
+    raw = [
+        _DEMO_DAY_WEIGHT[(since + timedelta(days=i)).weekday()]
+        * (1 + amplitude * math.sin(2 * math.pi * i / period + phase))
+        for i in range(n)
+    ]
+    raw = [max(w, 0.05) for w in raw]
+    total = sum(raw) or 1.0
+    return [w / total for w in raw]
+
+
 def _demo_trend(brand: str, since: date, until: date, currency: str) -> dict[str, Any]:
     """A day-by-day split of the demo totals, so the chart has something to show before any ad
     account is connected. The demo ads themselves carry no day, only a period total."""
@@ -268,13 +289,21 @@ def _demo_trend(brand: str, since: date, until: date, currency: str) -> dict[str
         totals["purchases"] += ad["purchases"]
         totals["value"] += ad["purchase_value"]
     n = (until - since).days + 1
-    weights = [_DEMO_DAY_WEIGHT[(since + timedelta(days=i)).weekday()] for i in range(n)]
-    wsum = sum(weights) or 1.0
+    spend_share = _demo_shares(since, n, 0.0, 7, 0.0)
+    impr_share = _demo_shares(since, n, 0.15, 6, 0.4)
+    click_share = _demo_shares(since, n, 0.22, 5, 1.1)
+    value_share = _demo_shares(since, n, 0.28, 8, 2.0)
     days = []
     for i in range(n):
         day = since + timedelta(days=i)
-        share = weights[i] / wsum
-        days.append(_day_point(day.isoformat(), {k: v * share for k, v in totals.items()}))
+        acc = {
+            "spend": totals["spend"] * spend_share[i],
+            "impressions": totals["impressions"] * impr_share[i],
+            "clicks": totals["clicks"] * click_share[i],
+            "purchases": totals["purchases"] * value_share[i],
+            "value": totals["value"] * value_share[i],
+        }
+        days.append(_day_point(day.isoformat(), acc))
     return {
         "brand": brand,
         "source": "demo",
