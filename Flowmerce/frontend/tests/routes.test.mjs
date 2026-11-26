@@ -18,6 +18,7 @@ test('the menu has exactly the agreed modules and pages, in order, with rarely u
         ['SEO & Blog', ['Overview', 'Articles', 'Content calendar', 'Publishing'], ['Write it yourself', 'Topics & keywords', 'SEO & traffic', 'Automation']],
         ['Shipping', ['Overview', 'Shipments', 'Hand checks'], ['Analytics']],
         ['Conversion (CRO)', ['Overview', 'Conversion', 'Landing pages', 'Cart & checkout', 'Products', 'Sales'], ['Site health', 'Recommendations', 'Experiments', 'Alarms', 'Change log']],
+        ['Creative Strategist', ['Insights', 'Concepts', 'AI pack'], []],
     ]);
     assert.deepEqual(SETTINGS.items.map((i) => i.label), ['Integrations', 'Brands', 'Data management', 'Audit log']);
 });

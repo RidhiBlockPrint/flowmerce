@@ -44,6 +44,11 @@ export const NAV = [
         { to: '/cro', tab: 'alarms', label: 'Alarms', icon: 'clock' },
         { to: '/cro', tab: 'changes', label: 'Change log', icon: 'history' },
     ] },
+    { id: 'creative', kind: 'module', label: 'Creative Strategist', to: '/creative', icon: 'sparkle', items: [
+        { to: '/creative', tab: 'overview', label: 'Insights', icon: 'analytics' },
+        { to: '/creative', tab: 'concepts', label: 'Concepts', icon: 'star' },
+        { to: '/creative', tab: 'pack', label: 'AI pack', icon: 'sparkle' },
+    ] },
 ];
 
 /** Where a menu item goes: its page, plus `?tab=` for a tab other than the page's first one. */
@@ -80,7 +85,7 @@ export const NAV_ITEMS = [
 export const RANGE_PATHS = ['/analytics', '/articles/'];
 
 /** Pages that do not search articles and topics, so the global search box is not shown there. */
-export const NO_SEARCH_PATHS = ['/settings', '/shipping', '/cro'];
+export const NO_SEARCH_PATHS = ['/settings', '/shipping', '/cro', '/creative'];
 
 export const pathMatches = (pathname, to, end = false) => (end ? pathname === to : pathname === to || pathname.startsWith(`${to}/`));
 /** Which business module a page belongs to: 'home', 'seo', 'shipping', 'cro', 'settings', or null for an unknown page. */
