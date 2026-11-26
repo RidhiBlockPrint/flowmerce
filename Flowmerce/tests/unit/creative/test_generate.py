@@ -111,6 +111,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeClaude:
     monkeypatch.setattr(claude, "take_usage", dict)
     # Clear anything an earlier test kept for this store, so `state` starts from nothing.
     run("DELETE FROM app_settings WHERE key LIKE 'creative_pack:%'")
+    run("DELETE FROM app_settings WHERE key LIKE 'creative_recs:%'")
     run("DELETE FROM claude_usage")
     return stub
 
@@ -165,7 +166,9 @@ def _walk(node: Any, path: str = "") -> list[tuple[str, dict[str, Any]]]:
     return found
 
 
-@pytest.mark.parametrize("schema", [prompts.PACK_SCHEMA, prompts.VARIATIONS_SCHEMA])
+@pytest.mark.parametrize(
+    "schema", [prompts.PACK_SCHEMA, prompts.VARIATIONS_SCHEMA, prompts.RECS_SCHEMA]
+)
 def test_every_array_uses_only_constraints_structured_outputs_accepts(
     schema: dict[str, Any],
 ) -> None:
@@ -401,3 +404,115 @@ def test_write_routes_need_the_csrf_header(app: Any) -> None:
     response = local_client(app).post("/api/creative/pack?brand=ridhi")
     assert response.status_code == 403
     assert response.json()["code"] == "csrf"
+
+
+# ---------------------------------------------------------------- recommendations
+RECS_ANSWER: dict[str, Any] = {
+    "summary": "Video is earning its spend; the discount image is not.",
+    "recommendations": [
+        {
+            "title": "Shift budget toward video",
+            "diagnosis": "Video ROAS 5.88 against image 2.76 over the period.",
+            "evidence": ["video ROAS 5.88", "image ROAS 2.76"],
+            "action": "Move 20% of the image budget to the best-performing video ad.",
+            "priority": "high",
+        },
+        {
+            "title": "Watch the discount hook",
+            "diagnosis": "CTR on the discount hook is the lowest of any group.",
+            "evidence": ["discount hook CTR 1.2%"],
+            "action": "Pause it if CTR has not improved after another week of spend.",
+            "priority": "medium",
+        },
+    ],
+}
+
+
+def test_clean_recs_keeps_recommendations_and_sorts_by_priority() -> None:
+    out = generate.clean_recs(
+        {
+            "summary": "ok",
+            "recommendations": [
+                {"title": "Low one", "priority": "low", "evidence": ["a"]},
+                {"title": "High one", "priority": "high", "evidence": ["b"]},
+            ],
+        }
+    )
+    assert [r["title"] for r in out["recommendations"]] == ["High one", "Low one"]
+
+
+def test_clean_recs_replaces_values_the_rest_of_the_code_cannot_use() -> None:
+    out = generate.clean_recs(
+        {"recommendations": [{"title": "", "priority": "urgent!!", "evidence": "not a list"}]}
+    )
+    rec = out["recommendations"][0]
+    assert rec["title"] == "Untitled recommendation"
+    assert rec["priority"] == "medium"
+    assert rec["evidence"] == []
+
+
+def test_clean_recs_caps_how_many_are_kept() -> None:
+    many = {"recommendations": [{"title": f"Idea {i}"} for i in range(12)]}
+    assert len(generate.clean_recs(many)["recommendations"]) == generate.MAX_RECOMMENDATIONS
+
+
+def test_recommendations_are_written_stored_and_read_back(
+    fake: FakeClaude, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude, "_structured", FakeClaude(RECS_ANSWER))
+    generate._work_recs("ridhi", "tester")  # the thread body, run directly
+    saved = generate.state_recs("ridhi")
+    assert saved["status"] == "ready"
+    assert saved["model"] == "claude-test-model"
+    assert saved["source"] == "demo"
+    assert saved["fresh"] is True
+    assert saved["recs"]["recommendations"][0]["title"] == "Shift budget toward video"
+
+
+def test_recommendations_failure_does_not_lose_an_earlier_round(
+    fake: FakeClaude, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude, "_structured", FakeClaude(RECS_ANSWER))
+    generate._work_recs("ridhi", "tester")
+    assert generate.state_recs("ridhi")["status"] == "ready"
+
+    def boom(*_a: Any, **_k: Any) -> Any:
+        raise claude.ClaudeError("Claude is overloaded.", "server")
+
+    monkeypatch.setattr(claude, "_structured", boom)
+    generate._work_recs("ridhi", "tester")
+    after = generate.state_recs("ridhi")
+    assert after["status"] == "ready", "recommendations already written must survive a failure"
+    assert "overloaded" in (after["error"] or "")
+
+
+def test_state_recs_without_a_round_reports_none(fake: FakeClaude) -> None:
+    out = generate.state_recs("cpc")
+    assert out["status"] == "none"
+    assert out["recs"] is None
+    assert out["estimate_usd"] == ai_budget.ESTIMATE_USD["creative_recommendations"]
+
+
+def test_start_recs_refuses_when_claude_is_not_configured(
+    fake: FakeClaude, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(claude, "configured", lambda: False)
+    with pytest.raises(Exception) as exc:
+        generate.start_recs("ridhi", "tester")
+    assert getattr(exc.value, "code", "") == "pending_setup"
+
+
+def test_recommendations_route_reads_without_spending(app: Any, fake: FakeClaude) -> None:
+    response = local_client(app).get("/api/creative/recommendations?brand=ridhi")
+    assert response.status_code == 200
+    assert response.json()["status"] == "none"
+    assert fake.calls == [], "opening the page must never ask Claude for anything"
+
+
+def test_post_recommendations_route_asks_claude(app: Any, fake: FakeClaude) -> None:
+    client = local_client(app)
+    response = client.post(
+        "/api/creative/recommendations?brand=ridhi", headers={"X-Requested-With": "blog-ops"}
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] in ("running", "ready")

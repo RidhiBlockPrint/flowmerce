@@ -139,6 +139,33 @@ def new_pack(request: Request, brand: str = "ridhi") -> dict[str, Any]:
     return out
 
 
+@creative.get("/recommendations")
+def recommendations(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """What Claude read in the trend, and whether a new round is being written.
+
+    Reads only: opening the page never spends money. `POST /recommendations` asks for a new round.
+    """
+    require_perm(request, "view")
+    return _call(lambda: generate.state_recs(brand))
+
+
+@creative.post("/recommendations")
+def new_recommendations(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Ask Claude for a new round of trend recommendations. Runs in the background."""
+    user = require_perm(request, "view")
+    who = str(user.get("email") or user.get("name") or "team")
+    out = _call(lambda: generate.start_recs(brand, who))
+    audit(
+        user,
+        "creative.recommendations",
+        "creative_store",
+        None,
+        brand,
+        "Asked Claude for trend recommendations",
+    )
+    return out
+
+
 @creative.post("/variations")
 def variations(
     request: Request, brand: str = "ridhi", body: dict[str, Any] = _BODY

@@ -120,6 +120,70 @@ function TrendCharts({ brand, currency }) {
     </div>);
 }
 
+const PRIORITY_TONE = { high: 'crit', medium: 'warn', low: 'neutral' };
+
+/** What changed in the trend and what to do about it: Claude reads the figures above, not ad copy. */
+function RecommendationsSection({ brand }) {
+    const q = useApi(`/creative/recommendations${qs({ brand })}`);
+    const toast = useToast();
+    const [asking, setAsking] = useState(false);
+    const poll = useRef(null);
+    useEffect(() => {
+        if (q.data?.status === 'running' && !poll.current)
+            poll.current = setInterval(() => q.reload(), 4000);
+        else if (q.data?.status !== 'running' && poll.current) {
+            clearInterval(poll.current);
+            poll.current = null;
+        }
+        return () => { if (poll.current) { clearInterval(poll.current); poll.current = null; } };
+    }, [q.data?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+    const ask = async () => {
+        setAsking(true);
+        try {
+            await api.post(`/creative/recommendations${qs({ brand })}`);
+            q.reload();
+        }
+        catch (e) {
+            toast.error(e);
+        }
+        finally {
+            setAsking(false);
+        }
+    };
+    if (q.error)
+        return <ErrorState error={q.error} onRetry={q.reload}/>;
+    if (!q.data)
+        return <LoadingBlock rows={3}/>;
+    const d = q.data;
+    const running = d.status === 'running';
+    return (<Card title="Recommendations" sub="What changed in the trend above and what to do about it, read from this store's own ad figures only."
+      actions={<Button icon="sparkle" loading={asking || running} disabled={!d.configured} onClick={ask}>{running ? 'Thinking…' : 'Ask Claude'}</Button>}>
+      {!d.configured ? <div className="small" style={{ color: 'var(--warn)' }}>ANTHROPIC_API_KEY is not set, so Claude cannot write recommendations yet.</div> : null}
+      <div className="row-wrap" style={{ gap: 16 }}>
+        <span className="small muted">Estimated cost: {usd(d.estimate_usd)}</span>
+        {d.budget ? <span className="small muted">Remaining today: {usd(d.budget.remainingTodayUsd)} of {usd(d.budget.dailyLimitUsd)}</span> : null}
+      </div>
+      {d.error ? <div className="small mt-8" style={{ color: 'var(--crit)' }}>{d.error}</div> : null}
+      {running && !d.recs ? <div className="mt-12"><LoadingBlock rows={3}/></div>
+          : !d.recs ? <div className="mt-12"><Empty icon="sparkle" title="No recommendations yet">Ask Claude to read the trend and say what to do next.</Empty></div>
+              : (<div className="mt-12">
+            <div className="row-wrap mb-12" style={{ alignItems: 'center', gap: 8 }}>
+              <SourceTag source={d.source}/>
+              <span className="muted small">{d.generated_at ? `Written ${d.generated_at}` : ''}{d.by ? ` by ${d.by}` : ''}</span>
+            </div>
+            {d.recs.summary ? <div className="small mb-12">{d.recs.summary}</div> : null}
+            <div className="col" style={{ gap: 12 }}>
+              {d.recs.recommendations.map((r, i) => (<Card key={i} title={r.title} flush className="pad-sm"
+                  actions={<Pill tone={PRIORITY_TONE[r.priority] ?? 'neutral'}>{r.priority}</Pill>}>
+                  <div className="small">{r.diagnosis}</div>
+                  <div className="small mt-4"><b>Do this:</b> {r.action}</div>
+                  {r.evidence?.length ? <ul className="small faint" style={{ margin: '8px 0 0', paddingLeft: 18 }}>{r.evidence.map((e, j) => <li key={j}>{e}</li>)}</ul> : null}
+                </Card>))}
+            </div>
+          </div>)}
+    </Card>);
+}
+
 function InsightsTab({ brand }) {
     const q = useApi(`/creative/insights${qs({ brand })}`);
     if (q.error)
@@ -143,6 +207,7 @@ function InsightsTab({ brand }) {
       <div className="mt-16"><GroupTable title="By hook" note="Grouped by the first words of the ad's own copy. Not available until the ad's own copy text is synced." rows={d.hooks} metricKey="holdRate" metricLabel="Hold rate" money={money}/></div>
       <div className="mt-16"><GroupTable title="By platform" note="Meta and Google, side by side." rows={d.platforms} metricKey="cpa" metricLabel="Cost per purchase" metricFmt={money} money={money}/></div>
       <div className="muted xs mt-16">{d.note} Minimum for &ldquo;enough data&rdquo;: {fmtInt(d.thresholds.minImpressions)} impressions and {money(d.thresholds.minSpend)} spend.</div>
+      <div className="mt-16"><RecommendationsSection brand={brand}/></div>
     </>);
 }
 

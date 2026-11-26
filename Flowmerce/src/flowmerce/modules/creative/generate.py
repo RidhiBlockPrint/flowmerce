@@ -1,10 +1,11 @@
 """Claude writes the creative: concepts with hooks, ad copy, carousel frames, Reel scripts, UGC
-briefs and a one-variable test, plus fresh variations of a concept that already works.
+briefs and a one-variable test, plus fresh variations of a concept that already works, plus
+trend-based recommendations (what changed and what to do about it, not ad copy).
 
 It reuses SEO & Blog's Claude connection (the same ANTHROPIC_API_KEY and model) and the same daily
 Claude limit (`seo/services/ai_budget.py`): a request that does not fit in what is left of today's
 limit is refused before anything is sent, and every call is recorded with its cost under the kinds
-"creative_pack" and "creative_variations".
+"creative_pack", "creative_variations" and "creative_recommendations".
 
 What Claude sees: the figures from `insights.findings` for the period (formats, hooks and platforms
 with their rates and whether each group has enough data), the brand's voice and claims files, and
@@ -37,17 +38,25 @@ log = logging.getLogger(__name__)
 
 PACK_KIND = "creative_pack"
 VARIATIONS_KIND = "creative_variations"
+RECS_KIND = "creative_recommendations"
 PACK_VERSION = 1
+RECS_VERSION = 1
 MAX_CONCEPTS = 5
 MAX_VARIATIONS = 5
+MAX_RECOMMENDATIONS = 5
 
 _running: set[str] = set()
+_running_recs: set[str] = set()
 _lock = threading.Lock()
 
 
 # ------------------------------------------------------------------------------------- storage
 def _key(brand: str) -> str:
     return f"creative_pack:{brand}"
+
+
+def _key_recs(brand: str) -> str:
+    return f"creative_recs:{brand}"
 
 
 def _read(key: str) -> dict[str, Any]:
@@ -215,6 +224,28 @@ def clean_variations(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def clean_recs(data: dict[str, Any]) -> dict[str, Any]:
+    """Claude's recommendations, cleaned the same way as a pack."""
+    out: list[dict[str, Any]] = []
+    for raw in (data.get("recommendations") or [])[:MAX_RECOMMENDATIONS]:
+        if not isinstance(raw, dict):
+            continue
+        out.append(
+            {
+                "title": _text(raw.get("title"), 200) or "Untitled recommendation",
+                "diagnosis": _text(raw.get("diagnosis"), 400),
+                "evidence": _lines(raw.get("evidence"), 300, 3),
+                "action": _text(raw.get("action"), 300),
+                "priority": _one_of(
+                    raw.get("priority"), prompts.RECOMMENDATION_PRIORITIES, "medium"
+                ),
+            }
+        )
+    order = {p: i for i, p in enumerate(prompts.RECOMMENDATION_PRIORITIES)}
+    out.sort(key=lambda r: order.get(r["priority"], 99))
+    return {"summary": _text(data.get("summary"), 1000), "recommendations": out}
+
+
 # ------------------------------------------------------------------------------------- the run
 def _work(brand: str, by: str) -> None:
     """One creative pack, in a background thread. Never raises: the page reads the state."""
@@ -335,6 +366,113 @@ def start(brand: str, by: str) -> dict[str, Any]:
         target=_work, args=(brand, by), name=f"creative-pack-{brand}", daemon=True
     ).start()
     return state(brand)
+
+
+# ------------------------------------------------------------------------------- recommendations
+def _work_recs(brand: str, by: str) -> None:
+    """One round of trend recommendations, in a background thread."""
+    try:
+        trend = service.trend(brand)
+        findings = service.findings(brand)
+        notes = _team_notes(brand)
+        data, model = claude._structured(
+            prompts.RECS_SYSTEM,
+            prompts.recs_prompt(trend, findings, brand, notes),
+            prompts.RECS_SCHEMA,
+            "medium",
+            max_tokens=6000,
+        )
+        cost = ai_budget.record(claude.take_usage(), brand, RECS_KIND)
+        _write(
+            _key_recs(brand),
+            {
+                "version": RECS_VERSION,
+                "status": "ready",
+                "day": ai_budget.today(),
+                "generated_at": now(),
+                "by": by,
+                "model": model,
+                "cost_usd": cost,
+                "source": findings.get("source"),
+                "from": findings.get("from"),
+                "to": findings.get("to"),
+                "recs": clean_recs(data),
+            },
+        )
+    except claude.ClaudeError as e:
+        ai_budget.record(claude.take_usage(), brand, RECS_KIND)
+        _fail_recs(brand, str(e))
+    except HttpError as e:
+        _fail_recs(brand, e.message)
+    except Exception as e:  # noqa: BLE001 — background thread boundary; shown on the page
+        log.exception("Creative recommendations for %s failed", brand)
+        _fail_recs(brand, f"Unexpected error: {type(e).__name__}")
+    finally:
+        with _lock:
+            _running_recs.discard(brand)
+
+
+def _fail_recs(brand: str, message: str) -> None:
+    """Record a failure without throwing away recommendations that were already made."""
+    prev = _read(_key_recs(brand))
+    _write(
+        _key_recs(brand),
+        {
+            **prev,
+            "status": "failed" if not prev.get("recs") else "ready",
+            "error": message,
+            "failed_at": now(),
+        },
+    )
+
+
+def state_recs(brand: str) -> dict[str, Any]:
+    """The kept recommendations for a store, whether new ones are being written, and the limit."""
+    store_for(brand)
+    saved = _read(_key_recs(brand))
+    with _lock:
+        running = brand in _running_recs
+    return {
+        "brand": brand,
+        "configured": claude.configured(),
+        "status": "running" if running else saved.get("status", "none"),
+        "day": saved.get("day"),
+        "fresh": saved.get("day") == ai_budget.today()
+        and saved.get("version", 0) >= RECS_VERSION,
+        "generated_at": saved.get("generated_at"),
+        "by": saved.get("by"),
+        "model": saved.get("model"),
+        "cost_usd": saved.get("cost_usd"),
+        "source": saved.get("source"),
+        "from": saved.get("from"),
+        "to": saved.get("to"),
+        "recs": saved.get("recs"),
+        "error": saved.get("error")
+        if saved.get("failed_at", "") >= saved.get("generated_at", "")
+        else None,
+        "estimate_usd": ai_budget.ESTIMATE_USD.get(RECS_KIND),
+        "budget": ai_budget.status(),
+    }
+
+
+def start_recs(brand: str, by: str) -> dict[str, Any]:
+    """Ask Claude for a new round of trend recommendations in the background."""
+    store_for(brand)
+    if not claude.configured():
+        raise HttpError(
+            412,
+            "ANTHROPIC_API_KEY is not set on the server, so Claude cannot write recommendations.",
+            "pending_setup",
+        )
+    with _lock:
+        if brand in _running_recs:
+            return state_recs(brand)
+        ai_budget.check(RECS_KIND)  # 429 daily_limit: nothing is sent to Claude
+        _running_recs.add(brand)
+    threading.Thread(
+        target=_work_recs, args=(brand, by), name=f"creative-recs-{brand}", daemon=True
+    ).start()
+    return state_recs(brand)
 
 
 # ------------------------------------------------------------------------------------ variations

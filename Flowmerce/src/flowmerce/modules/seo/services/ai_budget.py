@@ -42,7 +42,10 @@ DEFAULT_PRICE = PRICES["claude-opus-5-5"]
 ESTIMATE_USD = {"content_generation": 0.80, "content_revision": 0.80, "topic_research": 0.40, "assist": 0.15, "cro_advice": 0.60,
                 # Creative Strategist: a pack reads the ad figures and writes four formats per concept
                 # (high effort, up to 32k output); variations are one concept reworked (medium, 8k).
-                "creative_pack": 0.60, "creative_variations": 0.20}
+                "creative_pack": 0.60, "creative_variations": 0.20,
+                # Recommendations: the day-by-day trend plus the same groupings a pack reads, 3-5
+                # short recommendations out (medium effort, up to 6k output).
+                "creative_recommendations": 0.30}
 
 
 def _local_now() -> datetime:

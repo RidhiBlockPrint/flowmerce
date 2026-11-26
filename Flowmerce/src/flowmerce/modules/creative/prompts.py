@@ -339,6 +339,96 @@ def pack_prompt(findings: dict[str, Any], brand: str, notes: str = "") -> str:
     return "\n\n".join(parts)
 
 
+# --------------------------------------------------------------------------------- recommendations
+RECOMMENDATION_PRIORITIES = ("high", "medium", "low")
+
+RECS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["summary", "recommendations"],
+    "properties": {
+        "summary": {"type": "string"},
+        "recommendations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["title", "diagnosis", "evidence", "action", "priority"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "diagnosis": {"type": "string"},
+                    "evidence": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                    "action": {"type": "string"},
+                    "priority": {"type": "string", "enum": list(RECOMMENDATION_PRIORITIES)},
+                },
+            },
+        },
+    },
+}
+
+RECS_SYSTEM = (
+    "You are a performance media analyst for a small home-textile brand. You are given a "
+    "day-by-day trend (spend, CTR, ROAS) for the period and the same figures grouped by format, "
+    "hook and platform that a creative pack would use. Your job is to say what changed and what "
+    "to do about it, not to write ad copy.\n"
+    "\n"
+    "What you can and cannot see: this is ad-platform data only (spend, clicks, platform-reported "
+    "purchases). You cannot see the store's website, its checkout, or its true conversion rate; "
+    "`purchases` here is what the ad platform claims, not a confirmed Shopify order. Never claim a "
+    "website or checkout problem from this data alone; say so as a possibility to check elsewhere "
+    "when the figures point that way (for example, clicks rising while platform-reported purchases "
+    "do not).\n"
+    "\n"
+    "How to work:\n"
+    "1. Read the trend first. A single bad or good day is noise; a recommendation needs a real "
+    "span of days moving the same way, or a clear gap between groups that `sampleOk` confirms is "
+    "large enough to trust.\n"
+    "2. Each recommendation names the figures behind it in `evidence`, with real numbers, so a "
+    "reader can check it against the page.\n"
+    "3. `action` is one concrete next step the team can take this week: shift budget toward a "
+    "format or platform, pause or rework a specific one, run a named test, or watch a metric "
+    "another week before acting (when the data is too thin to act on yet).\n"
+    "\n"
+    "Rules:\n"
+    "- Never invent a figure, a cause, or a fix that is not supported by the data given.\n"
+    "- A group marked `sampleOk: false` has too little spend behind it to act on; say it needs "
+    "more data rather than treating it as a finding.\n"
+    "- 3 to 5 recommendations, ordered by `priority`, most urgent first. Do not pad the list: "
+    "fewer, well-evidenced recommendations beat five generic ones.\n"
+    "- `title`: at most 8 words. `diagnosis`: 1-2 sentences, at most 35 words, naming what "
+    "changed. `evidence`: 1-3 lines, each at most 20 words, with real numbers. `action`: one "
+    "sentence, at most 25 words, naming what to actually do.\n"
+    "  `summary`: 1-2 sentences, at most 40 words, on the overall direction (improving, flat or "
+    "declining) and why.\n"
+    "- Write in plain British English for a team who are not analysts."
+)
+
+
+def recs_prompt(
+    trend: dict[str, Any], findings: dict[str, Any], brand: str, notes: str = ""
+) -> str:
+    """The ask for trend-based recommendations: the daily trend, the same groupings a pack uses,
+    and the team's own notes."""
+    parts = [
+        "Here is this store's day-by-day ad trend for the period (spend, CTR, ROAS):",
+        f"<trend>\n{_compact(trend)}\n</trend>",
+        "And the same figures grouped by format, hook and platform, with `sampleOk` saying whether "
+        "there is enough spend and impressions behind a group to trust it:",
+        f"<figures>\n{_compact(findings)}\n</figures>",
+    ]
+    if notes.strip():
+        parts.append(
+            "The team's own notes about this store. Treat them as context, not as figures.\n"
+            f"<team_notes>\n{notes.strip()}\n</team_notes>"
+        )
+    parts.append(
+        "Say what changed over the period and what to do about it: 3 to 5 recommendations, each "
+        "resting on a figure above."
+    )
+    return "\n\n".join(parts)
+
+
 def variations_prompt(concept: dict[str, Any], findings: dict[str, Any], brand: str) -> str:
     """The ask for variations of one winning concept."""
     voice = brand_voice(brand)
