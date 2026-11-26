@@ -12,6 +12,7 @@ import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
 import { fmtInt } from '../lib/format';
 import { fmtMoney } from '../lib/shipping';
+import { LineChart } from '../components/charts';
 
 const STORES = [{ key: 'ridhi', label: 'Ridhi' }, { key: 'cpc', label: 'CPC' }];
 const TABS = [
@@ -97,6 +98,28 @@ function ComparisonCard({ title, cmp, money }) {
     </Card>);
 }
 
+/** Daily spend and daily ROAS/CTR, so a trend shows up instead of only one period total. */
+function TrendCharts({ brand, currency }) {
+    const t = useApi(`/creative/trend${qs({ brand })}`);
+    const money = moneyIn(currency);
+    if (t.error || !t.data || !t.data.days.length)
+        return null;
+    const days = t.data.days;
+    return (<div className="grid cols-2 mb-16">
+      <Card title="Daily spend" sub={`In ${t.data.currency}`}>
+        <LineChart ariaLabel="Daily spend" height={180} yFormat={money}
+          series={[{ key: 'spend', label: 'Spend', color: 'var(--info)', points: days.map((d) => ({ x: d.date, y: d.spend })) }]}/>
+      </Card>
+      <Card title="Daily ROAS and CTR">
+        <LineChart ariaLabel="Daily ROAS and click-through rate" height={180}
+          series={[
+              { key: 'roas', label: 'ROAS (x)', color: 'var(--ok)', points: days.map((d) => ({ x: d.date, y: d.roas })) },
+              { key: 'ctr', label: 'CTR (%)', color: 'var(--warn)', points: days.map((d) => ({ x: d.date, y: d.ctr })) },
+          ]}/>
+      </Card>
+    </div>);
+}
+
 function InsightsTab({ brand }) {
     const q = useApi(`/creative/insights${qs({ brand })}`);
     if (q.error)
@@ -110,6 +133,7 @@ function InsightsTab({ brand }) {
         <SourceTag source={d.source}/>
         <span className="muted small">{d.from} to {d.to} · {fmtInt(d.adsSeen)} ads seen{d.currency ? ` · spend in ${d.currency}` : ''}</span>
       </div>
+      <TrendCharts brand={brand} currency={d.currency}/>
       <div className="grid cols-3 mb-16">
         <ComparisonCard title="Format: ROAS" cmp={d.comparisons.formatRoas} money={money}/>
         <ComparisonCard title="Hook: click-through rate" cmp={d.comparisons.hookCtr} money={money}/>

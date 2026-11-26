@@ -77,6 +77,14 @@ def insights(request: Request, brand: str = "ridhi") -> dict[str, Any]:
     return _call(lambda: service.findings(brand, days))
 
 
+@creative.get("/trend")
+def trend(request: Request, brand: str = "ridhi") -> dict[str, Any]:
+    """Day-by-day spend, CTR and ROAS over the last `days` complete days, for a chart."""
+    require_perm(request, "view")
+    days = _int(request.query_params.get("days"), 0, 0, 400) or None
+    return _call(lambda: service.trend(brand, days))
+
+
 @creative.get("/concepts")
 def concepts(request: Request, brand: str = "ridhi") -> dict[str, Any]:
     """The creative ideas for a store, newest first."""

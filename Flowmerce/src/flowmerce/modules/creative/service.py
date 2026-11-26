@@ -149,6 +149,7 @@ def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], s
         out.append(
             {
                 "ad_id": ad_id,
+                "day": row.get("day"),
                 "platform": platform_of.get(str(row.get("account_key") or ""), ""),
                 "ad_name": info.get("name") or "",
                 "ad_format": info.get("format") or "",
@@ -205,6 +206,89 @@ def findings(brand: str, days: int | None = None) -> dict[str, Any]:
             "Purchases and value are what the platform reports, not Shopify orders. A group marked "
             "sampleOk = false has too little behind it to act on yet."
         ),
+    }
+
+
+def _day_point(day: str, acc: dict[str, float]) -> dict[str, Any]:
+    """One day's totals, with CTR and ROAS worked out the same way as a `Group`."""
+    ctr = round(acc["clicks"] / acc["impressions"] * 100, 2) if acc["impressions"] else None
+    roas = round(acc["value"] / acc["spend"], 2) if acc["spend"] > 0 else None
+    return {
+        "date": day,
+        "spend": round(acc["spend"], 2),
+        "impressions": int(acc["impressions"]),
+        "clicks": int(acc["clicks"]),
+        "purchases": round(acc["purchases"], 2),
+        "purchaseValue": round(acc["value"], 2),
+        "ctr": ctr,
+        "roas": roas,
+    }
+
+
+# Monday..Sunday relative weight, so the demo trend looks like a real campaign (weekend lift)
+# instead of a flat, obviously-fake line.
+_DEMO_DAY_WEIGHT = (0.85, 0.95, 1.0, 0.95, 1.1, 1.35, 1.2)
+
+
+def _demo_trend(brand: str, since: date, until: date, currency: str) -> dict[str, Any]:
+    """A day-by-day split of the demo totals, so the chart has something to show before any ad
+    account is connected. The demo ads themselves carry no day, only a period total."""
+    totals = {"spend": 0.0, "impressions": 0.0, "clicks": 0.0, "purchases": 0.0, "value": 0.0}
+    for ad in _DEMO_ADS:
+        totals["spend"] += ad["spend"]
+        totals["impressions"] += ad["impressions"]
+        totals["clicks"] += ad["clicks"]
+        totals["purchases"] += ad["purchases"]
+        totals["value"] += ad["purchase_value"]
+    n = (until - since).days + 1
+    weights = [_DEMO_DAY_WEIGHT[(since + timedelta(days=i)).weekday()] for i in range(n)]
+    wsum = sum(weights) or 1.0
+    days = []
+    for i in range(n):
+        day = since + timedelta(days=i)
+        share = weights[i] / wsum
+        days.append(_day_point(day.isoformat(), {k: v * share for k, v in totals.items()}))
+    return {
+        "brand": brand,
+        "source": "demo",
+        "currency": currency,
+        "from": since.isoformat(),
+        "to": until.isoformat(),
+        "days": days,
+    }
+
+
+def trend(brand: str, days: int | None = None) -> dict[str, Any]:
+    """Day-by-day totals across the period, for a chart: spend, CTR and ROAS over time.
+
+    Reuses `_rows`, so live and demo stay the same two sources as `findings`; the grouping here is
+    by day instead of by format or hook.
+    """
+    cfg = creative_config()
+    since, until = _range(cfg.insight_days if days is None else days)
+    rows, source, currency = _rows(brand, since, until)
+    if source == "demo":
+        return _demo_trend(brand, since, until, currency)
+    by_day: dict[str, dict[str, float]] = {}
+    for row in rows:
+        day = str(row.get("day") or "")
+        if not day:
+            continue
+        acc = by_day.setdefault(
+            day, {"spend": 0.0, "impressions": 0.0, "clicks": 0.0, "purchases": 0.0, "value": 0.0}
+        )
+        acc["spend"] += float(row.get("spend") or 0)
+        acc["impressions"] += float(row.get("impressions") or 0)
+        acc["clicks"] += float(row.get("clicks") or 0)
+        acc["purchases"] += float(row.get("purchases") or 0)
+        acc["value"] += float(row.get("purchase_value") or 0)
+    return {
+        "brand": brand,
+        "source": source,
+        "currency": currency,
+        "from": since.isoformat(),
+        "to": until.isoformat(),
+        "days": [_day_point(day, acc) for day, acc in sorted(by_day.items())],
     }
 
 

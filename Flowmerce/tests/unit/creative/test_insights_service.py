@@ -184,6 +184,25 @@ def test_findings_reject_an_impossible_range() -> None:
         service.findings("ridhi", days=0)
 
 
+def test_trend_covers_every_day_of_the_period_with_the_demo_totals() -> None:
+    out = service.trend("ridhi", days=7)
+    assert out["source"] == "demo"
+    assert out["currency"] == "USD"
+    assert len(out["days"]) == 7
+    assert [d["date"] for d in out["days"]] == sorted(d["date"] for d in out["days"])
+    # Split across the week, not one day carrying the whole period's total.
+    total_spend = sum(a["spend"] for a in service._DEMO_ADS)
+    day_spend = {d["spend"] for d in out["days"]}
+    assert len(day_spend) > 1
+    assert all(d["spend"] < total_spend for d in out["days"])
+    assert round(sum(d["spend"] for d in out["days"]), 2) == round(total_spend, 2)
+
+
+def test_trend_rejects_an_impossible_range() -> None:
+    with pytest.raises(service.InputError):
+        service.trend("ridhi", days=0)
+
+
 def test_concepts_are_sample_concepts_in_demo_mode() -> None:
     out = service.concepts("ridhi")
     assert out["source"] == "demo"
