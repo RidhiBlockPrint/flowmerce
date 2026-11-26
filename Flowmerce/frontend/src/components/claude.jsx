@@ -139,13 +139,22 @@ export function ClaudeInstructions({ article, dirty, onRevised }) {
     </Card>);
 }
 
-const RUN_STEPS = [['research', 'Choosing a topic'], ['draft', 'Writing the draft'], ['revise', 'Fixing what the quality check found'], ['done', 'Approved and saved']];
+const RUN_STEPS = [['research', 'Choosing a topic'], ['draft', 'Writing the draft'], ['revise', 'Fixing what the quality check found'], ['image', 'Making the featured image'], ['done', 'Approved and saved']];
 
-/** "Write a blog": one click to a finished hidden Shopify draft (research, pick, draft, approve, save). Shows live progress. */
-export function WriteBlog({ brand, size = 'sm', variant = 'primary', onDone }) {
+/** What "Write a blog" does, in the words shown on its tooltip and in the toast when it starts. */
+export const WRITE_BLOG_HELP = 'Writes one blog now, start to finish: Claude suggests 3 topics, Flowmerce picks the best new one, Claude writes it '
+    + '(SEO fields, images, product links) and Flowmerce approves it. It stays in Flowmerce: nothing goes to Shopify until you schedule it and a '
+    + 'reviewer authorizes it. About 5–10 minutes and about $1.20 of the daily Claude limit. You can stop it while it runs.';
+
+/**
+ * "Write a blog": one click to a finished, approved blog kept in Flowmerce (research, pick, draft, approve). Shows live
+ * progress and a Stop button while Claude works; when it is done, links to the blog so it can be scheduled.
+ */
+export function WriteBlog({ brand, size = 'sm', variant = 'primary', onDone, onStart }) {
     const toast = useToast();
     const [run, setRun] = useState(null);
     const [starting, setStarting] = useState(false);
+    const [stopping, setStopping] = useState(false);
     const busy = starting || run?.status === 'running';
     useEffect(() => {
         if (!brand)
@@ -165,7 +174,7 @@ export function WriteBlog({ brand, size = 'sm', variant = 'primary', onDone }) {
                     toast.ok(`Blog ready: ${r.article_title ?? 'draft'}. ${r.message}`);
                     onDone?.(r);
                 }
-                else if (r.status === 'failed')
+                else if (r.status === 'failed' && !r.message?.startsWith('Stopped by'))
                     toast.error(new Error(`Write a blog stopped: ${r.message}`));
             }
             catch { /* try again on the next tick */ }
@@ -176,7 +185,8 @@ export function WriteBlog({ brand, size = 'sm', variant = 'primary', onDone }) {
         setStarting(true);
         try {
             setRun(await api.post('/autopilot', { brand }));
-            toast.ok('Writing a blog: Claude picks a topic, writes it, and Flowmerce saves it as a hidden Shopify draft. About 5–10 minutes.');
+            onStart?.();
+            toast.ok('Writing a blog: Claude picks a topic and writes it; Flowmerce approves it and keeps it here, ready to schedule. About 5–10 minutes. Stop it any time.');
         }
         catch (e) {
             toast.error(e);
@@ -185,12 +195,60 @@ export function WriteBlog({ brand, size = 'sm', variant = 'primary', onDone }) {
             setStarting(false);
         }
     };
+    const stop = async () => {
+        setStopping(true);
+        try {
+            const r = await api.post(`/autopilot/${run.id}/stop`);
+            setRun(r);
+            toast.ok('Stopped. Claude will not spend any more on this blog.');
+            onDone?.(r);
+        }
+        catch (e) {
+            toast.error(e);
+        }
+        finally {
+            setStopping(false);
+        }
+    };
     const step = RUN_STEPS.findIndex(([k]) => k === run?.step);
     return (<span className="row-wrap" style={{ gap: 8 }}>
-      <Button size={size} variant={variant} icon="sparkle" loading={busy} disabled={!brand || busy} onClick={start} title={brand ? 'Uses about $1.20 of the daily Claude limit' : 'Pick one brand first'}>
+      <Button size={size} variant={variant} icon="sparkle" loading={busy} disabled={!brand || busy} onClick={start} title={brand ? WRITE_BLOG_HELP : 'Pick one brand first'}>
         {busy ? 'Writing…' : 'Write a blog'}
       </Button>
-      {run?.status === 'running' ? <span className="small muted">{run.message || RUN_STEPS[step]?.[1]}</span> : null}
-      {run?.status === 'done' && run.article_id ? <a className="small" href={`/articles/${run.article_id}`}>Open “{run.article_title}”</a> : null}
+      {run?.status === 'running' ? (<>
+          <Button size={size} variant="secondary" icon="pause" loading={stopping} onClick={stop} title="Stop this blog. Claude's unfinished work is cancelled; nothing is approved.">Stop</Button>
+          <span className="small muted">{run.message || RUN_STEPS[step]?.[1]}</span>
+        </>) : null}
+      {run?.status === 'done' && run.article_id ? <a className="small" href={`/articles/${run.article_id}?tab=publish`}>Schedule “{run.article_title}”</a> : null}
     </span>);
+}
+
+/**
+ * The switch for the automatic blogs (services/auto_blog.py): Flowmerce writes the planned blogs by itself, 5 days before
+ * each publishing day. Pausing stops new ones from starting; a blog Claude is writing can be stopped from the calendar.
+ */
+export function AutoBlogSwitch({ enabled, onChanged, size }) {
+    const toast = useToast();
+    const { can } = useApp();
+    const [busy, setBusy] = useState(false);
+    if (enabled === undefined || !can('workflow:run'))
+        return null;
+    const toggle = async () => {
+        setBusy(true);
+        try {
+            await api.patch('/blog/autopilot', { enabled: !enabled });
+            toast.ok(enabled ? 'Automatic blogs are paused. Nothing new will start.' : 'Automatic blogs are on. The next one starts 5 days before its day.');
+            onChanged?.();
+        }
+        catch (e) {
+            toast.error(e);
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return (<Button size={size} icon={enabled ? 'pause' : 'play'} loading={busy} onClick={toggle}
+      title={enabled ? 'Stop new automatic blogs from starting. Blogs already written stay; to stop one Claude is writing now, cancel it on the calendar.'
+          : 'Let Flowmerce write the planned blogs by itself (about $2 of Claude each). They stay in Flowmerce until scheduled and authorized.'}>
+      {enabled ? 'Pause automatic blogs' : 'Start automatic blogs'}</Button>);
 }

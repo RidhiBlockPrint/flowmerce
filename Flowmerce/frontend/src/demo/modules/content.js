@@ -636,15 +636,6 @@ export const routes = [
     a.updated_at = nowIso();
     return decorate(db, a);
   }],
-  ['POST', '/articles/:id/shopify-draft', ({ params, db }) => {
-    const user = actorOf(db);
-    const a = getArticle(db, params.id);
-    need(!!a.approved_hash && a.approved_hash === a.content_hash, 409, 'Only reviewer-approved content can be saved to Shopify. Send it for review first.', 'not_approved');
-    need(!a.shopify_published, 409, 'This article is already live; use an update request instead.', 'bad_state');
-    a.demo_draft_at = nowIso();
-    addAudit(db, { action: 'shopify.draft', brand: a.brand_id, entity: { type: 'article', id: a.id }, detail: { summary: `Simulated hidden draft prepared for "${a.title}" v${a.version}. ${DEMO_NOTE}`, simulated: true }, userId: user.id });
-    return { ok: true, simulated: true, message: 'Demo only: draft prepared in the demo. Nothing was sent to Shopify.' };
-  }],
   ['POST', '/articles/:id/publish-request', ({ params, body, db }) => {
     const user = actorOf(db);
     const a = getArticle(db, params.id);

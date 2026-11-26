@@ -6,13 +6,14 @@ import { useNavigate, useSearchParams } from '../lib/nav';
 import { api, useApi, qs, download } from '../lib/api';
 import { useApp, useBrandParam } from '../lib/app';
 import { fmtCompact, fmtDate, fmtInt, fmtPct, fmtPos, fmtSeconds, pctChange } from '../lib/format';
-import { Button, Card, Delta, ErrorState, LoadingBlock, PageHead, SourceBadge, Tabs, BrandTag, Paged } from '../components/ui';
+import { Button, Card, Delta, ErrorState, LoadingBlock, PageHead, SourceBadge, BrandTag, Paged } from '../components/ui';
 import { useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import { LineChart, BarList } from '../components/charts';
 import { GscKpis, Ga4Kpis, seriesFrom } from '../components/metrics';
+import { tabLabel } from '../lib/routes.mjs';
 export default function Analytics() {
-    const [sp, setSp] = useSearchParams();
+    const [sp] = useSearchParams();
     // Any other value (such as the retired ?tab=compare) falls back to Search Console.
     const tab = ['ga4', 'articles'].includes(sp.get('tab')) ? sp.get('tab') : 'gsc';
     const brand = useBrandParam();
@@ -36,15 +37,10 @@ export default function Analytics() {
         }
     };
     return (<>
-      <PageHead title="SEO & traffic" sub={<>Blog pages · {fmtDate(range.from)} – {fmtDate(range.to)} vs the previous period</>} actions={can('analytics:sync') ? <>
+      <PageHead title={tabLabel('/analytics', tab)} crumbs="SEO & traffic" sub={<>Blog pages · {fmtDate(range.from)} – {fmtDate(range.to)} vs the previous period</>} actions={can('analytics:sync') ? <>
           <Button size="sm" icon="refresh" loading={syncing === 'gsc'} onClick={() => sync('gsc')}>Sync Search Console</Button>
           <Button size="sm" icon="refresh" loading={syncing === 'ga4'} onClick={() => sync('ga4')}>Sync GA4</Button>
         </> : null}/>
-      <Tabs value={tab} onChange={(t) => { const n = new URLSearchParams(sp); n.set('tab', t); setSp(n, { replace: true }); }} tabs={[
-            { key: 'gsc', label: <><Icon name="google" size="sm"/>Search Console</> },
-            { key: 'ga4', label: <><Icon name="analytics" size="sm"/>GA4</> },
-            { key: 'articles', label: 'By article' },
-        ]}/>
       {tab === 'ga4' ? <Ga4Tab key={rk}/> : tab === 'articles' ? <ArticlesTab key={rk}/> : <GscTab key={rk}/>}
       <div className="muted xs mt-24">Export analytics workbooks from <Link href="/settings/data">Data import/export</Link>. <button className="btn ghost xs" onClick={() => download(`/data/export/gsc_pages${qs({ brand, from: range.from, to: range.to })}`).catch(toast.error)}>Export Search Console pages</button></div>
     </>);

@@ -1,408 +1,426 @@
-"""Meta Marketing API client: reading only.
+"""A read-only client for the Meta Marketing API (Graph API), using httpx (already a project
+dependency).
 
-What this file may do: list the ad accounts the token can see, read campaigns, ad sets, ads and
-their creatives, and read daily insights. What it must never do: create, pause or change anything.
-The token Flowmerce asks for carries `ads_read` and `business_management` only, so a write would
-fail at the platform anyway; the point of saying so here is that nobody adds one later by accident.
-
-Shape of the API (developers.facebook.com/docs/marketing-api, read 2026-11-25):
-  * Everything hangs off https://graph.facebook.com/<version>/, with the version pinned in config.
-  * GET /act_<id>/insights returns a `data` array of rows plus `paging`; metric values are strings.
-  * `level` picks the row grain (account, campaign, adset, ad) and `time_increment=1` gives one row
-    per day. `fields` chooses the metrics; `actions` and `action_values` come back as lists of
-    {action_type, value} pairs, from which purchases are read as `omni_purchase` (falling back to
-    `purchase`, which is what the Pixel alone reports).
-  * Long ranges should go through an async report run (POST, then poll `async_status`), which this
-    MVP does not use: a 90-day read at ad level over two accounts stays inside the synchronous
-    limits. If it starts timing out, the async path is the fix, not a longer timeout.
-  * Every response carries throttle headers (`x-fb-ads-insights-throttle` with `app_id_util_pct` and
-    `acc_id_util_pct`). The client reads them and reports the utilisation so a sync can slow down
-    before Meta starts refusing calls.
-
-Errors become `MetaError` with a plain `state` the UI can show. No error message, log line or return
-value ever contains the token.
+* Only GET requests: nothing here can change a budget, a status or anything else in an ad account.
+* The access token is sent in the Authorization header, never in a URL, and never appears in a log
+  line, an error message or a return value (`_scrub` removes it from Meta's own error text too).
+* Errors become `MetaError` with a plain `state` the page can explain: token_expired, rate_limited,
+  permission, bad_request, connection_failed, error.
+* Meta's request limits: every answer carries the account's usage; at 90% or more the client stops
+  with rate_limited instead of being blocked, and the next round carries on.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import time
-from dataclasses import dataclass, field
-from datetime import date
+from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
 
-from .config import MetaCredentials
+from .config import META_API_VERSION, META_BASE_URL, MetaAccount
 
 log = logging.getLogger(__name__)
 
-GRAPH_HOST = "https://graph.facebook.com"
-
-# Insight fields the Ads page and Creative Strategist need. Kept deliberately short: every extra
-# field costs time on a 90-day ad-level read.
+# Insights fields read per ad per day. Purchases are Meta's `purchase` action and add-to-cart /
+# checkout started its combined website + app counts (`omni_*`): these are the ones that reproduce
+# the Daily sheet (checked 2026-11-24).
 INSIGHT_FIELDS = (
-    "date_start",
-    "date_stop",
-    "account_currency",
-    "campaign_id",
-    "adset_id",
-    "ad_id",
-    "spend",
-    "impressions",
-    "reach",
-    "frequency",
-    "clicks",
-    "inline_link_clicks",
-    "actions",
-    "action_values",
-    "video_3_sec_watched_actions",
-    "video_thruplay_watched_actions",
+    "ad_id,date_start,spend,impressions,inline_link_clicks,outbound_clicks,actions,action_values,"
+    "video_play_actions,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,"
+    "video_p95_watched_actions,video_avg_time_watched_actions"
 )
-
-# action_type values, best first. omni_purchase counts web and app purchases together; `purchase`
-# is what a Pixel-only setup reports.
-PURCHASE_ACTIONS = ("omni_purchase", "purchase")
-ADD_TO_CART_ACTIONS = ("omni_add_to_cart", "add_to_cart")
-CHECKOUT_ACTIONS = ("omni_initiated_checkout", "initiate_checkout")
-LANDING_PAGE_ACTIONS = ("landing_page_view",)
+MIN_PAGE = 25
+# Seconds to wait before asking again after a network failure or a Meta server error (the last
+# value is not used: the request has failed by then). Rides out a short outage of this computer's
+# internet connection (seen 2026-11-24, about 6 minutes) together with the job's 5-minute retry.
+RETRY_PAUSES = (5, 15, 45, 0)
+RATE_LIMIT_CODES = {4, 17, 32, 613, *range(80000, 80015)}
+USAGE_LIMIT_PCT = 90
 
 
 class MetaError(Exception):
-    """A Meta request that failed in a way the page can explain."""
+    """A Meta request that failed, with a `state` the page can explain and a message without
+    secrets."""
 
-    def __init__(self, state: str, message: str, status: int = 0, code: int = 0) -> None:
+    def __init__(self, state: str, message: str, status: int = 0) -> None:
         super().__init__(message)
         self.state = state
         self.message = message
         self.status = status
-        self.code = code
 
 
-def _classify(status: int, body: Any) -> MetaError:
-    """Turn Meta's error body into a state the UI can act on. Never holds the token or the URL."""
-    error = body.get("error") if isinstance(body, dict) else None
-    code = 0
-    subcode = 0
-    message = ""
-    etype = ""
-    if isinstance(error, dict):
-        try:
-            code = int(error.get("code") or 0)
-        except (TypeError, ValueError):
-            code = 0
-        try:
-            subcode = int(error.get("error_subcode") or 0)
-        except (TypeError, ValueError):
-            subcode = 0
-        message = str(error.get("message") or "")[:300]
-        etype = str(error.get("type") or "")
-    # 190 = the token is invalid or has expired; 102 = the session is no longer valid.
-    if code in (102, 190) or status == 401:
-        return MetaError(
-            "token_invalid",
-            "Meta refused the access token. It has expired or been revoked; a new system user "
-            "token is needed in META_SYSTEM_USER_TOKEN.",
-            status,
-            code,
-        )
-    # 200 / 10 = the token lacks a permission; 272 = no access to this ad account.
-    if code in (10, 200, 272) or status == 403:
-        return MetaError(
-            "permission_denied",
-            "The Meta token may not read this ad account. Check that the system user is assigned "
-            "to the account and has the ads_read permission.",
-            status,
-            code,
-        )
-    if code == 100 and subcode == 33:
-        return MetaError(
-            "not_found",
-            "Meta does not know this ad account id. Check the <BRAND>_META_AD_ACCOUNT_ID value.",
-            status,
-            code,
-        )
-    # 4 / 17 / 80000 = rate limited; subcode 1504022 is the insights throttle.
-    if code in (4, 17, 32, 613, 80000, 80004) or status == 429:
-        return MetaError(
-            "rate_limited",
-            "Meta is rate limiting the app. The sync will try again on its next round.",
-            status,
-            code,
-        )
-    if status >= 500:
-        return MetaError("platform_error", f"Meta had a server error ({status}).", status, code)
-    detail = message or etype or f"HTTP {status}"
-    return MetaError("error", f"Meta rejected the request: {detail}", status, code)
+@dataclass(frozen=True)
+class TokenInfo:
+    """When the access token stops working (None: never, or Meta did not say)."""
+
+    valid: bool
+    expires_at: datetime | None
 
 
-def _as_int(value: Any) -> int:
-    """Meta returns every figure as a string, and leaves a metric out when it is zero."""
-    try:
-        return int(float(str(value)))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _as_float(value: Any) -> float:
-    try:
-        return float(str(value))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def action_value(rows: Any, wanted: tuple[str, ...]) -> float:
-    """Read one figure out of an `actions` / `action_values` list, trying each name in turn.
-
-    Meta returns ``[{"action_type": "omni_purchase", "value": "3"}, ...]``. The first name that is
-    present wins, so a store with the Conversions API (omni_*) and one with only the Pixel
-    (purchase) both report a number instead of a gap.
-    """
-    if not isinstance(rows, list):
-        return 0.0
-    by_type = {
-        str(row.get("action_type")): row.get("value")
-        for row in rows
-        if isinstance(row, dict) and row.get("action_type")
-    }
-    for name in wanted:
-        if name in by_type:
-            return _as_float(by_type[name])
-    return 0.0
-
-
-@dataclass
-class Throttle:
-    """What Meta's throttle headers said on the last response (percent of the limit used)."""
-
-    app_pct: float = 0.0
-    account_pct: float = 0.0
-    tier: str = ""
-
-    @property
-    def near_limit(self) -> bool:
-        """Meta's guidance is to back off as utilisation approaches 100%."""
-        return max(self.app_pct, self.account_pct) >= 75.0
-
-
-@dataclass
 class MetaClient:
-    """Read-only Meta client. One instance per store; safe to reuse between requests."""
+    """Read-only access to one brand's Meta ad account."""
 
-    creds: MetaCredentials
-    timeout: float = 30.0
-    transport: httpx.BaseTransport | None = None
-    throttle: Throttle = field(default_factory=Throttle)
-    _client: httpx.Client | None = field(default=None, repr=False)
-
-    def _http(self) -> httpx.Client:
-        if not self.creds.configured:
-            raise MetaError(
-                "not_configured",
-                "Meta Ads is not connected. Set META_SYSTEM_USER_TOKEN and the store's "
-                "<BRAND>_META_AD_ACCOUNT_ID in .env.",
-            )
-        if self._client is None:
-            self._client = httpx.Client(
-                base_url=f"{GRAPH_HOST}/{self.creds.api_version}",
-                timeout=self.timeout,
-                transport=self.transport,
-            )
-        return self._client
+    def __init__(
+        self,
+        account: MetaAccount,
+        transport: httpx.BaseTransport | None = None,
+        timeout: float = 90.0,
+    ) -> None:
+        self.account = account
+        self._http = httpx.Client(
+            base_url=f"{META_BASE_URL}/{META_API_VERSION}",
+            headers={"Authorization": f"Bearer {account.token}", "User-Agent": "flowmerce-ads/1.0"},
+            # A connection that cannot be opened in 15 s is retried (see get) rather than waited on.
+            timeout=httpx.Timeout(timeout, connect=15.0),
+            transport=transport,
+        )
 
     def close(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+        """Close the connection pool."""
+        self._http.close()
 
-    # -------------------------------------------------------------- low level
-    def _get(self, path: str, params: dict[str, str], *, attempts: int = 3) -> dict[str, Any]:
-        """One GET, with the token added here and nowhere else. Retries network errors and 5xx."""
-        query = dict(params)
-        query["access_token"] = self.creds.token
+    def __enter__(self) -> MetaClient:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    # ------------------------------------------------------------------ low level
+    def _scrub(self, text: str) -> str:
+        return text.replace(self.account.token, "<hidden>") if self.account.token else text
+
+    def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """One GET. `path` is relative to the pinned API version, or a full `paging.next` URL from
+        Meta."""
         last: Exception | None = None
-        for i in range(max(attempts, 1)):
+        for attempt, pause in enumerate(RETRY_PAUSES):
+            final = attempt == len(RETRY_PAUSES) - 1
             try:
-                response = self._http().get(path, params=query)
-            except httpx.HTTPError as exc:
-                last = exc
-                if i + 1 < attempts:
-                    time.sleep(0.5 * (i + 1))
+                r = self._http.get(path, params=params)
+            except httpx.HTTPError as e:  # a network blip: wait a little longer each time
+                last = e
+                if not final:
+                    time.sleep(pause)
                     continue
                 raise MetaError(
-                    "connection_failed", f"Could not reach Meta ({type(exc).__name__})."
+                    "connection_failed", f"Could not reach Meta ({type(e).__name__})."
                 ) from None
-            self._read_throttle(response)
-            if response.status_code >= 400:
-                try:
-                    body = response.json()
-                except ValueError:
-                    body = None
-                error = _classify(response.status_code, body)
-                # A rate limit or a server error is worth one more try; a bad token is not.
-                if error.state in ("rate_limited", "platform_error") and i + 1 < attempts:
-                    time.sleep(1.5 * (i + 1))
-                    continue
-                raise error
-            try:
-                payload = response.json()
-            except ValueError:
-                raise MetaError("error", "Meta returned a response that is not JSON.") from None
-            if not isinstance(payload, dict):
-                raise MetaError("error", "Meta returned an unexpected response shape.")
-            return payload
+            # A server error is asked again, except "too much data", which asking again the same
+            # way cannot fix (rows() and daily() split the request instead).
+            if r.status_code >= 500 and not final and b"reduce the amount of data" not in r.content:
+                time.sleep(pause)
+                continue
+            return self._answer(r)
         raise MetaError("connection_failed", f"Could not reach Meta ({type(last).__name__}).")
 
-    def _read_throttle(self, response: httpx.Response) -> None:
-        """Record the insights throttle header so a sync can slow down before Meta refuses."""
-        raw = response.headers.get("x-fb-ads-insights-throttle")
-        if not raw:
+    def _answer(self, r: httpx.Response) -> dict[str, Any]:
+        try:
+            body = r.json()
+        except ValueError:
+            raise MetaError(
+                "error", f"Meta answered HTTP {r.status_code} without JSON.", r.status_code
+            ) from None
+        if not isinstance(body, dict):
+            raise MetaError("error", "Meta answered with an unexpected shape.", r.status_code)
+        if "error" in body:
+            raise self._error(r.status_code, body["error"])
+        self._check_usage(r.headers.get("x-business-use-case-usage"))
+        return body
+
+    def _error(self, status: int, err: Any) -> MetaError:
+        e = err if isinstance(err, dict) else {}
+        code = e.get("code")
+        msg = self._scrub(str(e.get("message") or "")[:300])
+        if code == 190:
+            return MetaError(
+                "token_expired",
+                "The Meta access token has expired or was revoked. Create a new "
+                "token and put it in .env (RIDHI_/CPC_META_ACCESS_TOKEN).",
+                status,
+            )
+        if code in RATE_LIMIT_CODES:
+            return MetaError(
+                "rate_limited",
+                "Meta's request limit for this ad account is reached for now. The "
+                "next round tries again.",
+                status,
+            )
+        if code in (10, 200, 294) or (code == 100 and "permission" in msg.lower()):
+            return MetaError("permission", f"Meta refused access: {msg}", status)
+        if "reduce the amount of data" in msg.lower():
+            return MetaError("too_much", f"Meta asked for smaller requests: {msg}", status)
+        if code == 2635:
+            return MetaError(
+                "error", f"Meta no longer accepts API {META_API_VERSION}: {msg}", status
+            )
+        if status == 400:
+            return MetaError("bad_request", f"Meta rejected the request: {msg}", status)
+        return MetaError("error", f"Meta error {status}: {msg}", status)
+
+    def _check_usage(self, header: str | None) -> None:
+        """Stop before Meta blocks the account: any usage figure at USAGE_LIMIT_PCT or more."""
+        if not header:
             return
         try:
-            data = json.loads(raw)
+            usage = json.loads(header)
         except ValueError:
             return
-        if isinstance(data, dict):
-            self.throttle = Throttle(
-                app_pct=_as_float(data.get("app_id_util_pct")),
-                account_pct=_as_float(data.get("acc_id_util_pct")),
-                tier=str(data.get("ads_api_access_tier") or ""),
-            )
+        for entries in usage.values() if isinstance(usage, dict) else []:
+            for u in entries if isinstance(entries, list) else []:
+                worst = max(
+                    float(u.get(k) or 0) for k in ("call_count", "total_cputime", "total_time")
+                )
+                if (
+                    worst >= USAGE_LIMIT_PCT
+                    or float(u.get("estimated_time_to_regain_access") or 0) > 0
+                ):
+                    raise MetaError(
+                        "rate_limited",
+                        f"Meta's request limit for this ad account is {worst:.0f}% "
+                        "used. The sync stops here and carries on next round.",
+                    )
 
-    def _paged(
-        self, path: str, params: dict[str, str], *, max_pages: int = 50
-    ) -> list[dict[str, Any]]:
-        """Follow `paging.cursors.after` until the data runs out or max_pages is reached."""
-        rows: list[dict[str, Any]] = []
-        query = dict(params)
-        for _ in range(max_pages):
-            payload = self._get(path, query)
-            data = payload.get("data")
-            if isinstance(data, list):
-                rows.extend(row for row in data if isinstance(row, dict))
-            paging = payload.get("paging")
-            after = ""
-            if isinstance(paging, dict):
-                cursors = paging.get("cursors")
-                if isinstance(cursors, dict):
-                    after = str(cursors.get("after") or "")
-                if not paging.get("next"):
-                    break
-            if not after:
-                break
-            query["after"] = after
-        return rows
+    def rows(self, path: str, params: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Every row of a list answer, following Meta's `paging.next` links. When Meta asks for
+        smaller requests, the page size is halved (down to MIN_PAGE) and the same page asked
+        again."""
+        body = self._page(path, params)
+        while True:
+            yield from body.get("data") or []
+            nxt = (body.get("paging") or {}).get("next")
+            if not nxt:
+                return
+            body = self._page(str(nxt), None)
 
-    # -------------------------------------------------------------- reads
-    def accounts(self) -> list[dict[str, Any]]:
-        """The ad accounts this token can see. Used by the credential check script."""
-        rows = self._paged(
-            "/me/adaccounts",
-            {"fields": "id,account_id,name,currency,timezone_name,account_status", "limit": "50"},
+    def _page(self, path: str, params: dict[str, Any] | None) -> dict[str, Any]:
+        while True:
+            try:
+                return self.get(path, params)
+            except MetaError as e:
+                if e.state != "too_much":
+                    raise
+                if params is not None and int(params.get("limit") or 0) > MIN_PAGE:
+                    params = {**params, "limit": int(params["limit"]) // 2}
+                    continue
+                m = re.search(r"([?&]limit=)(\d+)", path)
+                if params is None and m and int(m.group(2)) > MIN_PAGE:
+                    path = path[: m.start(2)] + str(int(m.group(2)) // 2) + path[m.end(2) :]
+                    continue
+                raise
+
+    # ------------------------------------------------------------------ reads
+    def account_info(self) -> dict[str, Any]:
+        """Name, currency, time zone and status of the ad account."""
+        return self.get(
+            self.account.account_id,
+            {"fields": "account_id,name,currency,timezone_name,account_status"},
         )
-        return rows
 
-    def account(self) -> dict[str, Any]:
-        """Name, currency and timezone of the configured ad account."""
-        return self._get(
-            f"/{self.creds.account_id}",
-            {"fields": "id,name,currency,timezone_name,account_status"},
-        )
+    def token_info(self) -> TokenInfo:
+        """When the token stops working. A token that cannot be inspected counts as valid, expiry
+        unknown."""
+        try:
+            d = self.get("debug_token", {"input_token": self.account.token}).get("data") or {}
+        except MetaError as e:
+            if e.state == "token_expired":
+                return TokenInfo(False, None)
+            return TokenInfo(True, None)
+        ts = d.get("expires_at")
+        expires = datetime.fromtimestamp(int(ts), UTC) if isinstance(ts, int) and ts > 0 else None
+        return TokenInfo(bool(d.get("is_valid", True)), expires)
 
     def campaigns(self) -> list[dict[str, Any]]:
-        """Campaigns of the configured account, newest effective status included."""
-        return self._paged(
-            f"/{self.creds.account_id}/campaigns",
-            {
-                "fields": (
-                    "id,name,objective,effective_status,daily_budget,lifetime_budget,"
-                    "start_time,stop_time,updated_time"
-                ),
-                "limit": "200",
-            },
+        """Every campaign with its status and budget."""
+        return list(
+            self.rows(
+                f"{self.account.account_id}/campaigns",
+                {
+                    "fields": "id,name,objective,effective_status,daily_budget,lifetime_budget,"
+                    "bid_strategy,created_time",
+                    "limit": 200,
+                },
+            )
         )
 
     def ad_sets(self) -> list[dict[str, Any]]:
-        """Ad sets (Meta's name for an ad group)."""
-        return self._paged(
-            f"/{self.creds.account_id}/adsets",
-            {
-                "fields": "id,name,campaign_id,effective_status,daily_budget,optimization_goal",
-                "limit": "200",
-            },
+        """Every ad set with its campaign, status and budget."""
+        return list(
+            self.rows(
+                f"{self.account.account_id}/adsets",
+                {
+                    "fields": "id,name,campaign_id,effective_status,daily_budget,optimization_goal",
+                    "limit": 500,
+                },
+            )
         )
 
     def ads(self) -> list[dict[str, Any]]:
-        """Ads with the creative text Creative Strategist reads (headline, body, call to action)."""
-        return self._paged(
-            f"/{self.creds.account_id}/ads",
-            {
-                "fields": (
-                    "id,name,adset_id,effective_status,created_time,"
-                    "creative{title,body,call_to_action_type,thumbnail_url,object_type,"
-                    "url_tags,effective_object_story_id},"
-                    "tracking_specs"
-                ),
-                "limit": "200",
-            },
+        """Every ad with its campaign, ad set, status and creative (post, video, thumbnail)."""
+        return list(
+            self.rows(
+                f"{self.account.account_id}/ads",
+                {
+                    "fields": "id,name,campaign_id,adset_id,effective_status,created_time,"
+                    "creative{id,object_type,video_id,effective_object_story_id,thumbnail_url}",
+                    "limit": 100,
+                },
+            )
         )
 
-    def insights(
-        self,
-        since: date,
-        until: date,
-        *,
-        level: str = "ad",
-    ) -> list[dict[str, Any]]:
-        """Daily figures between two dates (inclusive), one row per entity per day.
+    def daily(self, since: date, until: date) -> list[dict[str, Any]]:
+        """One row per ad per account day with delivery between `since` and `until`, as ads.daily
+        rows. When Meta asks for smaller requests, the days are read in two halves."""
+        try:
+            return [
+                daily_row(r)
+                for r in self.rows(
+                    f"{self.account.account_id}/insights",
+                    {
+                        "level": "ad",
+                        "time_increment": 1,
+                        "fields": INSIGHT_FIELDS,
+                        "limit": 500,
+                        "time_range": json.dumps(
+                            {"since": since.isoformat(), "until": until.isoformat()}
+                        ),
+                    },
+                )
+            ]
+        except MetaError as e:
+            if e.state != "too_much" or since >= until:
+                raise
+            mid = since + (until - since) // 2
+            return self.daily(since, mid) + self.daily(mid + timedelta(days=1), until)
 
-        `level` is one of account, campaign, adset, ad. Meta restates recent days as late
-        conversions arrive, so callers re-read a window rather than trusting stored figures.
-        """
-        if level not in ("account", "campaign", "adset", "ad"):
-            raise MetaError("bad_request", f"Unknown insights level {level!r}.")
-        if until < since:
-            raise MetaError("bad_request", "The insights range ends before it starts.")
-        return self._paged(
-            f"/{self.creds.account_id}/insights",
+    def lifetime(self) -> list[dict[str, Any]]:
+        """Each ad's totals since it started: {ad_id, spend, purchases, value}."""
+        out = []
+        for r in self.rows(
+            f"{self.account.account_id}/insights",
             {
-                "level": level,
-                "time_increment": "1",
-                "time_range": json.dumps(
-                    {"since": since.isoformat(), "until": until.isoformat()}
-                ),
-                "fields": ",".join(INSIGHT_FIELDS),
-                "limit": "500",
+                "level": "ad",
+                "date_preset": "maximum",
+                "fields": "ad_id,spend,actions,action_values",
+                "limit": 500,
             },
-        )
+        ):
+            acts, vals = _by_type(r.get("actions")), _by_type(r.get("action_values"))
+            out.append(
+                {
+                    "ad_id": str(r.get("ad_id")),
+                    "spend": _num(r.get("spend")),
+                    "purchases": acts.get("purchase", 0.0),
+                    "value": vals.get("purchase", 0.0),
+                }
+            )
+        return out
+
+    def budget_changes(self, since: datetime) -> dict[str, datetime]:
+        """Campaigns whose budget changed since `since`, from the account's activity log: {campaign
+        id: when}."""
+        out: dict[str, datetime] = {}
+        for r in self.rows(
+            f"{self.account.account_id}/activities",
+            {
+                "fields": "event_type,event_time,object_id",
+                "since": int(since.timestamp()),
+                "limit": 200,
+            },
+        ):
+            if "budget" not in str(r.get("event_type") or ""):
+                continue
+            at = _when(r.get("event_time"))
+            oid = str(r.get("object_id") or "")
+            if at and oid and (oid not in out or at > out[oid]):
+                out[oid] = at
+        return out
 
 
-def metric_row(row: dict[str, Any]) -> dict[str, Any]:
-    """Turn one insights row into the columns of ads.daily_metric.
+# ------------------------------------------------------------------ parsing (pure)
+def _num(v: Any) -> float:
+    try:
+        return float(v)
+    except TypeError, ValueError:
+        return 0.0
 
-    Keeps Meta's own figures as they are: the platform's purchase count is what Meta claims, which
-    the Ads page shows next to (not instead of) the Shopify order count.
-    """
+
+def _by_type(items: Any) -> dict[str, float]:
+    """Meta's [{action_type, value}, ...] lists as {action_type: value}."""
     return {
-        "metric_date": str(row.get("date_start") or "")[:10],
-        "spend": round(_as_float(row.get("spend")), 2),
-        "impressions": _as_int(row.get("impressions")),
-        "reach": _as_int(row.get("reach")) or None,
-        "frequency": round(_as_float(row.get("frequency")), 3) or None,
-        "clicks": _as_int(row.get("clicks")),
-        "link_clicks": _as_int(row.get("inline_link_clicks")) or None,
-        "landing_page_views": int(action_value(row.get("actions"), LANDING_PAGE_ACTIONS)) or None,
-        "add_to_cart": round(action_value(row.get("actions"), ADD_TO_CART_ACTIONS), 2) or None,
-        "initiate_checkout": round(action_value(row.get("actions"), CHECKOUT_ACTIONS), 2) or None,
-        "purchases": round(action_value(row.get("actions"), PURCHASE_ACTIONS), 2) or None,
-        "purchase_value": round(action_value(row.get("action_values"), PURCHASE_ACTIONS), 2)
-        or None,
-        "video_3s_views": int(action_value(row.get("video_3_sec_watched_actions"), ("video_view",)))
-        or None,
-        "video_thruplays": int(
-            action_value(row.get("video_thruplay_watched_actions"), ("video_view",))
-        )
-        or None,
-        "currency": str(row.get("account_currency") or ""),
+        str(a.get("action_type")): _num(a.get("value")) for a in items or [] if isinstance(a, dict)
+    }
+
+
+def _when(v: Any) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(v).replace("+0000", "+00:00"))
+    except ValueError:
+        return None
+
+
+def daily_row(r: dict[str, Any]) -> dict[str, Any]:
+    """One Meta insights row (level=ad, one day) as an ads.daily row (amounts in the account's
+    currency)."""
+    acts, vals = _by_type(r.get("actions")), _by_type(r.get("action_values"))
+    plays = _by_type(r.get("video_play_actions")).get("video_view", 0.0)
+    avg_watch = _by_type(r.get("video_avg_time_watched_actions")).get("video_view", 0.0)
+
+    def video(field: str) -> int:
+        return int(_by_type(r.get(field)).get("video_view", 0.0))
+
+    return {
+        "ad_id": str(r.get("ad_id")),
+        "day": str(r.get("date_start")),
+        "spend": round(_num(r.get("spend")), 2),
+        "impressions": int(_num(r.get("impressions"))),
+        "clicks": int(_by_type(r.get("outbound_clicks")).get("outbound_click", 0.0)),
+        "link_clicks": int(_num(r.get("inline_link_clicks"))),
+        "lpv": int(acts.get("landing_page_view", 0.0)),
+        "atc": int(acts.get("omni_add_to_cart", acts.get("add_to_cart", 0.0))),
+        "ic": int(acts.get("omni_initiated_checkout", acts.get("initiate_checkout", 0.0))),
+        "purchases": acts.get("purchase", 0.0),
+        "value": round(vals.get("purchase", 0.0), 2),
+        "v3": int(acts.get("video_view", 0.0)),
+        "p25": video("video_p25_watched_actions"),
+        "p50": video("video_p50_watched_actions"),
+        "p75": video("video_p75_watched_actions"),
+        "p95": video("video_p95_watched_actions"),
+        "plays": int(plays),
+        "watch_s": round(avg_watch * plays, 1),
+    }
+
+
+def minor_to_major(v: Any) -> float | None:
+    """Meta's budgets are in the currency's smallest unit (cents, paise): '2000000' -> 20000.0. None
+    when unset."""
+    if v in (None, "", "0", 0):
+        return None
+    return round(_num(v) / 100, 2)
+
+
+def ad_row(account_key: str, a: dict[str, Any]) -> dict[str, Any]:
+    """One Meta ad as an ads.ads row (structure only; lifetime totals and video length are kept
+    separately)."""
+    cr = a.get("creative") or {}
+    video_id = cr.get("video_id")
+    return {
+        "id": str(a["id"]),
+        "account_key": account_key,
+        "campaign_id": str(a.get("campaign_id") or ""),
+        "ad_set_id": str(a.get("adset_id") or ""),
+        "name": str(a.get("name") or ""),
+        "status": str(a.get("effective_status") or ""),
+        "created_time": a.get("created_time"),
+        "post_id": cr.get("effective_object_story_id"),
+        "format": "video"
+        if video_id or str(cr.get("object_type") or "").upper() == "VIDEO"
+        else "image",
+        "video_id": str(video_id) if video_id else None,
+        "thumbnail_url": cr.get("thumbnail_url"),
     }

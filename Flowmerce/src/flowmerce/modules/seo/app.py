@@ -109,8 +109,7 @@ def _include_cro(app: FastAPI) -> None:
 
 
 def _include_ads(app: FastAPI) -> None:
-    """Mount the Ads module's /api/ads routes. Kept independent like Shipping and CRO: if it cannot
-    load, the other modules still start."""
+    """Mount the Ads module's /api/ads routes. Kept independent like CRO: if it cannot load, the rest still starts."""
     try:
         from ..ads.api import ads
     except Exception:  # noqa: BLE001 - a broken optional module must never stop SEO
@@ -127,6 +126,15 @@ def _include_creative(app: FastAPI) -> None:
         print(f"Creative module not loaded:\n{traceback.format_exc()}")
         return
     app.include_router(creative)
+
+
+def _start_ads_scheduler() -> None:
+    try:
+        from ..ads import scheduler as ads_scheduler
+        if ads_scheduler.start():
+            print("Ads: reading the Meta ad accounts in the background.")
+    except Exception:  # noqa: BLE001
+        print(f"Ads background job not started:\n{traceback.format_exc()}")
 
 
 def _start_cro_scheduler() -> None:
@@ -190,4 +198,5 @@ def startup(with_scheduler: bool = True) -> FastAPI:
         app.router.add_event_handler("shutdown", ai_jobs.stop_runner)   # graceful: finish or hand back running jobs
         _start_shipping_refresher()
         _start_cro_scheduler()
+        _start_ads_scheduler()
     return app

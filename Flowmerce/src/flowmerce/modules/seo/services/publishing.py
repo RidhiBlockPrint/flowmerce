@@ -1,12 +1,12 @@
-"""Shopify drafts and live publishing — the only code path that can change a storefront.
+"""Publishing — the only code path that writes articles to Shopify.
 
-Making an article visible requires, all checked here on the server:
+Drafts stay in Flowmerce (owner decision 2026-11-24): nothing is sent to Shopify until a publish request is authorized.
+Sending an article to Shopify, live now or hidden with a future publish date (a schedule), requires, all checked here:
   1. content approved by a reviewer, and unchanged since (content hash);
   2. a pending publish request for that same hash;
   3. a different person with publish:authorize approving it (admins may approve their own);
   4. the typed confirmation phrase PUBLISH;
-  5. ALLOW_LIVE_PUBLISH=true in the server environment — off by default.
-Hidden drafts (isPublished: false) also require 1 (approved and unchanged), skip 2–5, and never touch a live article."""
+  5. ALLOW_LIVE_PUBLISH=true in the server environment — off by default."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -48,35 +48,6 @@ def _adopt_existing(a: Row, blog_id: str) -> str | None:
     if hit:
         run("UPDATE articles SET shopify_article_id = ? WHERE id = ?", hit["id"], a["id"])
     return hit["id"] if hit else None
-
-
-def save_shopify_draft(user: dict, aid: int) -> Row:
-    a = get_article(aid)
-    b = brand(a["brand_id"])
-    # Only content a reviewer approved, unchanged since (any edit changes content_hash), goes to Shopify.
-    if not a["approved_hash"] or a["approved_hash"] != a["content_hash"]:
-        raise HttpError(409, "Only reviewer-approved content can be saved to Shopify. Send it for review first.", "not_approved")
-    if not shopify.configured(b):
-        raise HttpError(412, f"Shopify Admin API is not set up for {b.name}. See Integrations.", "pending_setup")
-    if a["shopify_published"]:
-        raise HttpError(409, "This article is live. Changes to a live article go through a publish request.", "live_article")
-    if not a["body_html"].strip():
-        raise HttpError(400, "Write the article body before saving it to Shopify.")
-    try:
-        blog_id = _blog_id_for(a)
-        existing = _adopt_existing(a, blog_id)
-        res = shopify.update_hidden_draft(b, existing, _to_write(a)) if existing else shopify.create_hidden_draft(b, blog_id, _to_write(a))
-        if res["isPublished"]:
-            raise RuntimeError("Shopify reports the article as published after a draft save. Check it in Shopify admin.")
-        run("UPDATE articles SET shopify_article_id=?, shopify_blog_id=?, shopify_synced_at=?, last_error=NULL WHERE id=?", res["id"], blog_id, now(), aid)
-        audit(user, "shopify.draft_update" if existing else "shopify.draft_create", "article", aid, a["brand_id"],
-              f"{a['title']} (hidden, v{a['version']})", {"shopifyId": res["id"]})
-        return get_article(aid)
-    except Exception as e:
-        msg = getattr(e, "message", None) or str(e)
-        run("UPDATE articles SET last_error=? WHERE id=?", msg[:1000], aid)
-        audit(user, "shopify.draft_failed", "article", aid, a["brand_id"], msg[:300])
-        raise
 
 
 def request_publish(user: dict, aid: int, mode: str, publish_at: str | None, note: str) -> Row:
@@ -144,9 +115,11 @@ def _execute(user: dict, req: Row, a: Row) -> dict:
         scheduled = req["mode"] == "schedule"
         res = shopify.publish_article(b, blog_id, existing, _to_write(a), req["publish_at"] if scheduled else None)
         t = now()
-        run("""UPDATE articles SET status=?, shopify_article_id=?, shopify_blog_id=?, shopify_published=1, live_hash=?, live_url=?,
+        # A scheduled article sits hidden in Shopify until its publish date, so it is not marked live here. The Shopify
+        # sync flips it to published (shopify_published=1) once Shopify reports it visible.
+        run("""UPDATE articles SET status=?, shopify_article_id=?, shopify_blog_id=?, shopify_published=?, live_hash=?, live_url=?,
                  published_at=?, publish_at=?, shopify_synced_at=?, last_error=NULL, updated_at=? WHERE id=?""",
-            "scheduled" if scheduled else "published", res["id"], blog_id, a["content_hash"],
+            "scheduled" if scheduled else "published", res["id"], blog_id, 0 if scheduled else 1, a["content_hash"],
             f"https://{b.storefront_domain}/blogs/{b.blog_handle}/{res['handle']}",
             res.get("publishedAt") or (req["publish_at"] if scheduled else t), req["publish_at"] if scheduled else None, t, t, a["id"])
         run("UPDATE publish_requests SET status='executed', executed_at=?, error=NULL WHERE id=?", t, req["id"])
@@ -221,7 +194,8 @@ def publishing_queue(brand_id: str | None) -> dict:
         # (origin shopify_admin / shopify_public) and hidden drafts saved from Flowmerce (origin app / claude). The status
         # is the Flowmerce workflow status; being hidden in Shopify says nothing about approval.
         "drafts": all_rows(f"""SELECT id, brand_id, title, status, version, origin, shopify_synced_at, updated_at FROM articles
-                               WHERE shopify_article_id IS NOT NULL AND shopify_published = 0 {aw} ORDER BY updated_at DESC""", *args),
+                               WHERE shopify_article_id IS NOT NULL AND shopify_published = 0 AND status != 'scheduled' {aw}
+                               ORDER BY updated_at DESC""", *args),
         "readyForRequest": all_rows(f"SELECT id, brand_id, title, version, approved_at, shopify_published FROM articles WHERE status = 'approved' AND approved_hash = content_hash {aw} ORDER BY approved_at DESC", *args),
         "livePublishingEnabled": config.allow_live_publish,
         "confirmPhrase": CONFIRM_PHRASE,

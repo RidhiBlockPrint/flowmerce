@@ -6,7 +6,7 @@
 export const BRAND_IDS = ['ridhi', 'cpc'];
 
 export const ALL_PERMISSIONS = [
-  'view', 'article:write', 'article:submit', 'article:review', 'publish:request', 'publish:authorize', 'shopify:draft',
+  'view', 'article:write', 'article:submit', 'article:review', 'publish:request', 'publish:authorize',
   'topic:write', 'topic:decide', 'workflow:run', 'analytics:sync', 'data:import', 'integrations:manage', 'audit:view', 'demo:manage',
 ];
 

@@ -9,7 +9,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from ..ads.config import BRAND_STORE, STORE_BRAND, store_for
+from ..ads.config import BRAND_STORE
+
+STORE_BRAND: dict[str, str] = {store: brand for brand, store in BRAND_STORE.items()}
 
 __all__ = [
     "BRAND_STORE",
@@ -20,6 +22,16 @@ __all__ = [
     "set_creative_client",
     "store_for",
 ]
+
+
+def store_for(brand: str) -> str:
+    """The ops.stores id for a brand id ('ridhi' -> 'RBP'). Raises ValueError for an unknown one."""
+    store = BRAND_STORE.get(brand)
+    if store is None:
+        raise ValueError(
+            f"Unknown brand {brand!r}; expected one of {', '.join(sorted(BRAND_STORE))}."
+        )
+    return store
 
 # A finding needs this much behind it before it is worth acting on. Below it the page still shows
 # the row, marked as too early, rather than hiding it: hidden data makes people distrust the page.
@@ -52,10 +64,10 @@ class CreativeConfig:
 def creative_config() -> CreativeConfig:
     """Read the Creative settings from the environment.
 
-    Demo follows the Ads module: while no ad platform is connected there is nothing real to read,
-    so the page shows samples and says so.
+    Demo follows whether the Ads module has a Meta account to read: while neither brand's account
+    is configured there is nothing real to read, so the page shows samples and says so.
     """
-    from ..ads.config import ads_config
+    from ..ads.config import BRANDS, meta_account
 
     flag = (os.environ.get("CREATIVE_DEMO") or "").strip().lower()
     demo_mode = (os.environ.get("DEMO_MODE") or "").strip().lower() in ("true", "1", "yes")
@@ -64,7 +76,7 @@ def creative_config() -> CreativeConfig:
     elif flag in ("true", "1", "yes"):
         demo = True
     else:
-        demo = ads_config().demo
+        demo = demo_mode or not any(meta_account(b) for b in BRANDS)
     return CreativeConfig(
         insight_days=_int_env("CREATIVE_INSIGHT_DAYS", INSIGHT_DAYS, 7, 180),
         min_impressions=_int_env("CREATIVE_MIN_IMPRESSIONS", MIN_IMPRESSIONS, 100, 1_000_000),

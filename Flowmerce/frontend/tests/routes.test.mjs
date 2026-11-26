@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { REDIRECTS } from '../redirects.mjs';
-import { NAV, NAV_ITEMS, SETTINGS, hrefOf, itemActive, moduleOf, parentOf, pathMatches, showsSearch, usesRange } from '../src/lib/routes.mjs';
+import { NAV, NAV_ITEMS, SETTINGS, hrefOf, itemActive, moduleOf, parentOf, pathMatches, showsSearch, tabLabel, usesRange } from '../src/lib/routes.mjs';
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'app');
 const pageExists = (path) => existsSync(join(APP, path.replace(/^\//, '').replace(/:id/g, '[id]').replace(/:brand/g, '[brand]'), 'page.jsx'));
@@ -15,9 +15,10 @@ test('the menu has exactly the agreed modules and pages, in order, with rarely u
     const labels = (list) => (list ?? []).map((i) => i.label);
     assert.deepEqual(NAV.map((e) => [e.label, e.kind === 'module' ? labels(e.items) : null, e.kind === 'module' ? labels(e.advanced) : null]), [
         ['Home', null, null],
-        ['SEO & Blog', ['Overview', 'Articles', 'Content calendar', 'Publishing'], ['Write it yourself', 'Topics & keywords', 'SEO & traffic', 'Automation']],
+        ['SEO & Blog', ['Overview', 'Blog pipeline', 'Content calendar', 'Publishing', 'Articles'], ['Topics', 'Keywords', 'Search Console', 'GA4 traffic', 'Traffic by article', 'Automation']],
         ['Shipping', ['Overview', 'Shipments', 'Hand checks'], ['Analytics']],
         ['Conversion (CRO)', ['Overview', 'Conversion', 'Landing pages', 'Cart & checkout', 'Products', 'Sales'], ['Site health', 'Recommendations', 'Experiments', 'Alarms', 'Change log']],
+        ['Ads', ['Overview', 'Campaigns', 'Creatives', 'Funnel', 'Actions'], ['Search terms', 'ABO to CBO gap', 'Rules']],
         ['Creative Strategist', ['Insights', 'Concepts', 'AI pack'], []],
     ]);
     assert.deepEqual(SETTINGS.items.map((i) => i.label), ['Integrations', 'Brands', 'Data management', 'Audit log']);
@@ -38,15 +39,32 @@ test('a tab in the menu links to that tab and is highlighted only while it is op
     assert.equal(hrefOf(checks), '/shipping?tab=checks');
     assert.ok(itemActive(overview, '/shipping', '') && !itemActive(checks, '/shipping', ''));
     assert.ok(itemActive(checks, '/shipping', 'checks') && !itemActive(overview, '/shipping', 'checks'));
-    assert.ok(itemActive(NAV.find((e) => e.id === 'seo').items[1], '/articles/4', ''));
+    assert.ok(itemActive(NAV.find((e) => e.id === 'seo').items.find((i) => i.to === '/articles'), '/articles/4', ''));
+});
+
+test('a page with tabs opens on its first listed tab, and the menu names the tab on screen (no tab strips on pages)', () => {
+    const seo = NAV.find((e) => e.id === 'seo');
+    const topics = seo.advanced.find((i) => i.tab === 'topics');
+    const keywords = seo.advanced.find((i) => i.tab === 'keywords');
+    assert.equal(hrefOf(topics), '/topics');
+    assert.equal(hrefOf(keywords), '/topics?tab=keywords');
+    assert.ok(itemActive(topics, '/topics', '') && !itemActive(keywords, '/topics', ''));
+    assert.equal(hrefOf(seo.advanced.find((i) => i.tab === 'gsc')), '/analytics');
+    assert.equal(tabLabel('/cro', 'landing'), 'Landing pages');
+    assert.equal(tabLabel('/cro', ''), 'Overview');
+    assert.equal(tabLabel('/analytics', 'ga4'), 'GA4 traffic');
+    for (const e of NAV.filter((x) => x.kind === 'module'))
+        assert.ok(e.blurb, `${e.label} has a one-line description for the sidebar`);
 });
 
 test('each page belongs to one module, so the sidebar can expand and highlight the right parent', () => {
-    for (const p of ['/blog', '/write', '/articles', '/articles/42', '/topics', '/calendar', '/publishing', '/analytics', '/automation'])
+    for (const p of ['/blog', '/pipeline', '/articles', '/articles/42', '/topics', '/calendar', '/publishing', '/analytics', '/automation'])
         assert.equal(moduleOf(p), 'seo', p);
     assert.equal(moduleOf('/'), 'home');
     assert.equal(moduleOf('/shipping'), 'shipping');
     assert.equal(moduleOf('/cro'), 'cro');
+    assert.equal(moduleOf('/ads'), 'ads');
+    assert.equal(moduleOf('/creative'), 'creative');
     for (const p of ['/settings/integrations', '/settings/brands', '/settings/data', '/settings/audit'])
         assert.equal(moduleOf(p), 'settings', p);
     assert.equal(moduleOf('/nope'), null);
@@ -117,4 +135,6 @@ test('Shipping has no date range or article search', () => {
     assert.equal(usesRange('/shipping'), false);
     assert.equal(showsSearch('/shipping'), false);
     assert.equal(showsSearch('/cro'), false);
+    assert.equal(showsSearch('/ads'), false);
+    assert.equal(showsSearch('/creative'), false);
 });

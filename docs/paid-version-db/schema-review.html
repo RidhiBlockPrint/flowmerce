@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flowmerce Schema Review</title>
+<style>
+:root{--bg:#f7f7f5;--panel:#fff;--ink:#1d1d1b;--mute:#66665f;--line:#e3e2dd;--acc:#2f6f5e;--accbg:#e6f1ed;--warn:#8a5a00;--warnbg:#fbf0dc;--red:#9b2c2c;--redbg:#f8e5e5;--blue:#3b5b8f;--bluebg:#e8eef8;--code:#f2f1ec}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#151614;--panel:#1d1e1c;--ink:#ecebe6;--mute:#9a9a93;--line:#2e2f2c;--acc:#7cc4ad;--accbg:#1f332d;--warn:#e3b25e;--warnbg:#3a2e17;--red:#f0a0a0;--redbg:#3b2222;--blue:#a9c1ec;--bluebg:#222c3d;--code:#121311}}
+:root[data-theme="dark"]{--bg:#151614;--panel:#1d1e1c;--ink:#ecebe6;--mute:#9a9a93;--line:#2e2f2c;--acc:#7cc4ad;--accbg:#1f332d;--warn:#e3b25e;--warnbg:#3a2e17;--red:#f0a0a0;--redbg:#3b2222;--blue:#a9c1ec;--bluebg:#222c3d;--code:#121311}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;max-width:1180px;margin:0 auto;padding:28px 16px}
+nav{position:sticky;top:20px;align-self:start;max-height:calc(100vh - 40px);overflow:auto;font-size:14px}
+nav a{display:block;padding:4px 8px;border-radius:6px;color:var(--ink);text-decoration:none}nav a:hover{background:var(--panel)}
+nav .grp{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:14px 8px 4px}
+h1{font-size:27px;margin:0 0 4px}h2{font-size:20px;margin:0 0 8px}h3{font-size:16px;margin:16px 0 6px}
+.lead{color:var(--mute);margin:0 0 18px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px;scroll-margin-top:16px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.kpi b{display:block;font-size:24px}.kpi span{font-size:13px;color:var(--mute)}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:6px 0 4px}
+th,td{text-align:left;vertical-align:top;padding:7px 8px;border-bottom:1px solid var(--line)}th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);font-weight:600}
+.tw{overflow-x:auto}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:13px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font:12.5px/1.45 ui-monospace,Consolas,monospace;margin:8px 0}
+.pill{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:99px;white-space:nowrap;vertical-align:2px}
+.must{color:var(--red);background:var(--redbg)}.should{color:var(--warn);background:var(--warnbg)}.minor{color:var(--blue);background:var(--bluebg)}.ok{color:var(--acc);background:var(--accbg)}
+.why{border-left:3px solid var(--line);padding:2px 0 2px 12px;color:var(--mute);margin:6px 0}
+ul{margin:6px 0;padding-left:20px}li{margin:3px 0}
+.meta{font-size:12px;color:var(--mute)}
+@media (max-width:820px){.wrap{grid-template-columns:minmax(0,1fr)}nav{position:static;max-height:none}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style></head><body>
+<div class="wrap">
+<nav>
+<a href="#summary">Summary</a>
+<div class="grp">Must fix</div>
+<a href="#m1">M1. Action &amp; approval</a>
+<a href="#m2">M2. Audit log</a>
+<a href="#m3">M3. Duplicate scans</a>
+<div class="grp">Should add</div>
+<a href="#s1">S1. Status map source</a>
+<a href="#s2">S2. Product sessions</a>
+<a href="#s3">S3. Escalation</a>
+<a href="#s4">S4. Images &amp; files</a>
+<a href="#s5">S5. Ads target metrics</a>
+<a href="#s6">S6. Reship &amp; note flags</a>
+<div class="grp">Minor</div>
+<a href="#minor">Minor fixes</a>
+<div class="grp">To confirm</div>
+<a href="#confirm">Not visible in the export</a>
+<a href="#coverage">Full coverage check</a>
+<a href="#next">Next steps</a>
+</nav>
+<main>
+<h1>Review of the new Flowmerce database (paid version)</h1>
+<p class="lead">For the ERP team. This checks the <code>flowmerce</code> schema you shared against what Flowmerce needs (our spec: <code>data-requirements.html</code>), including the data Flowmerce uses today in Shipping, SEO and CRO and the planned Ads module. Reviewed 24 Nov 2026. Suggested SQL below is a starting point in your naming style; adjust it as you need.</p>
+
+<div class="kpis">
+<div class="kpi"><b>100</b><span>tables reviewed</span></div>
+<div class="kpi"><b style="color:var(--red)">3</b><span>must fix</span></div>
+<div class="kpi"><b style="color:var(--warn)">6</b><span>should add</span></div>
+<div class="kpi"><b style="color:var(--blue)">9</b><span>minor</span></div>
+</div>
+
+<section id="summary"><h2>Summary</h2>
+<p>The schema covers almost everything we asked for. Every row has <code>workspace_id</code>. Every source in our spec has tables. The design keeps customer personal data out: a hashed email only, and ship-to city, state and country only. All 10 Shopify analytics tables are there, and the DHL/FedEx tracking fields are complete.</p>
+<p>Three things must be fixed before building on it:</p>
+<ul>
+<li><b>M1:</b> there is no table for outgoing changes and their approvals. <code>ads_change</code> refers to <code>flowmerce.action</code>, which is not in the schema.</li>
+<li><b>M2:</b> there is no general audit log.</li>
+<li><b>M3:</b> carrier scans have no unique key, so the same scan can be stored many times.</li>
+</ul>
+<p>The export format ("for context only") does not show unique keys, indexes or row-level security, so those are listed under <a href="#confirm">To confirm</a>.</p>
+</section>
+
+<!-- ============================== MUST FIX ============================== -->
+<section id="m1"><h2><span class="pill must">Must fix</span> M1. No table for outgoing changes and approvals</h2>
+<p><b>Found:</b> <code>ads_change.action_id</code> has a foreign key to <code>flowmerce.action(id)</code>, but no <code>action</code> table is in the schema. There is also no approval table.</p>
+<div class="why">Why it matters: the paid version reads data from the database and uses APIs only to apply changes. Every change Flowmerce sends out needs one record that follows it: requested → approved → sent → done or failed, plus the API's answer. That covers publishing a blog article, uploading a file, changing product SEO, marking an order shipped, creating an MCF order, and pausing an ad or changing its budget. SEO's publish flow today also needs two different people (the requester and the approver) and a typed confirmation. Without this table, none of the write switches can be enforced or audited.</div>
+<p><b>Please check first:</b> was <code>action</code> cut off when the SQL was copied? If it exists, compare it with the fields below.</p>
+<pre>create table flowmerce.action (
+  id              uuid primary key default gen_random_uuid(),
+  workspace_id    uuid not null references flowmerce.workspace(id),
+  store_id        uuid,
+  module          text not null check (module in ('seo','shipping','cro','ads','catalog','system')),
+  action_type     text not null,          -- 'shopify.article.publish', 'shopify.file.upload', 'shopify.product.seo_update',
+                                          -- 'shopify.fulfillment.create', 'amazon.mcf.create_order',
+                                          -- 'meta.adset.set_budget', 'google.campaign.pause', 'tracking.register', 'notify.send'
+  switch_key      text not null,          -- which flowmerce.write_switch must be on
+  target_type     text,                   -- 'seo_article', 'product', 'shop_order', 'ads_campaign' ...
+  target_id       uuid,
+  target_external_id text,
+  request         jsonb not null default '{}',   -- exactly what will be sent
+  request_hash    text not null,                 -- what was approved; sent only if unchanged
+  status          text not null default 'requested' check (status in
+                    ('requested','approved','rejected','queued','sending','succeeded','failed','cancelled')),
+  requested_by    uuid,
+  requested_at    timestamptz not null default now(),
+  run_after       timestamptz,                   -- scheduled publish
+  sent_at         timestamptz,
+  finished_at     timestamptz,
+  attempts        int not null default 0,
+  response        jsonb,                         -- API answer (ids, URLs, errors)
+  error           text,
+  idempotency_key text not null,                 -- never send the same change twice
+  unique (workspace_id, idempotency_key)
+);
+
+create table flowmerce.approval (
+  id            uuid primary key default gen_random_uuid(),
+  workspace_id  uuid not null references flowmerce.workspace(id),
+  action_id     uuid not null references flowmerce.action(id),
+  decided_by    uuid not null,
+  decision      text not null check (decision in ('approve','reject')),
+  confirm_text  text,                -- e.g. the typed word "PUBLISH"
+  approved_hash text not null,       -- must equal action.request_hash
+  note          text,
+  decided_at    timestamptz not null default now()
+);
+-- Rule to enforce (trigger or backend): approver must be a different person from requested_by
+-- for action types that need two people (Shopify publish, MCF create, ad budget).
+
+create table flowmerce.approval_policy (
+  workspace_id    uuid not null references flowmerce.workspace(id),
+  action_type     text not null,
+  needs_approval  boolean not null default true,
+  two_person      boolean not null default false,
+  min_role        text not null default 'manager',
+  primary key (workspace_id, action_type)
+);</pre>
+</section>
+
+<section id="m2"><h2><span class="pill must">Must fix</span> M2. No general audit log</h2>
+<p><b>Found:</b> <code>catalog_change</code> logs product, variant and collection changes only. Nothing records who changed a setting, a write switch, a member's role or stores, an alarm rule, an ads target, an exchange rate, a team mark or an article status.</p>
+<div class="why">Why it matters: a paid, multi-user product needs to answer "who turned on Shopify writes?" and "who changed this target?". Today's Flowmerce already keeps an audit log for SEO. For write switches it is essential, because a switch decides whether real changes reach Shopify, Amazon or the ad platforms.</div>
+<pre>create table flowmerce.audit_log (
+  id            bigint generated always as identity primary key,
+  workspace_id  uuid not null references flowmerce.workspace(id),
+  store_id      uuid,
+  at            timestamptz not null default now(),
+  actor_type    text not null check (actor_type in ('user','job','system','api')),
+  actor_id      uuid,                   -- user id when actor_type = 'user'
+  actor_label   text,                   -- job name, e.g. 'sync.shopify.orders'
+  entity_type   text not null,          -- 'write_switch','setting','member','seo_article','ads_target' ...
+  entity_id     text not null,
+  verb          text not null,          -- 'create','update','delete','approve','publish','login'
+  before        jsonb,
+  after         jsonb,
+  ip            inet,
+  note          text
+);
+create index on flowmerce.audit_log (workspace_id, at desc);
+create index on flowmerce.audit_log (workspace_id, entity_type, entity_id, at desc);
+-- Append-only: grant insert/select only; no update/delete for app roles.</pre>
+</section>
+
+<section id="m3"><h2><span class="pill must">Must fix</span> M3. Carrier scans can be stored twice</h2>
+<p><b>Found:</b> <code>flowmerce.scan</code> has no <code>external_id</code> and no unique key except its own uuid.</p>
+<div class="why">Why it matters: every tracking check (Shopify, DHL, FedEx, Amazon, the sheet) returns the full scan history again. Without a key, each check adds the same scans again. That inflates <code>scan_count</code>, shows the same event many times, and breaks the rule that a parcel's status is its newest scan by <code>scanned_at</code>.</div>
+<pre>alter table flowmerce.scan add column external_id text;   -- carrier/Shopify event id; if none, a hash of
+                                                         -- (tracking_id, scanned_at, raw_status, city)
+alter table flowmerce.scan add column raw jsonb;          -- the event as received (no personal data)
+create unique index scan_one on flowmerce.scan (tracking_id, external_id);
+create index scan_newest on flowmerce.scan (tracking_id, scanned_at desc, received_at desc);</pre>
+</section>
+
+<!-- ============================== SHOULD ADD ============================== -->
+<section id="s1"><h2><span class="pill should">Should add</span> S1. Status map can't tell Shopify's word from the carrier's</h2>
+<p><b>Found:</b> <code>status_map</code> is keyed by <code>carrier_code</code> (not null) and <code>raw_status</code>, with <code>is_delivery_proof</code>.</p>
+<div class="why">Why it matters: Shopify says "DELIVERED" for a DHL parcel, and DHL also says "delivered". Only DHL's word is proof of delivery; Shopify's is not. With carrier as the only key, both rows would be (dhl, DELIVERED), so the two can't be told apart. Shopify words also apply to every carrier, which needs an "any carrier" row.</div>
+<pre>alter table flowmerce.status_map add column source text not null default 'carrier'
+  check (source in ('shopify','carrier','aggregator','amazon','mcf_sheet','manual'));
+-- allow '*' = any carrier (add a carrier row with code '_any', or make carrier_code nullable)
+create unique index status_map_one on flowmerce.status_map
+  (coalesce(workspace_id,'00000000-0000-0000-0000-000000000000'), source, carrier_code, raw_status);
+-- Rule: source = 'shopify' rows must have is_delivery_proof = false.</pre>
+<p>We can send the full list of status words we use today: Shopify, DHL Unified API, FedEx Track API codes and the tracking-service tags.</p>
+</section>
+
+<section id="s2"><h2><span class="pill should">Should add</span> S2. Sessions per product (ShopifyQL) are missing</h2>
+<p><b>Found:</b> the <code>sq_*</code> tables cover sessions by device, channel, country, region, landing page and hour, and sales per product. They have nothing for sessions and add-to-cart per product viewed.</p>
+<div class="why">Why it matters: the CRO product screen shows, for each product, how many sessions viewed it and how many added it to cart (ShopifyQL <code>sessions … GROUP BY viewed_product</code>). This shows which products get visits but don't sell. <code>ga4_product_daily</code> is a different count (GA4 rather than Shopify) and is not always connected.</div>
+<pre>create table flowmerce.sq_product_sessions_daily (
+  workspace_id        uuid not null,
+  store_id            uuid not null,
+  day                 date not null,
+  product_external_id text not null,
+  product_id          uuid references flowmerce.product(id),
+  device              text not null default 'all',
+  sessions            integer not null default 0,
+  sessions_with_cart  integer not null default 0,
+  sessions_reached_checkout   integer not null default 0,
+  sessions_completed_checkout integer not null default 0,
+  is_final            boolean not null default false,
+  pulled_at           timestamptz not null default now(),
+  primary key (store_id, day, product_external_id, device)
+);</pre>
+</section>
+
+<section id="s3"><h2><span class="pill should">Should add</span> S3. No way to escalate alerts to a team head</h2>
+<p><b>Found:</b> <code>team</code> has only a name, and <code>member</code> has a role (owner…viewer). Today's Flowmerce (<code>ops.people</code>) has <code>team</code>, <code>title</code> and <code>is_head</code>. Alerts not answered within 4 working hours go to the head of that step's team, then to the owner. Working hours are also used for alert clocks.</p>
+<div class="why">Why it matters: <code>order_event</code> has <code>owner_team</code>, <code>assigned_to</code> and <code>due_at</code>, but nothing says who the head of a team is, so escalation can't work.</div>
+<pre>alter table flowmerce.team add column head_user_id uuid;      -- must be a member of the workspace
+alter table flowmerce.team add column code text;              -- 'production','shipment','orders','care','corporate'
+alter table flowmerce.member add column title text;
+-- order_event.owner_team stays text and holds team.code
+-- working hours / escalation rules live in flowmerce.setting (keys 'working_hours', 'escalation').</pre>
+</section>
+
+<section id="s4"><h2><span class="pill should">Should add</span> S4. AI images and uploaded files aren't recorded</h2>
+<p><b>Found:</b> <code>ai_job</code> holds the text AI jobs. There is no record of AI image generations (prompt, reference photos, result, cost per image) or of files uploaded to Shopify Files (the file id and URL an article uses).</p>
+<div class="why">Why it matters: SEO already makes banner and Pinterest images and uploads them to Shopify. Each image costs money and must be traceable to its article. Uploads also need to be checked so the same image isn't uploaded twice.</div>
+<p><b>Either</b> confirm that images are <code>ai_job</code> rows with <code>job_type = 'image'</code> (input = prompt + reference URLs, output = image URL, <code>cost_usd</code>), <b>or</b> add:</p>
+<pre>create table flowmerce.media_file (
+  id               uuid primary key default gen_random_uuid(),
+  workspace_id     uuid not null,
+  store_id         uuid not null,
+  origin           text not null check (origin in ('upload','ai_generated','shopify_sync')),
+  ai_job_id        uuid references flowmerce.ai_job(id),
+  shopify_file_id  text,                 -- set after fileCreate succeeds (via flowmerce.action)
+  url              text,
+  alt_text         text,
+  width            int, height int, bytes int, mime_type text,
+  sha256           text,                 -- stops uploading the same image twice
+  used_by_type     text, used_by_id uuid, -- e.g. seo_article
+  created_by       uuid,
+  created_at       timestamptz not null default now(),
+  unique (store_id, sha256)
+);</pre>
+</section>
+
+<section id="s5"><h2><span class="pill should">Should add</span> S5. Ads targets don't cover all the measures used</h2>
+<p><b>Found:</b> <code>ads_target.metric</code> allows only roas, cpa, ctr, cpm, frequency and daily_spend_cap.</p>
+<div class="why">Why it matters: the Meta screens are modelled on our three Ridhi sheets (daily report, creative scorecard, ABO-to-CBO gap). Those also judge CPC, hook rate (3-second views ÷ impressions), hold rate (ThruPlays ÷ 3-second views), and cost per add-to-cart and per checkout. They also use a warning level between target and breakeven.</div>
+<pre>alter table flowmerce.ads_target drop constraint ads_target_metric_check;
+alter table flowmerce.ads_target add constraint ads_target_metric_check check (metric in
+  ('roas','cpa','ctr','cpm','cpc','frequency','daily_spend_cap',
+   'hook_rate','hold_rate','cost_per_atc','cost_per_checkout'));
+alter table flowmerce.ads_target add column warn_value numeric;
+alter table flowmerce.ads_target add column platform text check (platform in ('meta','google'));  -- null = both
+alter table flowmerce.ads_target add column note text;</pre>
+</section>
+
+<section id="s6"><h2><span class="pill should">Should add</span> S6. Reship and "done" flags from order notes</h2>
+<p><b>Found:</b> <code>shop_order</code> correctly has no note text. But today's Shipping board uses two facts it derives from the note and tags: whether the order is a <b>reship / replacement</b> of another order (and which one), and whether the team wrote <b>DONE</b> in the note.</p>
+<div class="why">Why it matters: without these, reshipped orders show up as new unshipped orders, and finished orders stay on the board. We keep only the derived facts, never the note text.</div>
+<pre>alter table flowmerce.shop_order add column is_reship boolean not null default false;
+alter table flowmerce.shop_order add column reship_of_order_name text;   -- e.g. '#R1234', taken from tags/note
+alter table flowmerce.shop_order add column note_done boolean not null default false;</pre>
+</section>
+
+<!-- ============================== MINOR ============================== -->
+<section id="minor"><h2><span class="pill minor">Minor</span> Smaller fixes</h2>
+<div class="tw"><table>
+<tr><th>#</th><th>Table</th><th>Issue</th><th>Suggested change</th></tr>
+<tr><td>N1</td><td><code>write_switch</code></td><td>No primary key, so the same switch can exist twice with different values.</td><td><code>unique (workspace_id, coalesce(store_id, zero-uuid), switch_key)</code>; log every change in <code>audit_log</code> (M2).</td></tr>
+<tr><td>N2</td><td><code>ads_daily</code></td><td>Google's all-conversions (needed to show the difference from purchase-only), Meta's attribution setting and outbound clicks are missing.</td><td>Add <code>all_conversions numeric</code>, <code>all_conversions_value numeric</code>, <code>outbound_clicks bigint</code>, <code>attribution_setting text</code>.</td></tr>
+<tr><td>N3</td><td><code>ads_breakdown_daily</code></td><td>No funnel counts, so cost per add-to-cart or checkout can't be shown by placement, age or device.</td><td>Add <code>link_clicks</code>, <code>add_to_cart</code>, <code>initiate_checkout</code>.</td></tr>
+<tr><td>N4</td><td><code>sq_discount_sales_daily</code>, <code>sq_customer_type_daily</code>, <code>sq_payments_daily</code>, <code>sq_web_vitals_daily</code>, <code>sq_site_search_daily</code></td><td>No <code>is_final</code> flag, unlike the other <code>sq_*</code> tables, so today's partial numbers can't be told from settled ones.</td><td>Add <code>is_final boolean not null default false</code>.</td></tr>
+<tr><td>N5</td><td><code>ads_creative</code></td><td>Not linked to an ad account; no name or video id.</td><td>Add <code>ad_account_id uuid</code>, <code>name text</code>, <code>video_id text</code>, <code>url_tags text</code>.</td></tr>
+<tr><td>N6</td><td><code>ads_conversion_action</code></td><td>No status or "primary" flag from Google.</td><td>Add <code>status text</code>, <code>is_primary boolean</code>, <code>synced_at timestamptz</code>.</td></tr>
+<tr><td>N7</td><td><code>setting</code></td><td>CRO's free-shipping amount (marked on the order-value chart) has no defined home.</td><td>Confirm it is stored as <code>setting</code> key <code>cro.free_shipping_threshold</code> per store.</td></tr>
+<tr><td>N8</td><td><code>carrier_call</code></td><td>No link to the sync run and no count of numbers per call (FedEx allows 30 per call), so daily-limit counting is off for batch calls.</td><td>Add <code>sync_run_id uuid</code>, <code>numbers_asked int not null default 1</code>.</td></tr>
+<tr><td>N9</td><td>Notifications</td><td>No table for alerts sent by email / Slack / WhatsApp or for the morning summary (switch <code>notify_send</code> exists).</td><td>Later phase: <code>notification (id, workspace_id, channel, recipient_user_id, subject, ref_type, ref_id, status, sent_at, error)</code>.</td></tr>
+</table></div>
+</section>
+
+<!-- ============================== CONFIRM ============================== -->
+<section id="confirm"><h2>To confirm: not visible in the export</h2>
+<p>Supabase's "for context only" export leaves out indexes, multi-column unique keys, row-level security and triggers. Please confirm these exist:</p>
+<h3>Unique keys (so a re-sync updates rows instead of duplicating)</h3>
+<div class="tw"><table>
+<tr><th>Table</th><th>Unique on</th></tr>
+<tr><td>store</td><td><code>(workspace_id, id)</code> (needed by every composite foreign key) and <code>(workspace_id, code)</code></td></tr>
+<tr><td>product, variant, collection, location, blog, blog_article</td><td><code>(store_id, external_id)</code></td></tr>
+<tr><td>shop_order, order_line, fulfillment, fulfillment_event, refund, order_return</td><td><code>(store_id, external_id)</code></td></tr>
+<tr><td>product_image</td><td><code>(product_id, external_id)</code></td></tr>
+<tr><td>connection</td><td><code>(workspace_id, provider_code, account_ref)</code></td></tr>
+<tr><td>sync_job</td><td><code>(connection_id, stream)</code></td></tr>
+<tr><td>webhook_subscription</td><td><code>(connection_id, topic)</code></td></tr>
+<tr><td>raw_webhook_event</td><td><code>(provider_code, idempotency_key)</code>: Shopify resends webhooks</td></tr>
+<tr><td>ads_account</td><td><code>(workspace_id, platform, external_id)</code></td></tr>
+<tr><td>ads_campaign, ads_group, ads_ad, ads_creative, ads_keyword, ads_conversion_action</td><td><code>(store_id, platform, external_id)</code> (or <code>(ad_account_id, external_id)</code>)</td></tr>
+<tr><td>ads_change</td><td><code>(ad_account_id, external_id)</code></td></tr>
+<tr><td>tracking</td><td><code>(workspace_id, carrier_code, tracking_number)</code></td></tr>
+<tr><td>carrier_alias</td><td><code>(coalesce(workspace_id, zero), alias)</code></td></tr>
+<tr><td>mcf_order</td><td><code>(store_id, seller_fulfillment_order_id)</code></td></tr>
+<tr><td>mcf_package</td><td><code>(mcf_order_id, package_number)</code></td></tr>
+<tr><td>mcf_sheet_row</td><td><code>(store_id, mcf_id, parcel)</code>: today's key is MCF id + parcel</td></tr>
+<tr><td>seo_keyword, seo_topic</td><td><code>(store_id, keyword_norm)</code></td></tr>
+<tr><td>seo_article</td><td><code>(store_id, handle)</code></td></tr>
+<tr><td>seo_article_revision</td><td><code>(article_id, version)</code></td></tr>
+<tr><td>cro_alert</td><td><code>(store_id, dedupe_key) where status &lt;&gt; 'resolved'</code> (one open alert per issue)</td></tr>
+<tr><td>cro_recommendation</td><td><code>(store_id, code)</code>: the stable key keeps its status when the list is rebuilt</td></tr>
+<tr><td>setting</td><td><code>(workspace_id, coalesce(store_id, zero), key)</code></td></tr>
+</table></div>
+<h3>Security</h3>
+<ul>
+<li>Row-level security on <b>every</b> table, with policies by <code>workspace_id</code> (and <code>member_store</code> when <code>all_stores = false</code>). Includes the <code>raw_*</code> tables.</li>
+<li>Members only see costs (<code>variant.cost</code>, <code>ship_cost</code>, <code>ship_rate_card</code>, <code>ai_job.cost_usd</code>) when <code>can_see_costs = true</code>, through views or column grants.</li>
+<li>The browser key (anon) can read nothing; sync jobs use the service key on the server only.</li>
+<li><code>connection.secret_name</code> points to Supabase Vault; no secret value in any table.</li>
+</ul>
+<h3>Other</h3>
+<ul>
+<li>Is anything after <code>ai_job_event</code> missing from the paste (e.g. <code>action</code>, see M1)?</li>
+<li><code>raw_api_payload</code> is partitioned by <code>received_at</code>. What is the retention (we proposed 13 months)? Same question for <code>raw_webhook_event</code>, <code>carrier_call</code> (proposed 90 days) and <code>scan</code> (keep).</li>
+<li><code>updated_at</code> triggers on tables that have the column.</li>
+<li>Indexes for the main screens: <code>shop_order (store_id, src_created_at desc)</code>, <code>tracking (workspace_id, active, next_check_at)</code>, <code>scan (tracking_id, scanned_at desc)</code>, every <code>*_daily (store_id, day)</code>, <code>order_event (order_id, at desc)</code>.</li>
+<li><code>tracking.status</code> rule: <code>delivered</code> must have <code>delivered_at</code>, and <code>delivery_confirmed</code> is true only when the source can confirm delivery (not Shopify).</li>
+</ul>
+</section>
+
+<!-- ============================== COVERAGE ============================== -->
+<section id="coverage"><h2>Full coverage check against our spec</h2>
+<div class="tw"><table>
+<tr><th>Our requirement</th><th>Your tables</th><th>Result</th></tr>
+<tr><td>Workspace on every row, stores, members, store access</td><td>workspace, store, member, member_store, team, team_member</td><td><span class="pill ok">covered</span> + S3</td></tr>
+<tr><td>Secrets kept out of tables</td><td>connection.secret_name</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>Raw copy of every API answer and webhook</td><td>raw_api_payload, raw_webhook_event</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>Sync log, cursor, lock, re-pull window, history depth</td><td>sync_job, sync_run</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>Write switches, off by default</td><td>write_switch</td><td><span class="pill ok">covered</span> + N1</td></tr>
+<tr><td>Outgoing changes with approval and result</td><td>none (action referenced only)</td><td><span class="pill must">missing</span> M1</td></tr>
+<tr><td>Audit of every change</td><td>catalog_change only</td><td><span class="pill must">missing</span> M2</td></tr>
+<tr><td>Shopify orders, money, UTM, lines, fulfillments, events, refunds, returns</td><td>shop_order, order_line, fulfillment, fulfillment_line, fulfillment_event, refund, refund_line, order_return</td><td><span class="pill ok">covered</span> + S6</td></tr>
+<tr><td>Catalog, collections, stock, shop info</td><td>product, variant, product_image, collection, product_collection, location, inventory_level, shop_info, catalog_change</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>Blog and articles</td><td>blog, blog_article</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>ShopifyQL: 10 daily tables</td><td>sq_sessions_daily/hourly, sq_landing_page_daily, sq_sales_daily, sq_product_sales_daily, sq_discount_sales_daily, sq_customer_type_daily, sq_payments_daily, sq_web_vitals_daily, sq_site_search_daily</td><td><span class="pill ok">covered</span> + S2, N4</td></tr>
+<tr><td>Search Console page and page+query</td><td>gsc_page_daily, gsc_page_query_period</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>GA4 pages and products</td><td>ga4_landing_page_daily, ga4_product_daily</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>Meta + Google Ads structure, numbers, breakdowns, search terms, change history</td><td>ads_account … ads_change</td><td><span class="pill ok">covered</span> + N2, N3, N5, N6</td></tr>
+<tr><td>Ads targets, exchange rates, order attribution</td><td>ads_target, fx_rate, order_attribution</td><td><span class="pill ok">covered</span> + S5</td></tr>
+<tr><td>Carriers, name map, status map</td><td>carrier, carrier_alias, status_map</td><td><span class="pill ok">covered</span> + S1</td></tr>
+<tr><td>Shipments, tracking with DHL/FedEx fields, scans, team marks</td><td>shipment, tracking, scan, team_mark</td><td><span class="pill ok">covered</span> + M3</td></tr>
+<tr><td>Carrier call log, daily limit</td><td>carrier_call, provider.daily_call_limit</td><td><span class="pill ok">covered</span> + N8</td></tr>
+<tr><td>Exceptions, claims, costs, rate cards</td><td>ship_exception, ship_claim, ship_cost, ship_rate_card</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>Order notes, alerts, review marks</td><td>order_event, order_review</td><td><span class="pill ok">covered</span> + S3</td></tr>
+<tr><td>Amazon MCF (sheet now, API later) and FBA stock</td><td>mcf_sheet_row, mcf_order, mcf_package, mcf_item, fba_stock</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>SEO team data</td><td>seo_brand_settings, seo_automation_state, seo_keyword, seo_topic, seo_article, seo_article_revision, seo_review_note, seo_schedule_slot, seo_workflow_run</td><td><span class="pill ok">covered</span>; publish approval needs M1</td></tr>
+<tr><td>CRO team data</td><td>cro_alarm_rule, cro_alert, cro_change_log, cro_recommendation, cro_experiment, cro_goal, cro_saved_advice</td><td><span class="pill ok">covered</span> + N7</td></tr>
+<tr><td>AI jobs, tokens, cost, daily budget</td><td>ai_job, ai_job_event, workspace.ai_daily_budget_usd</td><td><span class="pill ok">covered</span> + S4</td></tr>
+<tr><td>No customer names, emails, phones, addresses or note text</td><td>shop_order (hashed email, city/state/country only)</td><td><span class="pill ok">covered</span></td></tr>
+<tr><td>Notifications</td><td>none</td><td><span class="pill minor">later</span> N9</td></tr>
+</table></div>
+</section>
+
+<section id="next"><h2>Next steps</h2>
+<ol>
+<li>ERP team: confirm whether <code>action</code> exists (M1), then add M1–M3.</li>
+<li>ERP team: answer the <a href="#confirm">To confirm</a> list, or send the full SQL with indexes and policies (Supabase: <code>pg_dump --schema-only --schema=flowmerce</code>).</li>
+<li>Both teams: agree S1–S6 and the minor items.</li>
+<li>Flowmerce team: send the seed lists (status words for Shopify / DHL / FedEx / tracking service, carrier name map, default alarm rules) once S1 is settled.</li>
+</ol>
+<p class="meta">Prepared by the Flowmerce team from the schema text shared on 24 Nov 2026. Suggested SQL has not been run against your database.</p>
+</section>
+</main></div>
+</body></html>

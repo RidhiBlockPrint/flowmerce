@@ -1156,6 +1156,15 @@ a.blogcal-slot:hover { transform: translateY(-1px); box-shadow: var(--shadow-1);
 .imgsrc { display: flex; flex-direction: column; gap: 10px; }
 .imgsrc .seg button { display: inline-flex; align-items: center; gap: 6px; }
 .imgsrc-link { display: flex; gap: 8px; }
+/* AI image prompt (components/ImagePrompt.jsx) */
+.imgprompt { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.imgprompt-text { font-size: 12px; line-height: 1.5; resize: vertical; white-space: pre-wrap; }
+.imgprompt-ref { display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px 4px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: inherit; text-decoration: none; }
+.imgprompt-ref img { border-radius: 6px; object-fit: cover; }
+.imgprompt-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.imgprompt-pic, .imgprompt-gen { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.imgprompt-gen label input[type="checkbox"] { margin: 0; }
+.imgprompt-style {white-space: pre-wrap; line-height: 1.5; color: var(--ink-2, inherit); }
 .imgsrc-link .input { flex: 1; min-width: 0; }
 .imgsrc-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; cursor: pointer;
   padding: 22px 14px; border: 1.5px dashed var(--line-2); border-radius: 12px; background: var(--surface-3); transition: border-color 0.15s, background 0.15s, transform 0.15s; }
@@ -1384,8 +1393,27 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
 .lane-chip.dim { opacity: 0.15; }
 .lane-chip.hl { box-shadow: 0 0 0 2px var(--lane); transform: scale(1.03); }
 .lane-chip { transition: opacity 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease; }
-.calwrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
-@media (max-width: 1180px) { .calwrap { grid-template-columns: minmax(0, 1fr); } }
+/* The calendar on one screen (owner request 2026-11-24): Calendar.jsx gives .calwrap.fit the height left in the window; the
+   day cells share it (rows of equal height) and the side panel scrolls inside itself, so the whole month shows without
+   scrolling the page and nothing is left empty beside or under it. */
+.calwrap { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: stretch; }
+.calmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.calmain > .lanecal { flex: 1 1 auto; min-height: 0; }
+.calwrap.fit .lanecal-day { min-height: 0; overflow: hidden; }
+.calmain > .agenda, .calmain > .callist { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.calwrap.fit .dayside { position: static; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.dayside-tabs { display: flex; margin-bottom: 12px; }
+.dayside-tabs button { flex: 1 1 0; white-space: nowrap; }
+.dayside-event { padding: 10px 0; border-top: 1px solid var(--line-2); }
+.dayside-event:first-child { border-top: 0; padding-top: 4px; }
+.calcard > .card-head { row-gap: 8px; }
+.calcard .calfilters { margin-bottom: 0; }
+.content:has(.calcard) { padding-bottom: 16px; }   /* a one-screen page: only a small margin under the calendar */
+@media (max-width: 1180px) {
+  .calwrap { grid-template-columns: minmax(0, 1fr); }
+  .calwrap.fit { height: auto !important; }
+  .calwrap.fit .lanecal-day { min-height: 64px; }
+}
 .lanecal-day.sel { border: 2px solid var(--info); padding: 6px; box-shadow: 0 0 0 4px var(--info-soft); }
 .lanecal-day.today.sel { border-color: var(--ink); }
 .lanecal-day.tall { min-height: 180px; }
@@ -1692,3 +1720,272 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
 .creative-page .cc-prose .mt-4 { margin-top: 10px; }
 .creative-page .cc-prose ul.small { line-height: 1.6; }
 
+/* Blog pipeline (views/BlogPipeline.jsx): the six stages of a blog stacked full width, in building order. Empty stages
+   take one line, so the next stage follows straight on without a gap. */
+.pipe { display: flex; flex-direction: column; gap: 12px; }
+.pipe-stage { scroll-margin-top: 12px; }
+.pipe-n { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 8px; border-radius: 50%; background: var(--ink); color: var(--surface);
+  font-size: 12px; font-weight: 700; vertical-align: 1px; }
+.pipe-stage.is-empty .pipe-n { background: var(--surface-3); color: var(--muted); }
+.pipe-stage.is-empty > .card-head { border-bottom: 0; padding-bottom: 4px; }
+.pipe-empty { padding: 0 16px 14px 46px; }
+.pipe-table { width: 100%; }
+.pipe-table td.title-cell { width: 60%; }
+.pipe-table td:last-child { white-space: nowrap; }
+.pipe-acts { gap: 6px; justify-content: flex-end; }
+@media (max-width: 720px) { .pipe-table td:last-child { white-space: normal; } .pipe-table td.title-cell { width: auto; } }
+
+/* ------------------------------------------------------------------------------------------------------------------
+   No empty space beside or under a section, in every module (owner rule, 2026-11-24). Pages built from these layouts
+   follow it automatically; a new module should use them (or the same pattern) instead of top-aligned grids:
+   - side-by-side columns take the row's full height, and each column's last section grows to fill it, so both end level;
+   - sections side by side in a row are the same height;
+   - the article editor's side panel travels with the editor (sticky, scrolling inside itself if taller than the screen),
+     so a long article never leaves an empty column beside it.
+   Do not add align-items: start to a layout of sections. ------------------------------------------------------------ */
+.grid.main-side, .grid.side-main, .workspace-main, .ov-two, .grid.cols-2, .grid.cols-3 { align-items: stretch; }
+:is(.grid.main-side, .grid.side-main, .workspace-main, .ov-two) > .col { display: flex; flex-direction: column; }
+:is(.grid.main-side, .grid.side-main, .workspace-main, .ov-two) > .col > :last-child { flex: 1 1 auto; }
+.editor-layout > :last-child { position: sticky; top: 12px; align-self: start; max-height: calc(100vh - 24px); overflow-y: auto;
+  scrollbar-width: thin; overscroll-behavior: contain; }
+@media (max-width: 1180px) { .editor-layout > :last-child { position: static; max-height: none; overflow: visible; } }
+
+/* ------------------------------------------------------------------------------------------------------------------
+   Sidebar: the modules are the main way around (owner request 2026-11-24; pages no longer repeat it as tab strips).
+   Each module has its own colour, taken from the logo's threads, set once here by data-mod (components/Shell.jsx). Its
+   entry is a colour tile with the icon, the module's name and a one-line description (lib/routes.mjs blurb). The open
+   module is a tinted panel holding its pages: a rail in the module's colour, and a raised white pill for the page on
+   screen. ------------------------------------------------------------------------------------------------------------ */
+:root { --sidebar-w: 260px; }
+[data-mod] { --mod: var(--ink); }
+[data-mod='home'] { --mod: #0b1020; }
+[data-mod='seo'] { --mod: #e2543d; }
+[data-mod='shipping'] { --mod: #4a6fe0; }
+[data-mod='cro'] { --mod: #1fa874; }
+[data-mod='ads'] { --mod: #7a58e0; }
+[data-mod='creative'] { --mod: #c2488f; }
+
+.sidebar { background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 60%, var(--surface-3) 100%); padding: 16px 12px 12px; }
+.sidebar .logo { padding-bottom: 14px; margin-bottom: 6px; border-bottom: 1px solid var(--line-2); }
+.sidebar nav { gap: 4px; }
+.nav-label.nav-modules { padding: 14px 12px 4px; }
+
+/* A module (or Home) head: tile, name, one-line description. */
+.nav-item.nav-parent { height: auto; min-height: 52px; padding: 8px; gap: 11px; border-radius: 12px; color: var(--ink); font-weight: 500; }
+.nav-item.nav-parent:hover { background: color-mix(in srgb, var(--mod) 7%, var(--surface)); }
+.nav-parent.parent-active { color: var(--ink); }
+.nav-tile { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; flex: none;
+  background: color-mix(in srgb, var(--mod) 13%, var(--surface)); color: var(--mod);
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease; }
+.nav-item .nav-tile .icon, .nav-item.active .nav-tile .icon { color: inherit; }
+.nav-item.nav-parent:hover .nav-tile { transform: translateY(-1px); }
+.nav-module.here .nav-tile, .nav-home.active .nav-tile { background: var(--mod); color: #fff;
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--mod) 32%, transparent); }
+.nav-parent .nav-text { display: flex; flex-direction: column; min-width: 0; }
+.nav-name { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); line-height: 1.25; }
+.nav-blurb { font-size: 11.5px; font-weight: 450; color: var(--muted); line-height: 1.3; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-home.active { background: color-mix(in srgb, var(--mod) 5%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mod) 14%, var(--line)); }
+
+/* The open module: a tinted panel holding its pages. */
+.nav-module { border-radius: 14px; border: 1px solid transparent; transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease; }
+.nav-module.here { background: color-mix(in srgb, var(--mod) 6%, var(--surface)); border-color: color-mix(in srgb, var(--mod) 20%, var(--line));
+  box-shadow: 0 1px 2px rgba(30, 26, 23, 0.04), 0 8px 20px -14px color-mix(in srgb, var(--mod) 45%, transparent); padding-bottom: 6px; }
+.nav-module.here > .nav-parent:hover { background: transparent; }
+.nav-module .nav-sub { margin: 2px 8px 2px 25px; padding-left: 12px; border-left: 2px solid color-mix(in srgb, var(--mod) 22%, transparent); gap: 2px; }
+.nav-module .nav-sub .nav-item { height: 32px; padding: 0 9px; font-size: 13px; border-radius: 8px; position: relative; }
+.nav-module .nav-sub .nav-item:hover { background: color-mix(in srgb, var(--mod) 9%, var(--surface)); }
+.nav-module .nav-sub .nav-item.active { background: var(--surface); color: var(--ink); font-weight: 650;
+  box-shadow: 0 1px 3px rgba(30, 26, 23, 0.08), inset 0 0 0 1px color-mix(in srgb, var(--mod) 22%, transparent); }
+.nav-module .nav-sub .nav-item.active::before { content: ''; position: absolute; left: -14px; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: var(--mod); }
+.nav-module .nav-sub .nav-item.active .icon { color: var(--mod); }
+.nav-module .nav-item .count { background: color-mix(in srgb, var(--mod) 14%, var(--surface)); color: var(--mod); }
+.nav-module .nav-item .count.alert { background: var(--crit); color: #fff; }
+.nav-module .nav-adv { margin-top: 2px; }
+.nav-module .nav-adv-toggle { height: 30px; font-size: 12px; color: var(--muted); }
+.nav-module .nav-adv-toggle:hover, .nav-module .nav-adv-toggle.open { color: var(--ink-2); background: transparent; }
+.nav-module .nav-sub.nav-sub-adv { margin: 0 0 2px 10px; border-left-style: dashed; }
+.nav-module .nav-sub.nav-sub-adv .nav-item.active::before { left: -14px; }
+
+.sidebar-foot { border-top-color: var(--line); }
+@media (prefers-reduced-motion: reduce) { .nav-tile, .nav-module { transition: none; } .nav-item.nav-parent:hover .nav-tile { transform: none; } }
+/* A module's count (e.g. publish requests waiting) sits on the corner of its tile, like a notification. */
+.nav-item.nav-parent { position: relative; }
+.nav-item.nav-parent > .count { position: absolute; left: 34px; top: 3px; margin: 0; min-width: 18px; height: 18px; padding: 0 5px; font-size: 10.5px;
+  background: var(--mod); color: #fff; box-shadow: 0 0 0 2px var(--surface); }
+.nav-item.nav-parent > .count.alert { background: var(--crit); }
+.nav-parent > .count + .nav-chevron { margin-left: auto; }
+
+/* ------------------------------------------------------------------------------------------------------------------
+   Ads Overview (components/adsOverview.jsx, owner request 2026-11-24): today's plan, headline figures with readable
+   change chips and sparklines, the editable daily goal, the platforms. Same visual language as the CRO Overview;
+   figures in the sans face (no serif on big numbers), card titles in the serif. ---------------------------------- */
+.ads-chg { display: inline-flex; align-items: center; gap: 2px; padding: 3px 9px; border-radius: 999px; font-size: 13.5px; font-weight: 700;
+  line-height: 1.3; white-space: nowrap; }
+.ads-chg.good { background: var(--ok-soft); color: var(--ok); }
+.ads-chg.bad { background: var(--crit-soft); color: var(--crit); }
+.ads-chg.flat { background: var(--surface-3); color: var(--ink-2); }
+
+.ads-kpi-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.ads-kpi { display: flex; flex-direction: column; gap: 8px; padding: 18px 20px 14px; min-width: 0; }
+.ads-kpi-label { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.ads-kpi-label .icon { color: var(--faint); }
+.ads-kpi-value { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; color: var(--ink); }
+.ads-kpi-value.t-ok { color: var(--ok); } .ads-kpi-value.t-warn { color: var(--warn); } .ads-kpi-value.t-crit { color: var(--crit); }
+.ads-kpi-cmp { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 14px; color: var(--muted); }
+.ads-kpi-cmp b { color: var(--ink-2); font-weight: 650; }
+.ads-kpi-spark { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 6px; }
+
+.ads-minis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; }
+.ads-mini { display: flex; flex-direction: column; gap: 4px; padding: 14px 20px; min-width: 0; }
+.ads-mini + .ads-mini { border-left: 1px solid var(--line-2); }
+.ads-mini .ads-chg { align-self: flex-start; font-size: 12.5px; padding: 2px 8px; }
+.ads-mini-label { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.ads-mini-value { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+
+/* Today's plan: the spend call on the left, what to do on the right. A coloured stripe says the call at a glance. */
+.ads-plan { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 0; padding: 0; overflow: hidden; }
+.ads-plan.s-red { box-shadow: inset 5px 0 0 var(--crit); } .ads-plan.s-amber { box-shadow: inset 5px 0 0 var(--warn); }
+.ads-plan.s-green { box-shadow: inset 5px 0 0 var(--ok); }
+.ads-plan.s-unknown { box-shadow: inset 5px 0 0 var(--faint); }
+.ads-plan-call { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px 20px 28px; min-width: 0; }
+.ads-plan-todo { display: flex; flex-direction: column; gap: 10px; padding: 20px 22px; background: var(--surface-2); border-left: 1px solid var(--line-2); min-width: 0; }
+.ads-plan-todo > .btn { margin-top: auto; align-self: flex-start; }
+.ads-verdict { display: flex; align-items: flex-start; gap: 14px; }
+.ads-verdict-dot { width: 14px; height: 14px; border-radius: 50%; flex: none; margin-top: 9px; animation: ads-pulse 2.2s ease-out infinite; }
+@keyframes ads-pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.18); } 70% { box-shadow: 0 0 0 10px rgba(0, 0, 0, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); } }
+.ads-verdict-title { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; }
+.ads-verdict-line { font-size: 14.5px; color: var(--ink-2); margin-top: 4px; max-width: 62ch; }
+.ads-budget { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.ads-budget > div { display: flex; flex-direction: column; gap: 2px; }
+.ads-budget b { font-size: 22px; font-weight: 700; }
+.ads-budget > .icon { color: var(--faint); }
+.ads-why { display: flex; flex-direction: column; gap: 6px; }
+.ads-plan-warn { display: flex; align-items: flex-start; gap: 8px; padding: 9px 12px; border-radius: 10px; font-size: 13px;
+  background: var(--warn-soft); color: #6e4204; border: 1px solid #f2dcb2; }
+.ads-todo { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.ads-todo li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 0; border-bottom: 1px solid var(--line-2); }
+.ads-todo li:last-child { border-bottom: 0; }
+.ads-todo-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13.5px; font-weight: 600; }
+
+/* The meter behind the spend call: three zones on one scale, the 3-day (filled) and 7-day (ring) figures as dots on it,
+   their values in the legend above so close values never overlap. */
+.ads-meter { display: flex; flex-direction: column; gap: 10px; }
+.ads-meter-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.ads-meter-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.ads-meter-legend b { font-size: 15px; color: var(--ink); }
+.ads-meter-key { display: inline-block; width: 11px; height: 11px; border-radius: 50%; }
+.ads-meter-key.d3 { background: var(--ink); }
+.ads-meter-key.d7 { border: 2px solid var(--ink); background: var(--surface); }
+.ads-meter-key.tg { width: 3px; height: 13px; border-radius: 1px; background: var(--ink-2); }
+.ads-meter-bar { position: relative; height: 20px; display: flex; align-items: center; }
+.ads-meter-track { position: relative; flex: 1; height: 12px; border-radius: 6px; overflow: hidden; background: var(--surface-3); }
+.ads-meter-track .z { position: absolute; top: 0; bottom: 0; animation: ads-grow 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; transform-origin: left; }
+.ads-meter-track .z-red { left: 0; background: color-mix(in srgb, var(--crit) 55%, var(--surface)); }
+.ads-meter-track .z-amber { background: color-mix(in srgb, var(--warn) 50%, var(--surface)); animation-delay: 80ms; }
+.ads-meter-track .z-green { background: color-mix(in srgb, var(--ok) 55%, var(--surface)); animation-delay: 160ms; }
+.ads-meter-target { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; border-radius: 1px; background: var(--ink-2); }
+.ads-meter-dot { position: absolute; top: 50%; width: 18px; height: 18px; border-radius: 50%; transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px var(--surface); animation: ads-slide 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.ads-meter-dot.d3 { background: var(--ink); }
+.ads-meter-dot.d7 { width: 22px; height: 22px; border: 3px solid var(--ink); background: transparent; box-shadow: none; }
+@keyframes ads-slide { from { left: 0; opacity: 0; } }
+.ads-meter-scale { position: relative; height: 18px; font-size: 12px; font-weight: 650; color: var(--ink-2); }
+.ads-meter-scale span { position: absolute; top: 0; white-space: nowrap; }
+.ads-meter-scale em { font-style: normal; font-weight: 500; color: var(--muted); margin-left: 3px; }
+@keyframes ads-grow { from { transform: scaleX(0); } }
+
+/* The daily sales goal: animated ring and bar, edited in place. */
+.ads-goal-body { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.ads-goal-ring { flex: none; }
+.ads-goal-main { display: flex; flex-direction: column; gap: 10px; flex: 1 1 260px; min-width: 0; }
+.ads-goal-now { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+.ads-goal-now > span:last-child { font-size: 15px; font-weight: 600; color: var(--muted); margin-left: 4px; }
+.ads-goal-target { color: var(--ink); }
+.ads-goal-edit { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ads-goal-edit .input { width: 130px; }
+.ads-goal-bar { position: relative; height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.ads-goal-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 4px; transform-origin: left; animation: ads-grow 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.ads-goal-bar > span::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: ads-shine 2.6s ease-in-out 1s infinite; }
+@keyframes ads-shine { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.ads-goal-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; }
+.ads-goal-facts > div, .ads-plat-figs > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.ads-goal-facts span, .ads-plat-figs span { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ads-goal-facts b { font-size: 18px; font-weight: 700; }
+.ads-goal .ov-card-head .btn { margin-left: auto; }
+.ads-goal { display: flex; flex-direction: column; gap: 14px; }
+.ads-goal-days { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 150px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+.ads-goal-days-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
+.ads-goal-days-head .ads-chg { font-size: 12.5px; padding: 2px 9px; }
+.ads-goal-cols { position: relative; flex: 1; min-height: 100px; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px;
+  align-items: end; margin-top: 18px; }
+.ads-goal-col { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.ads-goal-col .v { font-size: 11.5px; font-weight: 650; color: var(--ink-2); margin-bottom: 3px; white-space: nowrap; }
+.ads-goal-col .b { width: 100%; max-width: 44px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--saffron) 70%, var(--surface));
+  transform-origin: bottom; animation: ads-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.ads-goal-col .b.hit { background: var(--ok); }
+@keyframes ads-rise { from { transform: scaleY(0); } }
+.ads-goal-line { position: absolute; left: 0; right: 0; height: 0; border-top: 1.5px dashed var(--ink-2); z-index: 1; pointer-events: none; }
+.ads-goal-line em { position: absolute; right: 0; bottom: 2px; font-style: normal; font-size: 11px; font-weight: 650; color: var(--ink-2);
+  background: var(--surface); padding: 0 4px; border-radius: 4px; }
+.ads-goal-labels { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; font-size: 11.5px; color: var(--muted); text-align: center; }
+
+/* The goal and the platforms side by side; stacked where the goal card would grow taller than its neighbour. */
+.ads-pair { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: stretch; }
+.ads-plat { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 12px; }
+.ads-plat-share { font-size: 13px; font-weight: 650; color: var(--ink-2); white-space: nowrap; }
+.ads-plat-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.ads-plat-figs b { font-size: 16px; font-weight: 700; }
+
+@media (max-width: 1180px) {
+  .ads-kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ads-plan { grid-template-columns: minmax(0, 1fr); }
+  .ads-plan-todo { border-left: 0; border-top: 1px solid var(--line-2); }
+  .ads-pair { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .ads-minis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ads-mini:nth-child(3) { border-left: 0; }
+  .ads-mini:nth-child(n+3) { border-top: 1px solid var(--line-2); }
+  .ads-kpi-value, .ads-goal-now { font-size: 28px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ads-verdict-dot, .ads-meter-track .z, .ads-meter-dot, .ads-goal-col .b, .ads-goal-bar > span, .ads-goal-bar > span::after { animation: none; }
+}
+
+/* Month navigation shared by the Content calendar and the SEO & Blog overview (components/calendar.jsx): the month name
+   is a button that opens a year with its twelve months, to jump to any month of any year. */
+.monthnav { flex-wrap: nowrap; }
+.monthpicker { position: relative; }
+.monthpicker-btn { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 0; border-radius: 9px; background: none; cursor: pointer;
+  font-family: var(--serif); font-size: 20px; font-weight: 400; color: var(--ink); white-space: nowrap; }
+.monthpicker-btn:hover, .monthpicker-btn[aria-expanded='true'] { background: var(--surface-3); }
+.monthpicker-btn .icon { color: var(--muted); }
+.monthpicker-pop { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: 272px; padding: 10px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-2); animation: rise 0.15s ease both; }
+.monthpicker-year { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 8px; font-size: 15px; }
+.monthpicker-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.monthpicker-grid button { height: 36px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--surface-2); color: var(--ink-2);
+  font: inherit; font-size: 13px; cursor: pointer; transition: background 0.12s ease, border-color 0.12s ease; }
+.monthpicker-grid button:hover { background: var(--surface-3); border-color: var(--line); }
+.monthpicker-grid button.now { border-color: var(--info); color: var(--info); font-weight: 650; }
+.monthpicker-grid button.on { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 650; }
+.monthpicker-today { width: 100%; justify-content: center; margin-top: 8px; }
+
+/* The SEO & Blog overview's calendar (views/BlogHome.jsx OverviewCalendar): a month you can move through, and the
+   selected day beside it, as tall as the month (the panel scrolls inside itself). */
+.ovcal { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: stretch; margin-bottom: 22px; }
+.ovcal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.ovcal .blogcal { margin-bottom: 0; }
+.ovcal .blogcal-day { cursor: pointer; text-align: left; font: inherit; color: inherit; min-height: 96px; align-items: stretch; justify-content: flex-start; }
+.ovcal .blogcal-day.other { opacity: 0.45; }
+.ovcal .blogcal-day.sel { border: 2px solid var(--info); padding: 5px; box-shadow: 0 0 0 4px var(--info-soft); }
+.ovcal-side { position: relative; min-height: 280px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 16px; }
+.ovcal-side-in { position: absolute; inset: 0; overflow-y: auto; padding: 14px 16px; scrollbar-width: thin; overscroll-behavior: contain; }
+.ovcal-item { padding: 10px 0; border-top: 1px solid var(--line-2); }
+.ovcal-item:first-of-type { border-top: 0; }
+@media (max-width: 1180px) {
+  .ovcal { grid-template-columns: minmax(0, 1fr); }
+  .ovcal-side { min-height: 0; }
+  .ovcal-side-in { position: static; }
+}

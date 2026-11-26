@@ -3,9 +3,9 @@
 Needs a custom-app Admin API access token (shpat_…), or a Dev Dashboard app's client id and secret, with scopes read_content, write_content and
 read_products, set as RIDHI_SHOPIFY_ADMIN_TOKEN / CPC_SHOPIFY_ADMIN_TOKEN. It never leaves the server.
 
-Writes are deliberately narrow: create_hidden_draft() always sends isPublished: false, and
-update_hidden_draft() first reads the article and refuses if it is live. The only function that can
-make an article visible is publish_article(), called by services/publishing.py after its own checks.
+Writes are deliberately narrow. Drafts stay in Flowmerce and are never sent here (owner decision 2026-11-24). The only
+function that writes an article is publish_article(), called by services/publishing.py after an authorized publish
+request: live now, or (a schedule) saved hidden with a future publishDate, which Shopify shows at that time.
 upload_image() stores a picture in the store's Files for a featured image (needs the extra scope write_files)."""
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 
 from ..config import BrandConfig, config
-from ..util import HttpError
+from ..util import HttpError, parse_iso
 
 ARTICLE_FIELDS = """
   id title handle body summary tags isPublished publishedAt createdAt updatedAt
@@ -251,32 +251,25 @@ _UPDATE = """mutation($id: ID!, $article: ArticleUpdateInput!) {
   articleUpdate(id: $id, article: $article) { article { id handle isPublished publishedAt } userErrors { field message } } }"""
 
 
-def create_hidden_draft(b: BrandConfig, blog_id: str, a: dict) -> dict:
-    """Create the article hidden. isPublished is hard-coded False."""
-    d = _gql(b, _CREATE, {"article": {**_article_input(a), "blogId": blog_id, "isPublished": False}})
-    return _check(d["articleCreate"], "draft")
-
-
-def update_hidden_draft(b: BrandConfig, article_id: str, a: dict) -> dict:
-    """Update an article that is still hidden. Refuses when it is live, so a draft save can never
-    change what customers see."""
-    current = get_article(b, article_id)
-    if not current:
-        raise RuntimeError("The Shopify article no longer exists. It may have been deleted in Shopify admin.")
-    if current["isPublished"]:
-        raise HttpError(409, "This article is live on the storefront. Changes to live content go through a publish request.", "live_article")
-    d = _gql(b, _UPDATE, {"id": article_id, "article": {**_article_input(a), "isPublished": False}})
-    return _check(d["articleUpdate"], "draft update")
-
-
 def publish_article(b: BrandConfig, blog_id: str, article_id: str | None, a: dict, publish_date: str | None) -> dict:
     """Make an article visible now, at a future time, or replace a live article's content.
-    Called only by services/publishing.py."""
-    visibility: dict[str, Any] = {"isPublished": True}
-    if publish_date:
-        visibility["publishDate"] = publish_date
+    Called only by services/publishing.py.
+
+    Scheduling (publish_date given): the article is saved HIDDEN with publishDate set, and Shopify makes it visible at
+    that time. Shopify refuses isPublished: true together with a future publishDate, so the two are never sent together."""
+    visibility: dict[str, Any] = {"isPublished": False, "publishDate": publish_date} if publish_date else {"isPublished": True}
+    what = "schedule" if publish_date else "publish"
     if article_id:
         d = _gql(b, _UPDATE, {"id": article_id, "article": {**_article_input(a), **visibility}})
-        return _check(d["articleUpdate"], "publish")
-    d = _gql(b, _CREATE, {"article": {**_article_input(a), "blogId": blog_id, **visibility}})
-    return _check(d["articleCreate"], "publish")
+        res = _check(d["articleUpdate"], what)
+    else:
+        d = _gql(b, _CREATE, {"article": {**_article_input(a), "blogId": blog_id, **visibility}})
+        res = _check(d["articleCreate"], what)
+    if publish_date:
+        if res.get("isPublished"):
+            raise RuntimeError("Shopify made the article visible straight away instead of scheduling it. Check it in Shopify admin.")
+        got = res.get("publishedAt")
+        if not got or abs(parse_iso(got).timestamp() - parse_iso(publish_date).timestamp()) > 60:
+            raise RuntimeError(f"Shopify saved the article hidden but did not keep the schedule (it reports {got or 'no publish date'}). "
+                               "Check it in Shopify admin.")
+    return res

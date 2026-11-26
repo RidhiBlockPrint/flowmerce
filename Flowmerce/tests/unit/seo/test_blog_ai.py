@@ -285,17 +285,16 @@ def auto_env(blog_env, monkeypatch):
 
 def test_write_a_blog_runs_to_an_approved_draft_without_stopping(auto_env, users, monkeypatch):
     from flowmerce.modules.seo.services import autopilot
-    monkeypatch.setattr(autopilot.shopify, "configured", lambda b: False)
     r = autopilot.start(users["admin"], "ridhi")
     assert r["step"] == "research" and r["status"] == "running"
     ai_jobs.run_pending(); autopilot.advance_all()          # topics in, one picked and approved, draft job queued
     r = autopilot.get_run(r["id"])
     assert r["step"] == "draft" and get("SELECT status FROM topics WHERE id = ?", r["topic_id"])["status"] == "approved"
-    ai_jobs.run_pending(); autopilot.advance_all()          # draft written, approved, Shopify not connected in tests
+    ai_jobs.run_pending(); autopilot.advance_all()          # draft written and approved; it stays in Flowmerce
     r = autopilot.get_run(r["id"])
     a = get("SELECT * FROM articles WHERE id = ?", r["article_id"])
     assert r["status"] == "done" and a["status"] == "approved" and a["approved_hash"] == a["content_hash"] and not a["shopify_published"]
-    assert "Shopify is not connected" in r["message"]
+    assert a["shopify_article_id"] is None and r["message"] == autopilot.KEPT
     note = get("SELECT * FROM review_notes WHERE article_id = ? AND kind = 'approved'", a["id"])
     assert note["reviewer_name"] == "Flowmerce (auto)" and note["note"].startswith("Auto-approved by Flowmerce")
     assert get("SELECT 1 FROM audit_log WHERE action = 'article.auto_approve' AND entity_id = ?", str(a["id"]))
@@ -371,13 +370,30 @@ def test_a_calendar_drafting_task_approves_the_events_topic_and_runs_the_chain(a
     assert r["status"] == "done" and get("SELECT status FROM articles WHERE id = ?", r["article_id"])["status"] == "approved"
 
 
-def test_write_a_blog_ends_as_a_hidden_shopify_draft_when_shopify_is_connected(auto_env, users, monkeypatch):
-    from flowmerce.modules.seo.services import autopilot, publishing
-    saved = []
-    monkeypatch.setattr(autopilot.shopify, "configured", lambda b: True)
-    monkeypatch.setattr(publishing, "save_shopify_draft", lambda user, aid: saved.append((user["id"], aid)))
+def test_write_a_blog_never_sends_the_draft_to_shopify_even_when_shopify_is_connected(auto_env, users, monkeypatch):
+    """Owner decision 2026-11-24: drafts stay in Flowmerce; only an authorized publish request writes to Shopify."""
+    from flowmerce.modules.seo.integrations import shopify
+    from flowmerce.modules.seo.services import autopilot
+    monkeypatch.setattr(shopify, "configured", lambda b: True)
+    monkeypatch.setattr(shopify, "_gql", lambda *a, **k: (_ for _ in ()).throw(AssertionError("a draft reached Shopify")))
     r = autopilot.start(users["admin"], "ridhi")
     for _ in range(2):
         ai_jobs.run_pending(); autopilot.advance_all()
     r = autopilot.get_run(r["id"])
-    assert r["message"] == "Saved as a hidden Shopify draft." and saved == [(users["admin"]["id"], r["article_id"])]
+    a = get("SELECT * FROM articles WHERE id = ?", r["article_id"])
+    assert r["status"] == "done" and a["status"] == "approved" and a["shopify_article_id"] is None
+
+
+def test_write_a_blog_can_be_stopped_while_claude_is_working(auto_env, users):
+    from flowmerce.modules.seo.services import autopilot
+    r = autopilot.start(users["admin"], "ridhi")
+    stopped = autopilot.stop(users["admin"], r["id"])
+    assert stopped["status"] == "failed" and stopped["message"].startswith("Stopped by")
+    assert get("SELECT status FROM ai_jobs WHERE id = ?", r["research_job_id"])["status"] == "cancelled"   # no more Claude spend
+    ai_jobs.run_pending(); autopilot.advance_all()                       # nothing moves on after a stop
+    assert autopilot.get_run(r["id"])["status"] == "failed"
+    assert not get("SELECT 1 FROM articles WHERE topic_id IN (SELECT id FROM topics WHERE status = 'approved') AND origin = 'claude'")
+    with pytest.raises(Exception) as e:
+        autopilot.stop(users["admin"], r["id"])
+    assert getattr(e.value, "code", "") == "not_running"
+    autopilot.start(users["admin"], "ridhi")                              # the brand is free for a new blog

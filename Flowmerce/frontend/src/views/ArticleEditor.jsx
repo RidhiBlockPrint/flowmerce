@@ -12,9 +12,10 @@ import { Button, Card, ErrorState, Field, Kv, LivePill, LoadingBlock, Pill, Role
 import { ConfirmDialog, Dialog, useToast } from '../components/overlays';
 import { Icon } from '../components/Icon';
 import { ScoreRing } from '../components/charts';
-import { AuthorizeDialog, MODE_LABEL, RejectDialog } from '../components/publish';
+import { AuthorizeDialog, MODE_LABEL, RejectDialog, ScheduleBlogDialog } from '../components/publish';
 import { AskClaude, ClaudeInstructions, ClaudeNotes } from '../components/claude';
 import { ImageSource } from '../components/ImageSource';
+import { ImagePromptPanel } from '../components/ImagePrompt';
 const EDITABLE = ['title', 'handle', 'primary_keyword', 'meta_title', 'meta_description', 'summary_html', 'body_html', 'tags', 'author', 'image_url', 'image_alt'];
 const pick = (a) => Object.fromEntries(EDITABLE.map((k) => [k, a[k] ?? '']));
 export default function ArticleEditor() {
@@ -393,7 +394,10 @@ function EditTab({ draft, set, article, detail, editable, dirty, onRevised, rteK
         </Card>
         <Card title="Featured image">
           <div className="col gap-12">
-            {draft.image_url ? <img src={draft.image_url} alt={draft.image_alt} style={{ borderRadius: 10, aspectRatio: '16/9', objectFit: 'cover', width: '100%', background: 'var(--surface-3)' }}/> : null}
+            {draft.image_url ? <img src={draft.image_url} alt={draft.image_alt} style={{ borderRadius: 10, aspectRatio: STORE_RATIO[article.brand_id] ?? '4/3', objectFit: 'cover', width: '100%', background: 'var(--surface-3)' }}
+              title="Shown at the shape this store's blog uses"/> : null}
+            {article.id ? <ImagePromptPanel articleId={article.id} canWrite={editable} onUseAlt={editable ? (alt) => set('image_alt', alt) : undefined}
+              currentImage={draft.image_url} onUsePicture={editable ? (url, alt) => { set('image_url', url); if (alt) set('image_alt', alt); } : undefined}/> : null}
             {editable ? <ImageSource brand={article.brand_id} url={draft.image_url} alt={draft.image_alt}
               onPick={(url, alt) => { set('image_url', url); if (!draft.image_alt && alt) set('image_alt', alt); }}/>
               : <Field label="Image URL"><input className="input" value={draft.image_url} readOnly/></Field>}
@@ -405,6 +409,8 @@ function EditTab({ draft, set, article, detail, editable, dirty, onRevised, rteK
       {linkOpen ? <LinkDialog products={products.data ?? []} storefront={storefront} onClose={() => setLinkOpen(false)} onInsert={insertLink}/> : null}
     </div>);
 }
+/** The featured image shape each store's Shopify theme shows (server: image_prompts.FORMAT). */
+const STORE_RATIO = { ridhi: '1/1', cpc: '4/3' };
 const FIELD_NAME = { title: 'Title', handle: 'URL handle', primary_keyword: 'Primary keyword', meta_title: 'SEO title', meta_description: 'Meta description', summary_html: 'Listing summary', body_html: 'Article body', tags: 'Tags', author: 'Author', image_url: 'Image URL', image_alt: 'Image alt text' };
 /** Shown when a newer saved version arrives while the tab holds unsaved edits. Nothing is replaced until a person chooses. */
 function ConflictPanel({ rows, version, onCopy, onApply, onDiscard }) {
@@ -529,34 +535,18 @@ function PublishTab({ detail, dirty, onChanged }) {
     const { can, me, brandOf } = useApp();
     const toast = useToast();
     const brand = brandOf(a.brand_id);
-    const [mode, setMode] = useState(a.shopify_published ? 'update_live' : 'publish_now');
-    const [when, setWhen] = useState('');
     const [note, setNote] = useState('');
     const [busy, setBusy] = useState(null);
     const [authorize, setAuthorize] = useState(null);
     const [reject, setReject] = useState(null);
-    const [confirmDraft, setConfirmDraft] = useState(false);
+    const [scheduling, setScheduling] = useState(false);
     const pending = detail.requests.find((r) => r.status === 'pending' || r.status === 'failed');
     const canRequest = a.status === 'approved' && a.approval_current && can('publish:request');
-    const saveDraft = async () => {
-        setBusy('draft');
-        try {
-            const res = await api.post(`/articles/${a.id}/shopify-draft`);
-            toast.ok(res?.message ?? 'Saved to Shopify as a hidden draft.');
-            setConfirmDraft(false);
-            onChanged();
-        }
-        catch (e) {
-            toast.error(e);
-        }
-        finally {
-            setBusy(null);
-        }
-    };
+    /** Updating a live article (a new blog is scheduled with ScheduleBlogDialog). */
     const request = async () => {
         setBusy('request');
         try {
-            await api.post(`/articles/${a.id}/publish-request`, { mode, publish_at: mode === 'schedule' ? new Date(when).toISOString() : null, note });
+            await api.post(`/articles/${a.id}/publish-request`, { mode: 'update_live', publish_at: null, note });
             toast.ok('Publish request sent to reviewers.');
             onChanged();
         }
@@ -580,7 +570,7 @@ function PublishTab({ detail, dirty, onChanged }) {
     const req = (r) => ({ ...r, title: a.title, brand_id: a.brand_id, stale: r.content_hash !== a.content_hash });
     return (<div className="grid main-side">
       <div className="col" style={{ gap: 16, minWidth: 0 }}>
-        {!me.livePublishing ? <div className="callout warn"><Icon name="lock"/><div><b>Live publishing is off on this server.</b> Requests and approvals work, but the server refuses to make anything visible until an admin sets ALLOW_LIVE_PUBLISH=true. Hidden drafts still work.</div></div> : null}
+        {!me.livePublishing ? <div className="callout warn"><Icon name="lock"/><div><b>Live publishing is off on this server.</b> Requests and approvals work, but the server refuses to send anything to Shopify until an admin sets ALLOW_LIVE_PUBLISH=true.</div></div> : null}
         {dirty ? <div className="callout warn"><Icon name="alert"/>Save your edits first. Saving changed text sends the article back for review.</div> : null}
         {pending ? (<Card title={pending.status === 'failed' ? 'Publishing failed' : 'Waiting for authorization'} sub={`${MODE_LABEL[pending.mode]}${pending.publish_at ? ' · ' + fmtZoned(pending.publish_at) : ''} · requested by ${pending.requested_by_name ?? '—'} ${timeAgo(pending.requested_at)}`}>
             <div className="col gap-12">
@@ -595,14 +585,16 @@ function PublishTab({ detail, dirty, onChanged }) {
             </div>
           </Card>) : null}
 
-        {canRequest && !pending ? (<Card title="Request publishing" sub="A reviewer or admin authorizes it; nothing goes live from this form.">
+        {canRequest && !pending && !a.shopify_published ? (<Card title="Schedule this blog" sub="It stays in Flowmerce until a reviewer authorizes it; then it goes to Shopify hidden until its time, or live at once.">
+            <div className="row-wrap" style={{ gap: 8 }}>
+              <Button variant="primary" icon="calendar" disabled={dirty} onClick={() => setScheduling(true)} title={dirty ? 'Save your edits first' : ''}>Schedule…</Button>
+              <span className="small muted">Pick the date and time it goes live. It then shows on the content calendar.</span>
+            </div>
+          </Card>) : null}
+        {canRequest && !pending && a.shopify_published ? (<Card title="Update the live article" sub="A reviewer or admin authorizes it; nothing changes on the storefront from this form.">
             <div className="col gap-12">
-              <div className="seg" role="radiogroup" aria-label="Mode">
-                {(a.shopify_published ? ['update_live'] : ['publish_now', 'schedule']).map((m) => (<button key={m} role="radio" aria-checked={mode === m} aria-pressed={mode === m} onClick={() => setMode(m)}>{MODE_LABEL[m]}</button>))}
-              </div>
-              {mode === 'schedule' ? (<Field label={`Go live at (your local time, ${fmtZoned(new Date().toISOString()).split(' ').pop()})`}><input type="datetime-local" className="input" value={when} min={new Date(Date.now() + 15 * 60_000).toISOString().slice(0, 16)} onChange={(e) => setWhen(e.target.value)}/></Field>) : null}
               <Field label="Note for the approver"><input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional"/></Field>
-              <div><Button variant="primary" icon="send" loading={busy === 'request'} disabled={dirty || (mode === 'schedule' && !when)} onClick={request}>Send request</Button></div>
+              <div><Button variant="primary" icon="send" loading={busy === 'request'} disabled={dirty} onClick={request}>Send request</Button></div>
             </div>
           </Card>) : null}
 
@@ -640,20 +632,13 @@ function PublishTab({ detail, dirty, onChanged }) {
             ['Last sync error', a.last_error ? <span style={{ color: 'var(--crit)', overflowWrap: 'anywhere' }}>{a.last_error}</span> : 'None'],
             ['Live matches working copy', a.shopify_published ? (a.live_differs ? <span style={{ color: 'var(--warn)' }}>No — edits not live</span> : 'Yes') : '—'],
         ]}/>
-          {can('shopify:draft') && !a.shopify_published ? (<div className="mt-16">
-              <Button icon="upload" disabled={dirty || !brand.configured.shopifyAdmin || !a.approval_current} onClick={() => setConfirmDraft(true)}>{a.has_shopify_draft ? 'Update hidden draft' : 'Save as hidden Shopify draft'}</Button>
-              {!brand.configured.shopifyAdmin ? <p className="muted xs mt-8">Needs the Shopify Admin API token for {brand.name}. See Integrations.</p>
-                : !a.approval_current ? <p className="muted xs mt-8">Available once a reviewer approves this version. Any edit needs a new approval.</p>
-                : <p className="muted xs mt-8">Creates or updates the article with visibility off. Customers cannot see it.</p>}
-            </div>) : null}
+          {!a.shopify_published && a.status !== 'scheduled' ? <p className="muted xs mt-8">Drafts stay in Flowmerce. Nothing is sent to Shopify until a publish request is authorized.</p> : null}
         </Card>
       </div>
 
       {authorize ? <AuthorizeDialog req={authorize.req} retry={authorize.retry} onClose={() => setAuthorize(null)} onDone={() => { setAuthorize(null); onChanged(); }}/> : null}
       {reject ? <RejectDialog req={reject} onClose={() => setReject(null)} onDone={() => { setReject(null); onChanged(); }}/> : null}
-      {confirmDraft ? (<ConfirmDialog title="Save hidden draft to Shopify" confirmLabel="Save hidden draft" busy={busy === 'draft'} onClose={() => setConfirmDraft(false)} onConfirm={saveDraft}>
-          <p style={{ margin: 0 }}>Version {a.version} of “{a.title}” will be written to {brand.shopDomain} with <b>visibility: hidden</b>. It will not appear on the storefront.</p>
-        </ConfirmDialog>) : null}
+      {scheduling ? <ScheduleBlogDialog article={a} onClose={() => setScheduling(false)} onDone={(o) => { if (!o?.keepOpen) setScheduling(false); onChanged(); }}/> : null}
     </div>);
 }
 /* ---------------- Revisions ---------------- */

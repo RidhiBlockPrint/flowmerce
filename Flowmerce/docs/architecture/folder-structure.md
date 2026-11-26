@@ -11,6 +11,8 @@ Flowmerce/
 │   ├── config/               settings loading and validation
 │   ├── core/                 cross-cutting foundations (logging)
 │   └── modules/
+│       ├── ads/              Ads module (Meta Ads now, Google Ads in phase 3): config, meta (read-only client), sync,
+│       │                     scheduler, data (schema `ads`), metrics (rules), service (page answers), api (/api/ads)
 │       └── seo/              SEO & Blog module (migrated from blog-ops)
 │           ├── api.py app.py main.py cli.py config.py db.py auth.py permissions.py audit.py util.py
 │           ├── services/     business logic (articles, publishing, workflow, sync, analytics, excel, ...)

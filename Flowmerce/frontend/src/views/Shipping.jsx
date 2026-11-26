@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { More } from '../components/More';
 import { api } from '../lib/api';
 import { useSearchParams } from '../lib/nav';
+import { tabLabel } from '../lib/routes.mjs';
 import { useApi, qs, download } from '../lib/api';
 import { useBrandParam } from '../lib/app';
 import { fmtDateTime, fmtInt, timeAgo } from '../lib/format';
@@ -58,7 +59,7 @@ export default function Shipping() {
         setSp(next, { replace: true });
     };
     return (<>
-      <PageHead title={tab === 'overview' ? 'Shipping' : `Shipping · ${TABS.find((t) => t.key === tab).label}`}
+      <PageHead title={tab === 'overview' ? 'Shipping' : tabLabel('/shipping', tab)} crumbs={tab === 'overview' ? null : 'Shipping'}
         actions={<Button icon="refresh" loading={refreshing} onClick={refresh} title="Read the latest changes from Shopify into Flowmerce now">Refresh now</Button>}/>
       <div className="mt-16" key={rev}>
         {tab === 'shipments' ? <ShipmentsTab brand={brand} sp={sp} update={update} onOpen={setOpen}/>

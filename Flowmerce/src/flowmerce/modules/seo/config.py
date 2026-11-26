@@ -105,6 +105,15 @@ class Config:
     claude_timeout = int(env("CLAUDE_TIMEOUT_SECONDS", "600"))      # one Claude request, end to end
     claude_max_retries = int(env("CLAUDE_MAX_RETRIES", "2"))        # rate limits, 5xx and connection errors only
 
+    # AI image generation for featured images (integrations/image_gen.py). A key from Google AI Studio (Gemini) or the
+    # OpenAI API platform; a ChatGPT or Gemini app subscription does not include one. IMAGE_PROVIDER picks one when both
+    # keys are set (default: gemini). IMAGE_MODEL overrides the provider's default model.
+    gemini_api_key = env("GEMINI_API_KEY")
+    openai_api_key = env("OPENAI_API_KEY")
+    image_provider = env("IMAGE_PROVIDER").lower()
+    image_model = env("IMAGE_MODEL")
+    image_timeout = int(env("IMAGE_TIMEOUT_SECONDS", "240"))
+
     # AI job bridge. Mode: anthropic_api (this server calls Claude), external_worker (an independent worker does), disabled.
     ai_execution_mode = env("AI_EXECUTION_MODE", "anthropic_api").lower()
     ai_worker_url = env("AI_WORKER_URL")

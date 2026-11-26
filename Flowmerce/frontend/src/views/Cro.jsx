@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, qs, useApi } from '../lib/api';
 import { useBrandParam } from '../lib/app';
 import { useSearchParams } from '../lib/nav';
+import { tabLabel } from '../lib/routes.mjs';
 import { fmtDate, fmtDateTime, fmtDay, fmtInt, isoDay, timeAgo } from '../lib/format';
 import {
     ADVICE_AREA, AREAS, EFFORT_TONE, IMPACT_TONE, PRIORITY_TONE, RULE_KIND, STORES, TABS, storeTimezone,
@@ -78,7 +79,7 @@ export default function Cro() {
     };
     const rq = range ? { brand, from: range.from, to: range.to, compare: range.cmp, cfrom: range.cmp === 'custom' ? range.cfrom : undefined } : null;
     return (<>
-      <PageHead title={tab === 'overview' ? 'Conversion (CRO)' : `Conversion (CRO) · ${TABS.find((t) => t.key === tab).label}`} sub="How visitors become orders, and what to do next."
+      <PageHead title={tab === 'overview' ? 'Conversion (CRO)' : tabLabel('/cro', tab)} crumbs={tab === 'overview' ? null : 'Conversion (CRO)'} sub="How visitors become orders, and what to do next."
         actions={<>
           {globalBrand ? null : <Seg label="Store" size="" options={STORES} value={brand} onChange={(s) => update({ store: s === 'ridhi' ? null : s })}/>}
           <Button icon="refresh" loading={syncing} onClick={syncNow} title="Read the latest orders for this store from Shopify now (it also runs every 15 minutes)">Sync now</Button>

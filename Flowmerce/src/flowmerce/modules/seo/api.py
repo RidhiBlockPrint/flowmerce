@@ -22,7 +22,7 @@ from .integrations.google import check_access, ga4_configured, gsc_configured, s
 from .integrations.shopify_public import fetch_public_articles
 from .integrations.status import all_statuses, mark_error, mark_success, record_check, status_of
 from .permissions import PERMISSIONS, ROLE_LABELS, is_role, perms_for
-from .services import ai_budget, ai_jobs, analytics, articles, auto_blog, autopilot, calendar_plan, excel, home, images, keyword_file, publishing, workflow
+from .services import ai_budget, ai_images, ai_jobs, analytics, articles, auto_blog, autopilot, calendar_plan, excel, home, image_prompts, images, keyword_file, publishing, workflow
 from .services.brands import all_brands, brand, brand_public, brand_settings, update_brand_settings
 from .services.demo import clear_demo, demo_loaded, load_demo
 from .services.sync import products_for, sync_ga4, sync_gsc, sync_shopify
@@ -317,11 +317,6 @@ def submit(aid: str, request: Request):
 def review(aid: str, request: Request, body: dict = JSONBody):
     u = auth.require_perm(request, "article:review")
     return articles.decorate(articles.review_article(u, to_int(aid), s(body.get("decision"), 40), body.get("version"), s(body.get("note"), 2000)))
-
-
-@api.post("/articles/{aid}/shopify-draft")
-def shopify_draft(aid: str, request: Request):
-    return articles.decorate(publishing.save_shopify_draft(auth.require_perm(request, "shopify:draft"), to_int(aid)))
 
 
 @api.post("/articles/{aid}/publish-request")
@@ -697,7 +692,10 @@ def calendar_view(request: Request):
     end = q(request, "to") if is_day.match(q(request, "to")) else add_days(start, 41)
     if start > end or days_between(start, end) > 400:
         raise HttpError(400, "Choose a range of up to 400 days.")
+    # `slots`: the blogs Flowmerce writes for a day in this range (automatic ones and topics a person put on a day), so any
+    # month or year can be shown, not only the weeks the SEO & Blog overview covers.
     return {"from": start, "to": end, "events": calendar_plan.events_between(b, start, end), "schedule": calendar_plan.list_schedule(b, start, end),
+            "slots": auto_blog.slots(b, start, end), "today": ai_budget.today(),
             "upcoming": calendar_plan.upcoming(b), "budget": ai_budget.status(),
             "scheduledPublishes": all_rows("SELECT id, brand_id, title, publish_at, status FROM articles WHERE publish_at IS NOT NULL AND substr(publish_at,1,10) BETWEEN ? AND ?"
                                            + (" AND brand_id = ?" if b else ""), start, end, *([b] if b else []))}
@@ -742,9 +740,15 @@ def calendar_plan_suggest(request: Request, body: dict = JSONBody):
 
 @api.post("/autopilot", status_code=202)
 def autopilot_start(request: Request, body: dict = JSONBody):
-    """One click: research, pick, draft, approve and save as a hidden Shopify draft. Never publishes."""
+    """One click: research, pick, draft and approve. The blog stays in Flowmerce; nothing is sent to Shopify."""
     u = auth.require_perm(request, "workflow:run")
     return autopilot.start(u, brand_param(body.get("brand")), s(body.get("focus"), 500))
+
+
+@api.post("/autopilot/{rid}/stop")
+def autopilot_stop(rid: str, request: Request):
+    """Stop a blog that is being written: its unfinished Claude jobs are cancelled."""
+    return autopilot.stop(auth.require_perm(request, "workflow:run"), to_int(rid))
 
 
 @api.get("/autopilot")
@@ -774,10 +778,18 @@ def blog_autopilot_settings(request: Request, body: dict = JSONBody):
     return auto_blog.update_settings(auth.require_perm(request, "workflow:run"), body)
 
 
+@api.post("/blog/slots")
+def blog_slot_schedule(request: Request, body: dict = JSONBody):
+    """Put a blog on the calendar for a topic and a go-live day: Flowmerce writes, checks and approves it, and makes a
+    publish request for 10:00 that day, which a reviewer authorizes."""
+    return auto_blog.schedule_topic(auth.require_perm(request, "workflow:run"), body)
+
+
+@api.post("/blog/slots/{sid}/cancel")
 @api.post("/blog/slots/{sid}/skip")
-def blog_slot_skip(sid: str, request: Request):
-    """Skip one automatic blog slot that has not started."""
-    return auto_blog.skip(auth.require_perm(request, "workflow:run"), to_int(sid))
+def blog_slot_cancel(sid: str, request: Request):
+    """Cancel one automatic blog: skipped if it has not started, stopped and skipped while Claude is writing it."""
+    return auto_blog.cancel(auth.require_perm(request, "workflow:run"), to_int(sid))
 
 
 @api.get("/articles/{aid}/answer-checks")
@@ -794,6 +806,71 @@ async def image_upload(request: Request):
     u = auth.require_perm(request, "article:write")
     data = await _read_limited(request, images.MAX_BYTES)
     return await run_in_threadpool(images.upload, u, str(q(request, "brand") or ""), data, s(q(request, "filename"), 200), s(q(request, "alt"), 500))
+
+
+# ---------------- AI image prompts (services/image_prompts.py) ----------------
+
+@api.get("/articles/{aid}/image-prompt")
+def image_prompt_state(aid: str, request: Request):
+    auth.require_perm(request, "view")
+    return image_prompts.state(to_int(aid))
+
+
+@api.post("/articles/{aid}/image-prompt")
+def image_prompt_request(aid: str, request: Request):
+    """Write (or rewrite) the AI image prompt for one article. It is queued ahead of older articles and made in the background."""
+    u = auth.require_perm(request, "article:write")
+    return image_prompts.request(u, to_int(aid))
+
+
+@api.post("/articles/{aid}/image-prompt/image")
+def image_prompt_make_image(aid: str, request: Request):
+    """Make (or remake) the AI picture from the article's prompt with the configured image API (services/ai_images.py)."""
+    u = auth.require_perm(request, "article:write")
+    return ai_images.request(u, to_int(aid))
+
+
+@api.post("/articles/{aid}/image-prompt/use")
+def image_prompt_use_image(aid: str, request: Request):
+    """Make the generated picture the article's featured image (a normal save: a new version, approval rules apply)."""
+    u = auth.require_perm(request, "article:write")
+    return ai_images.use_image(u, to_int(aid))
+
+
+@api.patch("/image-prompts/settings")
+def image_generation_settings(request: Request, body: dict = JSONBody):
+    """Automatic pictures on/off, Pinterest pictures, the print check, and the daily and monthly limits."""
+    u = auth.require_perm(request, "workflow:run")
+    ai_images.update_settings(u, body)
+    return image_prompts.summary(brand_q(request))
+
+
+@api.get("/image-prompts")
+def image_prompts_summary(request: Request):
+    auth.require_perm(request, "view")
+    return image_prompts.summary(brand_q(request))
+
+
+@api.post("/image-prompts/backfill")
+def image_prompts_backfill(request: Request, body: dict = JSONBody):
+    """Queue prompts for older articles: scope "drafts", "published" or "all"; redo=true also rewrites existing prompts."""
+    u = auth.require_perm(request, "workflow:run")
+    b = body.get("brand")
+    return image_prompts.backfill(u, None if b in (None, "", "all") else brand_param(b), s(body.get("scope"), 20), bool(body.get("redo")))
+
+
+@api.post("/image-prompts/backfill/cancel")
+def image_prompts_backfill_cancel(request: Request, body: dict = JSONBody):
+    u = auth.require_perm(request, "workflow:run")
+    b = body.get("brand")
+    return image_prompts.cancel_backfill(u, None if b in (None, "", "all") else brand_param(b))
+
+
+@api.post("/image-prompts/style")
+def image_prompts_style(request: Request, body: dict = JSONBody):
+    """Ask Claude to read the store's photos again and describe its look (about $0.15)."""
+    u = auth.require_perm(request, "workflow:run")
+    return image_prompts.refresh_style(u, brand_param(body.get("brand")))
 
 
 async def _read_limited(request: Request, limit: int) -> bytes:

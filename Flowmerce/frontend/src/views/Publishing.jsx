@@ -33,7 +33,7 @@ export default function Publishing() {
       <PageHead title="Publishing" sub="Going live needs an approved request and a second person."/>
       {d?.demo ? <div className="callout info mb-16"><Icon name="info"/><div><b>Demo mode.</b> Authorizing a request only changes this demo's sample records and the audit log. Nothing is sent to Shopify or any storefront.</div></div> : d ? (d.livePublishingEnabled
             ? <div className="callout ok mb-16"><Icon name="shield"/><div><b>Live publishing is enabled on this server.</b> Authorizing a request changes the live storefront.</div></div>
-            : <div className="callout warn mb-16"><Icon name="lock"/><div><b>Live publishing is switched off on this server</b> (ALLOW_LIVE_PUBLISH is not set). Requests can be made and reviewed; authorizing them is refused and nothing is sent to Shopify. Hidden drafts still work.</div></div>) : null}
+            : <div className="callout warn mb-16"><Icon name="lock"/><div><b>Live publishing is switched off on this server</b> (ALLOW_LIVE_PUBLISH is not set). Requests can be made and reviewed; authorizing them is refused and nothing is sent to Shopify. Drafts stay in Flowmerce either way.</div></div>) : null}
       <ErrorState error={q.error} onRetry={q.reload}/>
       {q.loading && !d ? <LoadingBlock rows={6}/> : null}
       {q.loading && d ? <div className="muted small row mb-8"><Icon name="loader" className="spin" size="sm"/>Refreshing…</div> : null}
@@ -70,7 +70,7 @@ export default function Publishing() {
             <Card title={`Ready to request · ${d.readyForRequest.length}`} sub="Approved in Flowmerce, current version" flush>
               <List rows={d.readyForRequest} empty="Nothing approved and waiting." render={(a) => <><Link href={`/articles/${a.id}?tab=publish`} className="strong small ellipsis">{a.title}</Link><span className="muted xs">v{a.version} · approved {timeAgo(a.approved_at)}{a.shopify_published ? ' · update to live article' : ''}</span></>}/>
             </Card>
-            <Card title={`Scheduled by Flowmerce · ${d.scheduled.length}`} sub="Authorized here; goes live at the chosen time" flush>
+            <Card title={`Scheduled by Flowmerce · ${d.scheduled.length}`} sub="Authorized here; on Shopify hidden until the chosen time, then Shopify shows it" flush>
               <List rows={d.scheduled} empty="Nothing scheduled from Flowmerce." render={(a) => <><Link href={`/articles/${a.id}`} className="strong small ellipsis">{a.title}</Link><span className="muted xs"><Icon name="clock" size="sm"/> Goes live <span title={fmtUtc(a.publish_at)}>{fmtZoned(a.publish_at)}</span></span></>}/>
             </Card>
             <Card title={`Scheduled in Shopify · ${d.shopifyScheduled?.length ?? 0}`} sub="Hidden now, with a future publication date set in Shopify admin. Flowmerce did not schedule these and will not change them." flush>

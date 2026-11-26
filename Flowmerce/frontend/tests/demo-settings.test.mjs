@@ -11,7 +11,7 @@ test('GET /automation shape', async () => {
   const a = await get('/automation');
   assert.equal(a.brands.length, 2);
   const b = a.brands[0];
-  assert.equal(b.stages.length, 9);
+  assert.equal(b.stages.length, 8);   // no Shopify draft stage: drafts stay in Flowmerce (2026-11-24)
   for (const k of ['key', 'label', 'kind', 'owner', 'description', 'state', 'pending', 'lastRun']) assert.ok(k in b.stages[0]);
   assert.equal(a.configured.ai.state, 'ready');
   assert.ok(a.runs.length > 5);

@@ -32,51 +32,46 @@ Runtime dependencies of the core package: none (standard library only). The `seo
 
 CRO uses Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` and each brand's existing Shopify keys (`RIDHI_SHOPIFY_*`, `CPC_SHOPIFY_*`). Supabase must expose the `cro` schema (Data API → Exposed schemas), and `db/central/112_cro.sql`, `113_cro_orders.sql` and `114_cro_tracking.sql` (recommendation status, experiments, free-shipping amount) must have been run. Conversion figures need each store's app to have the `read_reports` scope and Level 2 protected customer data access. The Products tab's views and product groups use GA4 through the SEO module's Google service account (`GOOGLE_SERVICE_ACCOUNT_FILE`, `RIDHI_GA4_PROPERTY_ID`, `CPC_GA4_PROPERTY_ID`); without them the tab still shows sales, refunds, price bands and products bought together.
 
-### Ads module (Meta Ads and Google Ads, reading only)
-
-Flowmerce reads these accounts and never changes them: no ad, budget or campaign is created, paused or altered, and
-Meta's write scope (`ads_management`) is deliberately not requested. **Nothing below has been run against a live ad
-account yet.** While none of it is set, the Ads and Creative pages answer from sample figures and say so.
-
-Credentials (no default; put them in `.env`, which is git-ignored, and never paste them into chat or a document):
-
-| Variable | What it is |
-|---|---|
-| `META_SYSTEM_USER_TOKEN` | Business Manager system user token with `ads_read` + `business_management`, shared by both stores. Note its expiry |
-| `RIDHI_META_AD_ACCOUNT_ID`, `CPC_META_AD_ACCOUNT_ID` | Each store's Meta ad account (`act_<digits>`; a bare number is accepted and the prefix added) |
-| `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET` | OAuth client of the Google Cloud project that has the Google Ads API enabled |
-| `GOOGLE_ADS_REFRESH_TOKEN` | Obtained once, with consent from somebody who can read the Ads account |
-| `RIDHI_GOOGLE_ADS_CUSTOMER_ID`, `CPC_GOOGLE_ADS_CUSTOMER_ID` | Each store's customer id (10 digits; dashes are stripped) |
-| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | The manager (MCC) account id, only when the accounts sit under one |
-
-There is **no Google developer token**: it was sunset on 2026-09-09 and access levels now belong to the Google Cloud
-project that issued the OAuth credentials. A project still at Test level cannot read a real account at all, so check
-its level on the Google Ads API Overview page in the Cloud console (see `docs/02-connectors-and-apis.md` section 3.2).
-
-Optional settings:
+### Ads module (Meta Ads; Google Ads in phase 3)
 
 | Variable | Default | What it does |
 |---|---|---|
-| `ADS_DEMO` | on while nothing is connected | Sample figures instead of calling the platforms. `DEMO_MODE=true` forces it on and `false` cannot defeat that |
-| `ADS_SYNC_MINUTES` | `180` | Reserved for the background sync, which is not written yet; `0` turns it off |
-| `ADS_TIMEOUT_SECONDS` | `30` | HTTP timeout for one platform request (5-120) |
-| `ADS_MAX_DAYS` | `90` | How many days a first read covers at most |
-| `META_API_VERSION` | `v25.0` | Pinned Graph/Marketing API version |
-| `GOOGLE_ADS_API_VERSION` | `v26` | Pinned Google Ads API version |
-| `CREATIVE_DEMO` | follows `ADS_DEMO` | Sample insights and concepts for the Creative module |
-| `CREATIVE_INSIGHT_DAYS` | `28` | How many complete days one round of insights reads (7-180) |
+| `RIDHI_META_AD_ACCOUNT_ID`, `CPC_META_AD_ACCOUNT_ID` | none | Each brand's Meta ad account (with or without `act_`). A brand without one is skipped |
+| `RIDHI_META_ACCESS_TOKEN`, `CPC_META_ACCESS_TOKEN` | none | A token with the `ads_read` permission (read-only). The page shows how many days it has left |
+| `ADS_SYNC_MINUTES` | `60` | How often the background job reads the Meta accounts into schema `ads`; `0` turns it off |
+| `META_APP_ID`, `META_APP_SECRET`, `META_BUSINESS_ID` | none | Not used yet (kept in `.env` for a system-user token later) |
+| `GOOGLE_ADS_*`, `RIDHI_/CPC_GOOGLE_ADS_CUSTOMER_ID` | none | Not used yet: Google Ads is phase 3 |
+
+Ads uses Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`. Before the page can show anything:
+1. run `db/central/115_ads.sql` in Supabase (SQL Editor);
+2. add `ads` under Project Settings -> Data API -> Exposed schemas (next to `ops` and `cro`);
+3. restart Flowmerce. A minute later the job reads both Meta accounts; the first read loads 90 days and takes about
+   5 to 10 minutes per account. Until it finishes, the page says so.
+Store sales come from CRO's order copy (`cro.orders`, files 112-113), so CRO's sync must be running too.
+
+### Creative Strategist
+
+Reads the Ads module's own synced figures (schema `ads`: `accounts`, `ads`, `daily`), so it needs no Meta or Google
+credential of its own, only Supabase access.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `CREATIVE_DEMO` | on while neither brand's Meta account is configured | Sample insights and concepts instead of the Ads module's real figures. `DEMO_MODE=true` forces it on and `false` cannot defeat that |
+| `CREATIVE_INSIGHT_DAYS` | `28` | How many complete days one round of insights reads by default, before the page's own date picker overrides it (7-180) |
 | `CREATIVE_MIN_IMPRESSIONS` | `1000` | Below this a group is marked "too early to judge" rather than acted on |
 
-Claude writes the creative through the SEO module's existing connection: the same `ANTHROPIC_API_KEY`, the same model
-and the same daily limit (`seo/services/ai_budget.py`), recorded under the kinds `creative_pack` (about $0.60 a call)
-and `creative_variations` (about $0.20). No new key and no new package. A request that does not fit in what is left of
-today's limit is refused before anything is sent, and only a brand's voice and claims files are included in the prompt,
-capped at 30,000 characters. Nothing runs by itself: opening the Creative page never spends, unlike CRO's action plan.
+Claude writes the creative packs and the trend recommendations through the SEO module's existing connection: the same
+`ANTHROPIC_API_KEY`, the same model and the same daily limit (`seo/services/ai_budget.py`), recorded under the kinds
+`creative_pack` (about $0.60 a call), `creative_variations` (about $0.20) and `creative_recommendations` (about $0.30;
+a live test on 2026-11-26 cost $0.054). No new key and no new package. A request that does not fit in what is left of
+today's limit is refused before anything is sent. Nothing runs by itself: opening the Creative page never spends, and
+a new pack or recommendations round is only written when asked.
 
-Ads and Creative use Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`. Supabase must expose the `ads` and
-`creative` schemas (Data API → Exposed schemas), and `db/central/115_ads.sql` and `116_creative.sql` must have been
-run; **neither has been run yet**, so only the demo path works today. Once the credentials are in place,
-`.venv\Scripts\python.exe scripts\ads_check_access.py` checks them read-only and prints no secret.
+Creative uses Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`. Supabase must expose the `ads` and `creative`
+schemas (Data API -> Exposed schemas), and `db/central/115_ads.sql` and `116_creative.sql` must have been run; both
+have been run in Supabase as of 2026-11-26, so the Creative page reads real figures once `CREATIVE_DEMO` allows it.
+Hook-level comparison still answers "not enough data": the Ads sync does not yet store an ad's own headline or
+primary text, which is what grouping by hook needs.
 
 ## Configuration
 
@@ -120,6 +115,8 @@ Credentials and options are in `.env` (see the SEO section of `.env.example`). T
 **Two services.** The **API** is the Python FastAPI app (`flowmerce.modules.seo.main:app`); it returns JSON only and serves no pages. The **web interface** is the Next.js app in `frontend\` (React, JavaScript/JSX only, App Router). `frontend\next.config.mjs` forwards `/api/*` to `http://127.0.0.1:8787` (override at build time with `FLOWMERCE_API_ORIGIN`). The frontend holds no credentials.
 
 **Local operator mode (no sign-in).** The dashboard opens without credentials. The web interface listens on `127.0.0.1` only, and the API answers only connections from this computer (loopback addresses); any other address gets HTTP 403 for every API path, even if the API's `HOST` is changed. Run it on `127.0.0.1` (the default) and do not expose it to a network or put a proxy or tunnel in front of it. The single exception is `POST /api/hooks/workflow`, the external workflow webhook, which has its own `X-Workflow-Secret` check and is reachable from other computers if the API is reachable. Local requests act as the first active administrator record, which the server creates at startup if none exists (no password is generated, shown or saved; `ADMIN_PASSWORD` is ignored). The old `/api/auth/login` and `/api/auth/password` endpoints answer 410. An existing `data/initial-admin.txt` is not deleted and is no longer used. Scripts that call the API from this computer still need the `X-Requested-With: blog-ops` header for mutating requests. See [ADR 0005](../decisions/0005-local-operator-mode.md).
+
+**AI pictures for blog featured images (optional).** Set `GEMINI_API_KEY` (a key from Google AI Studio with billing on; Nano Banana Pro, about $0.13 a picture) or `OPENAI_API_KEY` (from the OpenAI API platform; the organization may need verifying). A ChatGPT Plus or Gemini app subscription does not include an API key. With both set, `IMAGE_PROVIDER=gemini` or `openai` picks one; `IMAGE_MODEL` overrides the model. Flowmerce then makes, checks and attaches each new draft's picture by itself (SEO & Blog, Automatic pictures: switches and daily/monthly limits). Pictures are stored in the store's Shopify Files, which needs the Shopify scope `write_files`.
 
 **AI jobs (Flowmerce <-> Claude).** Choose how jobs are executed with `AI_EXECUTION_MODE` in `.env` (see `.env.example`). `anthropic_api`: set `ANTHROPIC_API_KEY` (an API key from the Anthropic Console; a Claude.ai subscription does not include one) and Claude is called from this server. `external_worker`: **all three** of `AI_WORKER_URL` (https), `AI_WORKER_TOKEN` and `WORKFLOW_WEBHOOK_SECRET` are required (without the secret Flowmerce cannot authenticate the worker's callbacks, so no job can be created and waiting jobs are not sent). The worker must implement the contract in [ADR 0009](../decisions/0009-ai-job-bridge.md) and you must put the **same** webhook secret into the worker's own environment yourself, through a secure channel: Flowmerce never sends it. `AI_CALLBACK_URL` (the public HTTPS URL of the webhook) is sent to the worker as `callback_url`; leave it empty only if the worker already knows where to call back. Topic research and content generation on the Automation page, and the topic page's "Draft with Claude" button, now queue background AI jobs in either mode ("Queue AI job"); the request returns at once and the job's progress is shown under **AI jobs**. Until the chosen method is configured, **Automation → AI jobs** says "API not configured" or "Worker not configured" and no job can be created. Run one Flowmerce process per database file. For a worker on another machine the webhook must be reached through a secured HTTPS gateway that forwards only `POST /api/hooks/workflow`, with rate limiting and monitoring; do not expose the dev server or the whole app. Nothing in this feature publishes: results become proposed topics or draft articles.
 

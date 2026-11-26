@@ -57,8 +57,7 @@ test('workflow: create, submit, approve, request, authorize', async () => {
   assert.equal(d.article.status, 'approved');
   assert.ok(d.article.approval_current);
   assert.equal(d.notes.length, 4);
-  const dr = await post(`/articles/${a.id}/shopify-draft`);
-  assert.match(dr.message, /Nothing was sent/);
+  await assert.rejects(post(`/articles/${a.id}/shopify-draft`), (e) => e.status === 404);   // drafts stay in Flowmerce
   assert.equal((await get(`/articles/${a.id}`)).article.shopify_state, 'not_in_shopify');
   const req = await post(`/articles/${a.id}/publish-request`, { mode: 'publish_now', note: 'go' });
   assert.equal(req.status, 'pending');

@@ -39,7 +39,10 @@ DEFAULT_PRICE = PRICES["claude-opus-5-5"]
 # What one call of each kind is expected to cost, used to refuse a call that would overshoot today's limit.
 # cro_advice: Conversion (CRO) asks Claude for an action plan from a store's figures (modules/cro/ai_advice.py). The deep
 # plan (2026-11-23) cost $0.37-0.59 a store in its first runs, so 0.60 keeps a call from overshooting today's limit.
+# image_prompt / image_style: a featured-image prompt for one article, and the brand's visual style read from its photos
+# (services/image_prompts.py). Both include photos, which cost about 1,000 input tokens each.
 ESTIMATE_USD = {"content_generation": 0.80, "content_revision": 0.80, "topic_research": 0.40, "assist": 0.15, "cro_advice": 0.60,
+                "image_prompt": 0.10, "image_style": 0.15, "image_check": 0.04,
                 # Creative Strategist: a pack reads the ad figures and writes four formats per concept
                 # (high effort, up to 32k output); variations are one concept reworked (medium, 8k).
                 "creative_pack": 0.60, "creative_variations": 0.20,

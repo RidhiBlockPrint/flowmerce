@@ -16,7 +16,7 @@ const STATE = {
 const RUN_TONE = { succeeded: 'ok', failed: 'crit', running: 'info', waiting: 'warn', skipped: 'neutral' };
 const STAGE_LINK = {
     keyword_validation: '/topics?status=proposed', topic_approval: '/topics?status=validated', content_generation: '/topics?status=approved',
-    content_approval: '/articles?status=in_review', image_selection: '/articles?status=draft,in_review,approved', shopify_draft: '/articles?status=approved', publication_approval: '/publishing',
+    content_approval: '/articles?status=in_review', image_selection: '/articles?status=draft,in_review,approved', publication_approval: '/publishing',
 };
 export default function Automation() {
     const brand = useBrandParam();
@@ -75,7 +75,7 @@ export default function Automation() {
         toast.error(e);
     } };
     return (<>
-      <PageHead title="Automation" sub="Research → draft → approval → Shopify draft → tracking"/>
+      <PageHead title="Automation" sub="Research → draft → approval → publishing → tracking"/>
       <ErrorState error={q.error} onRetry={q.reload}/>
       {q.loading && !q.data ? <LoadingBlock rows={8}/> : null}
       {q.data ? (<div className="col" style={{ gap: 20 }}>

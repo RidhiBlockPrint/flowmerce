@@ -8,7 +8,6 @@ PERMISSIONS: dict[str, str] = {
     "article:write": "Create and edit blog content",
     "article:submit": "Send content for review",
     "article:review": "Approve content or request changes",
-    "shopify:draft": "Save articles to Shopify as hidden drafts",
     "publish:request": "Ask for an article to be published or scheduled",
     "publish:authorize": "Approve publish requests and make articles live",
     "workflow:run": "Run, retry or pause automation stages",
@@ -23,7 +22,7 @@ PERMISSIONS: dict[str, str] = {
 ROLE_PERMS: dict[str, list[str]] = {
     "admin": list(PERMISSIONS),
     "seo_manager": [
-        "view", "topic:write", "topic:decide", "article:write", "article:submit", "shopify:draft",
+        "view", "topic:write", "topic:decide", "article:write", "article:submit",
         "publish:request", "workflow:run", "analytics:sync", "data:import", "audit:view",
     ],
     "reviewer": ["view", "article:review", "publish:authorize", "analytics:sync", "audit:view"],

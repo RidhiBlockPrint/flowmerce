@@ -35,6 +35,10 @@ Decision: [ADR 0005](../decisions/0005-local-operator-mode.md). Flowmerce is a l
 
 Known limits: the protection is "being on this computer" (any local program acts as the administrator); a reverse proxy or tunnel on this computer would look local; and DNS rebinding is not covered. See the ADR and roadmap F14.
 
+## Built, not yet run live: Ads module (`flowmerce.modules.ads`)
+
+Meta Ads (Google Ads in phase 3) next to the store's own sales, one brand at a time (`/ads`; plan: `docs/plans/ads-module.md`, decision: ADR 0011). A background job reads each brand's Meta ad account, read-only, into schema `ads` in the central Supabase database (`db/central/115_ads.sql`); the /api/ads routes answer from Supabase, with totals added up by database functions and the rules (verdicts, budget calls, scaling gate, ABO to CBO gap, suggestions) in `ads/metrics.py`. Store sales come from CRO's order copy (`cro.orders`). Read-only toward the ad accounts. Mounted and started from `modules/seo/app.py` like Shipping and CRO; if it cannot load, the rest still starts.
+
 ## Implemented: SEO & Blog module (`flowmerce.modules.seo`, migrated from blog-ops)
 
 FastAPI + SQLite app for the blog pipeline of two Shopify stores (topic research, approval, drafting, Shopify drafts, gated publishing, Search Console/GA4 reporting). Entry points: `scripts/run_flowmerce.py` (launcher for both services) or `uvicorn flowmerce.modules.seo.main:app`. Structure: `api.py` (HTTP endpoints), `app.py` (app factory and request guard; API only), `services/` (business logic), `integrations/` (Shopify, Google, Claude clients and health status), `db.py` (SQLite schema and migrations), `auth.py` / `permissions.py` / `audit.py`. The Next.js/React (JavaScript) UI is in `frontend/`. Publishing is gated by approvals and the `ALLOW_LIVE_PUBLISH` switch (off by default); see the legacy README text in `docs/architecture/legacy-blog-ops-README.md`.

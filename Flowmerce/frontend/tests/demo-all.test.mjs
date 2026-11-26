@@ -8,8 +8,10 @@ const GET = [
   '/analytics/gsc', '/automation', '/ai/jobs', '/integrations', '/data/kinds', '/data/health', '/audit',
   '/shipping/summary', '/shipping/shipments', '/shipping/analytics', '/shipping/checks',
   '/cro/overview?brand=ridhi', '/cro/sales-trend?brand=cpc', '/cro/sales-breakdown?brand=ridhi', '/cro/order-health?brand=ridhi',
-  '/cro/products?brand=cpc', '/cro/conversion?brand=ridhi', '/cro/segments?brand=ridhi&dimension=channel', '/cro/recommendations?brand=ridhi', '/cro/ai-advice?brand=ridhi', '/cro/goal?brand=ridhi', '/blog/overview', '/blog/overview?brand=cpc',
+  '/cro/products?brand=cpc', '/cro/conversion?brand=ridhi', '/cro/segments?brand=ridhi&dimension=channel', '/cro/recommendations?brand=ridhi', '/cro/ai-advice?brand=ridhi', '/cro/goal?brand=ridhi', '/blog/overview', '/blog/overview?brand=cpc', '/autopilot', '/autopilot?brand=ridhi', '/calendar', '/calendar?brand=cpc&from=2027-02-22&to=2027-04-04', '/image-prompts', '/image-prompts?brand=ridhi', '/articles/1/image-prompt',
   '/cro/benchmarks', '/cro/home', '/cro/home?brand=cpc', '/cro/overview?brand=ridhi&from=2026-11-01&to=2026-11-07&compare=last_week', '/cro/alarms?brand=ridhi', '/cro/alerts?brand=ridhi', '/cro/change-log?brand=ridhi', '/cro/settings?brand=cpc',
+  '/ads/settings?brand=ridhi', '/ads/overview?brand=ridhi', '/ads/campaigns?brand=cpc', '/ads/creatives?brand=ridhi', '/ads/funnel?brand=cpc', '/ads/search-terms?brand=ridhi',
+  '/ads/gap?brand=ridhi', '/ads/actions?brand=cpc', '/ads/rules?brand=ridhi',
 ];
 
 test('every page endpoint answers', async () => {

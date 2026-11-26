@@ -91,20 +91,14 @@ def test_publishing_guardrails(users):
         publishing.request_publish(m, a["id"], "schedule", soon, "")
 
 
-def test_hidden_draft_requires_current_approval(users, monkeypatch):
+def test_drafts_have_no_way_to_shopify(users):
+    """Owner decision 2026-11-24: drafts stay in Flowmerce. Only an authorized publish request writes to Shopify."""
     from flowmerce.modules.seo.integrations import shopify
-    m, r = users["seo_manager"], users["reviewer"]
-    a = articles.create_article(m, "cpc", {"title": "Napkin folds", "primary_keyword": "napkin folds", "body_html": "<p>Body</p>", "meta_description": "Meta"})
-    monkeypatch.setattr(shopify, "configured", lambda b: (_ for _ in ()).throw(AssertionError("Shopify reached before the approval check")))
-    with pytest.raises(HttpError) as e:  # a draft nobody reviewed
-        publishing.save_shopify_draft(m, a["id"])
-    assert e.value.status == 409
-    articles.submit_for_review(m, a["id"])
-    articles.review_article(r, a["id"], "approve", a["version"], "")
-    articles.save_article(m, a["id"], {"title": "Napkin folds for dinner"})  # edited after approval
-    with pytest.raises(HttpError, match="reviewer-approved"):
-        publishing.save_shopify_draft(m, a["id"])
-    assert get("SELECT shopify_article_id FROM articles WHERE id = ?", a["id"])["shopify_article_id"] is None
+    from flowmerce.modules.seo.permissions import PERMISSIONS
+    from flowmerce.modules.seo.services import workflow
+    assert not hasattr(publishing, "save_shopify_draft") and not hasattr(shopify, "create_hidden_draft")
+    assert "shopify:draft" not in PERMISSIONS
+    assert "shopify_draft" not in {s["key"] for s in workflow.STAGES}
 
 
 def test_public_atom_feed_parsing():
