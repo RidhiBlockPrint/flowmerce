@@ -173,7 +173,7 @@ function RecommendationsSection({ brand }) {
             </div>
             {d.recs.summary ? <div className="small mb-12">{d.recs.summary}</div> : null}
             <div className="col" style={{ gap: 12 }}>
-              {d.recs.recommendations.map((r, i) => (<Card key={i} title={r.title} flush className="pad-sm"
+              {d.recs.recommendations.map((r, i) => (<Card key={i} title={r.title} flush className="pad-sm cc-prose"
                   actions={<Pill tone={PRIORITY_TONE[r.priority] ?? 'neutral'}>{r.priority}</Pill>}>
                   <div className="small">{r.diagnosis}</div>
                   <div className="small mt-4"><b>Do this:</b> {r.action}</div>
@@ -250,7 +250,7 @@ function Variations({ brand, concept }) {
         return <Button size="sm" variant="ghost" icon="sparkle" onClick={ask}>Get variations from Claude</Button>;
     return (<div className="col" style={{ gap: 8 }}>
       <div className="small"><b>Keeping:</b> {state.data.kept} <span className="faint">(changing: {state.data.variable})</span></div>
-      {state.data.variations.map((v, i) => (<Card key={i} title={v.label} flush className="pad-sm">
+      {state.data.variations.map((v, i) => (<Card key={i} title={v.label} flush className="pad-sm cc-prose">
           <div className="small"><b>Hook:</b> {v.hook}</div>
           <div className="small"><b>What changed:</b> {v.what_changed}</div>
           <div className="small faint">{v.why}</div>
@@ -261,7 +261,7 @@ function Variations({ brand, concept }) {
 function ConceptCard({ brand, concept }) {
     const [open, setOpen] = useState(null);   // null | 'brief' | 'variations'
     const evidence = Array.isArray(concept.evidence) ? concept.evidence : concept.evidence ? [concept.evidence] : [];
-    return (<Card title={concept.title}
+    return (<Card title={concept.title} className="cc-prose"
       actions={<Pill tone={FUNNEL_TONE[concept.funnel_stage] ?? 'neutral'}>{FUNNEL_LABEL[concept.funnel_stage] ?? concept.funnel_stage}</Pill>}>
       <div className="small"><b>Hook:</b> &ldquo;{concept.hook}&rdquo;</div>
       <div className="small mt-4"><b>Angle:</b> {concept.angle}</div>
@@ -344,7 +344,7 @@ function SaveConceptButton({ brand, concept }) {
 
 function PackConcept({ brand, concept }) {
     const [open, setOpen] = useState(false);
-    return (<Card title={concept.title}
+    return (<Card title={concept.title} className="cc-prose"
       actions={<Pill tone={FUNNEL_TONE[concept.funnel_stage] ?? 'neutral'}>{FUNNEL_LABEL[concept.funnel_stage] ?? concept.funnel_stage}</Pill>}>
       <div className="small"><b>Hook:</b> &ldquo;{concept.hook}&rdquo;</div>
       {concept.alternative_hooks?.length ? <div className="small faint mt-4">Also: {concept.alternative_hooks.join(' · ')}</div> : null}
@@ -421,7 +421,7 @@ function PackTab({ brand }) {
               <SourceTag source={d.source}/>
               <span className="muted small">{d.generated_at ? `Written ${d.generated_at}` : ''}{d.by ? ` by ${d.by}` : ''}{d.model ? ` · ${d.model}` : ''}{d.cost_usd ? ` · ${usd(d.cost_usd)}` : ''}</span>
             </div>
-            {d.pack.summary ? <Card flush className="pad-sm mb-16"><div className="small">{d.pack.summary}</div>{d.pack.data_caveat ? <div className="small faint mt-4">{d.pack.data_caveat}</div> : null}</Card> : null}
+            {d.pack.summary ? <Card flush className="pad-sm mb-16 cc-prose"><div className="small">{d.pack.summary}</div>{d.pack.data_caveat ? <div className="small faint mt-4">{d.pack.data_caveat}</div> : null}</Card> : null}
             <div className="col" style={{ gap: 16 }}>{d.pack.concepts.map((c, i) => <PackConcept key={i} brand={brand} concept={c}/>)}</div>
           </>)}
       </div>

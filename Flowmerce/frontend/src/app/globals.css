@@ -1682,4 +1682,13 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
 .creative-page table.t td b { font-weight: 650; }
 .creative-page table.t td.r { font-weight: 600; }
 .creative-page .pill { font-weight: 650; letter-spacing: 0.01em; }
+/* Written-up cards (a concept, a recommendation, a pack's summary) read as prose, not a data
+   table, so a wide browser window must not stretch a sentence across it: cap the measure, give
+   each line more air than the 4px utility classes give a dense data card, and size body text up
+   a touch so it holds its own next to the serif title above it. */
+.creative-page .cc-prose .card-body { max-width: 68ch; }
+.creative-page .cc-prose .small { font-size: 14px; line-height: 1.6; }
+.creative-page .cc-prose .xs { font-size: 12.5px; line-height: 1.55; }
+.creative-page .cc-prose .mt-4 { margin-top: 10px; }
+.creative-page .cc-prose ul.small { line-height: 1.6; }
 
