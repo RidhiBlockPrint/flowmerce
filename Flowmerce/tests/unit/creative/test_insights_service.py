@@ -5,6 +5,8 @@ No network and no credentials: the service runs in demo mode, and the grouping i
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from flowmerce.modules.creative import insights, service
@@ -182,6 +184,35 @@ def test_findings_are_labelled_demo_and_mark_the_thin_group() -> None:
 def test_findings_reject_an_impossible_range() -> None:
     with pytest.raises(service.InputError):
         service.findings("ridhi", days=0)
+
+
+def test_findings_honours_an_explicit_date_range_from_the_page_s_own_picker() -> None:
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    since = yesterday - timedelta(days=6)
+    out = service.findings("ridhi", since=since, until=yesterday)
+    assert out["from"] == since.isoformat()
+    assert out["to"] == yesterday.isoformat()
+
+
+def test_findings_clamps_an_explicit_until_to_yesterday() -> None:
+    """Today is still being restated; a picker that lets today be the end of a custom range must
+    not error, it should just show through yesterday instead."""
+    today = datetime.now(UTC).date()
+    yesterday = today - timedelta(days=1)
+    out = service.findings("ridhi", since=yesterday - timedelta(days=3), until=today)
+    assert out["to"] == yesterday.isoformat()
+
+
+def test_findings_rejects_an_explicit_range_with_the_start_after_the_end() -> None:
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    with pytest.raises(service.InputError, match="start date must be on or before"):
+        service.findings("ridhi", since=yesterday, until=yesterday - timedelta(days=1))
+
+
+def test_findings_an_explicit_range_still_caps_at_400_days() -> None:
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    with pytest.raises(service.InputError, match="at most 400 days"):
+        service.findings("ridhi", since=yesterday - timedelta(days=500), until=yesterday)
 
 
 def test_trend_covers_every_day_of_the_period_with_the_demo_totals() -> None:

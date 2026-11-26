@@ -37,6 +37,22 @@ def _range(days: int) -> tuple[date, date]:
     return yesterday - timedelta(days=days - 1), yesterday
 
 
+def _explicit_range(since: date, until: date) -> tuple[date, date]:
+    """A caller-picked date range (the page's own calendar), checked the same way as `_range`.
+
+    `until` is clamped to yesterday rather than refused: a picker that lets today be the end of
+    "custom range" would otherwise error on the one day people are most likely to pick.
+    """
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    if until > yesterday:
+        until = yesterday
+    if since > until:
+        raise InputError("The start date must be on or before the end date.")
+    if (until - since).days + 1 > 400:
+        raise InputError("Choose a range of at most 400 days.")
+    return since, until
+
+
 # ------------------------------------------------------------------ demo ads
 # Fixed sample rows in the shape of ads.v_ad_daily: one row per ad per day would be long, so each ad
 # appears once with its totals, which the grouping treats identically.
@@ -127,7 +143,7 @@ def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], s
     ad_rows = ads.select(
         "ads",
         [("select", "id,account_key,format,name"), ("account_key", f"in.({key_list})")],
-        limit=20_000,
+        limit=100_000,
     ).rows
     ad_info = {str(a["id"]): a for a in ad_rows if a.get("id")}
 
@@ -139,7 +155,7 @@ def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], s
             ("day", f"gte.{since.isoformat()}"),
             ("day", f"lte.{until.isoformat()}"),
         ],
-        limit=20_000,
+        limit=100_000,
     ).rows
 
     out: list[dict[str, Any]] = []
@@ -171,16 +187,27 @@ def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], s
 
 
 # ------------------------------------------------------------------ insights
-def findings(brand: str, days: int | None = None) -> dict[str, Any]:
+def findings(
+    brand: str,
+    days: int | None = None,
+    since: date | None = None,
+    until: date | None = None,
+) -> dict[str, Any]:
     """What the ads showed over the period: formats, hooks and platforms compared.
 
     Each group says whether there is enough data behind it. Nothing here is a recommendation yet:
     the page shows these figures next to the concepts so a suggestion can be checked against them.
+
+    `since`/`until` (the page's own date picker) win when both are given; otherwise the period is
+    the last `days` complete days, or the configured default when `days` is also None.
     """
     cfg = creative_config()
-    # None means "the configured default"; any other value is checked, so days=0 is an error rather
-    # than a silent fall back to 28.
-    since, until = _range(cfg.insight_days if days is None else days)
+    if since is not None and until is not None:
+        since, until = _explicit_range(since, until)
+    else:
+        # None means "the configured default"; any other value is checked, so days=0 is an error
+        # rather than a silent fall back to 28.
+        since, until = _range(cfg.insight_days if days is None else days)
     rows, source, currency = _rows(brand, since, until)
     by_format = insights.by_format(rows)
     by_hook = insights.by_hook(rows)
@@ -258,14 +285,23 @@ def _demo_trend(brand: str, since: date, until: date, currency: str) -> dict[str
     }
 
 
-def trend(brand: str, days: int | None = None) -> dict[str, Any]:
+def trend(
+    brand: str,
+    days: int | None = None,
+    since: date | None = None,
+    until: date | None = None,
+) -> dict[str, Any]:
     """Day-by-day totals across the period, for a chart: spend, CTR and ROAS over time.
 
     Reuses `_rows`, so live and demo stay the same two sources as `findings`; the grouping here is
-    by day instead of by format or hook.
+    by day instead of by format or hook. `since`/`until` win when both are given, same as
+    `findings`.
     """
     cfg = creative_config()
-    since, until = _range(cfg.insight_days if days is None else days)
+    if since is not None and until is not None:
+        since, until = _explicit_range(since, until)
+    else:
+        since, until = _range(cfg.insight_days if days is None else days)
     rows, source, currency = _rows(brand, since, until)
     if source == "demo":
         return _demo_trend(brand, since, until, currency)

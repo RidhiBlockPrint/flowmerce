@@ -9,6 +9,7 @@ come back with a `code`: 400 bad_request, 404 not_found, 503 for a Supabase prob
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Body, Request
@@ -66,23 +67,42 @@ def _int(value: str | None, default: int, low: int, high: int) -> int:
         return default
 
 
+def _date(value: str | None) -> date | None:
+    """A `?from=`/`?to=` query value as a date, or None when it is absent."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise HttpError(400, "Dates must be in YYYY-MM-DD form.", "bad_request") from None
+
+
 @creative.get("/insights")
 def insights(request: Request, brand: str = "ridhi") -> dict[str, Any]:
-    """What the ads showed over the last `days` complete days: formats, hooks and platforms.
+    """What the ads showed over the period: formats, hooks and platforms.
 
-    Answers from sample ads while no ad platform is connected; `source` says which it was.
+    The period is `?from=`/`?to=` (the page's own date picker) when both are given, else the last
+    `?days=` complete days. Answers from sample ads while no ad platform is connected; `source`
+    says which it was.
     """
     require_perm(request, "view")
     days = _int(request.query_params.get("days"), 0, 0, 400) or None
-    return _call(lambda: service.findings(brand, days))
+    since = _date(request.query_params.get("from"))
+    until = _date(request.query_params.get("to"))
+    return _call(lambda: service.findings(brand, days, since, until))
 
 
 @creative.get("/trend")
 def trend(request: Request, brand: str = "ridhi") -> dict[str, Any]:
-    """Day-by-day spend, CTR and ROAS over the last `days` complete days, for a chart."""
+    """Day-by-day spend, CTR and ROAS over the period, for a chart.
+
+    Same period rule as `/insights`: `?from=`/`?to=` win over `?days=`.
+    """
     require_perm(request, "view")
     days = _int(request.query_params.get("days"), 0, 0, 400) or None
-    return _call(lambda: service.trend(brand, days))
+    since = _date(request.query_params.get("from"))
+    until = _date(request.query_params.get("to"))
+    return _call(lambda: service.trend(brand, days, since, until))
 
 
 @creative.get("/concepts")

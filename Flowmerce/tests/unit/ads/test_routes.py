@@ -79,6 +79,27 @@ def test_creative_insights_route_is_mounted(app: Any) -> None:
     assert body["comparisons"]["formatRoas"]["best"]["key"] == "video"
 
 
+def test_creative_insights_and_trend_honour_an_explicit_date_range(app: Any) -> None:
+    client = local_client(app)
+    insights = client.get("/api/creative/insights?brand=ridhi&from=2026-01-01&to=2026-01-07")
+    assert insights.status_code == 200
+    assert insights.json()["from"] == "2026-01-01"
+    assert insights.json()["to"] == "2026-01-07"
+
+    trend = client.get("/api/creative/trend?brand=ridhi&from=2026-01-01&to=2026-01-07")
+    assert trend.status_code == 200
+    assert trend.json()["from"] == "2026-01-01"
+    assert len(trend.json()["days"]) == 7
+
+
+def test_creative_insights_rejects_a_badly_formed_date(app: Any) -> None:
+    response = local_client(app).get(
+        "/api/creative/insights?brand=ridhi&from=not-a-date&to=2026-01-07"
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == "bad_request"
+
+
 def test_creative_concepts_and_brief_routes(app: Any) -> None:
     client = local_client(app)
     concepts = client.get("/api/creative/concepts?brand=ridhi")

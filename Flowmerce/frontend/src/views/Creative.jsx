@@ -13,8 +13,17 @@ import { useToast } from '../components/overlays';
 import { fmtInt } from '../lib/format';
 import { fmtMoney } from '../lib/shipping';
 import { LineChart } from '../components/charts';
+import { DateRangePicker } from '../components/croDates';
+import { fmtSpan, isRangeKey, presetRange, rangeDays } from '../lib/cro';
 
 const STORES = [{ key: 'ridhi', label: 'Ridhi' }, { key: 'cpc', label: 'CPC' }];
+const DEFAULT_RANGE = 'last-30-days';
+/** Today in the browser's own date, YYYY-MM-DD: ad figures carry no store timezone of their own,
+ * unlike Shopify orders, so there is no "store's today" to ask for here. */
+const browserToday = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 const TABS = [
     { key: 'overview', label: 'Insights' },
     { key: 'concepts', label: 'Concepts' },
@@ -52,6 +61,16 @@ export default function Creative() {
         }
         setSp(next, { replace: true });
     };
+    const today = browserToday();
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v ?? '');
+    const r = isRangeKey(sp.get('r')) ? sp.get('r') : DEFAULT_RANGE;
+    const fixed = r === 'custom' && isDay(sp.get('from')) && isDay(sp.get('to'))
+        ? { from: sp.get('from'), to: sp.get('to') } : presetRange(r, today);
+    const range = { r: r === 'custom' && !sp.get('from') ? DEFAULT_RANGE : r, ...fixed };
+    const setRange = (patch) => {
+        if (patch.r && patch.r !== 'custom') update({ r: patch.r === DEFAULT_RANGE ? null : patch.r, from: null, to: null });
+        else update({ r: 'custom', from: patch.from, to: patch.to });
+    };
     const title = tab === 'overview' ? 'Creative Strategist' : `Creative Strategist · ${TABS.find((t) => t.key === tab).label}`;
     return (<>
       <PageHead title={title} sub={globalBrand ? undefined
@@ -59,7 +78,7 @@ export default function Creative() {
       <div className="mt-16 creative-page">
         {tab === 'concepts' ? <ConceptsTab brand={brand}/>
             : tab === 'pack' ? <PackTab brand={brand}/>
-                : <InsightsTab brand={brand}/>}
+                : <InsightsTab brand={brand} range={range} setRange={setRange} today={today}/>}
       </div>
     </>);
 }
@@ -99,8 +118,8 @@ function ComparisonCard({ title, cmp, money }) {
 }
 
 /** Daily spend and daily ROAS/CTR, so a trend shows up instead of only one period total. */
-function TrendCharts({ brand, currency }) {
-    const t = useApi(`/creative/trend${qs({ brand })}`);
+function TrendCharts({ brand, range, currency }) {
+    const t = useApi(`/creative/trend${qs({ brand, from: range.from, to: range.to })}`);
     const money = moneyIn(currency);
     if (t.error || !t.data || !t.data.days.length)
         return null;
@@ -184,20 +203,23 @@ function RecommendationsSection({ brand }) {
     </Card>);
 }
 
-function InsightsTab({ brand }) {
-    const q = useApi(`/creative/insights${qs({ brand })}`);
+function InsightsTab({ brand, range, setRange, today }) {
+    const q = useApi(`/creative/insights${qs({ brand, from: range.from, to: range.to })}`);
     if (q.error)
         return <ErrorState error={q.error} onRetry={q.reload}/>;
     if (!q.data)
         return <LoadingBlock rows={6}/>;
     const d = q.data;
     const money = moneyIn(d.currency);
+    const n = rangeDays(d.from, d.to);
     return (<>
       <div className="row-wrap mb-12" style={{ alignItems: 'center', gap: 8 }}>
+        <DateRangePicker value={range} today={today} onChange={setRange}/>
         <SourceTag source={d.source}/>
-        <span className="muted small">{d.from} to {d.to} · {fmtInt(d.adsSeen)} ads seen{d.currency ? ` · spend in ${d.currency}` : ''}</span>
+        <span className="muted small">{fmtInt(d.adsSeen)} ads seen{d.currency ? ` · spend in ${d.currency}` : ''}</span>
       </div>
-      <TrendCharts brand={brand} currency={d.currency}/>
+      <div className="muted xs mb-12">{n === 1 ? fmtSpan(d.from, d.from) : `${fmtSpan(d.from, d.to)} · ${n} days`}{range.to > d.to ? ' · today is not in yet: figures run through yesterday' : ''}</div>
+      <TrendCharts brand={brand} range={range} currency={d.currency}/>
       <div className="grid cols-3 mb-16">
         <ComparisonCard title="Format: ROAS" cmp={d.comparisons.formatRoas} money={money}/>
         <ComparisonCard title="Hook: click-through rate" cmp={d.comparisons.hookCtr} money={money}/>
