@@ -2000,3 +2000,17 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
   .ovcal-side { min-height: 0; }
   .ovcal-side-in { position: static; }
 }
+
+/* Ads company view (top bar on All): one card per brand, same stripe as Today's plan, its figures in a row. */
+.ads-brand { display: flex; flex-direction: column; gap: 14px; }
+.ads-brand.s-red { box-shadow: inset 5px 0 0 var(--crit); } .ads-brand.s-amber { box-shadow: inset 5px 0 0 var(--warn); }
+.ads-brand.s-green { box-shadow: inset 5px 0 0 var(--ok); } .ads-brand.s-unknown { box-shadow: inset 5px 0 0 var(--faint); }
+.ads-brand > .btn { margin-top: auto; align-self: flex-start; }
+.ads-brand .ads-verdict-title { font-size: 20px; }
+.ads-brand-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.ads-brand-figs > div { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.ads-brand-figs span:first-child { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ads-brand-figs b { font-size: 20px; font-weight: 700; }
+.ads-brand-figs b.t-ok { color: var(--ok); } .ads-brand-figs b.t-warn { color: var(--warn); } .ads-brand-figs b.t-crit { color: var(--crit); }
+.ads-brand-figs .ads-chg { font-size: 12px; padding: 1px 7px; }
+.ads-brand-split { display: flex; flex-direction: column; gap: 6px; }

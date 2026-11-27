@@ -2,6 +2,20 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-27 (Ads: "All" in the top bar shows both brands together)
+
+Owner report 2026-11-27 (screen recording): on the Ads page "All" and "Ridhi" showed the same figures, because Ads
+showed one brand at a time and quietly fell back to Ridhi. Owner decision: both brands combined. Verified: Ads tests 85
+passed, demo tests (Ads 19), frontend tests 127 passed, and in the browser on demo and real data (20 to 26 Nov: company
+ad spend $30,842 = Ridhi $22,461 + CPC $8,381, store sales $54,011, company MER 1.75 against 2.05 the week before).
+
+- **Added** The company view on the Ads Overview (top bar on All, page switch "Both", the default there): company ad
+  spend (Meta and Google, both brands), both stores' sales, company MER and ad cost per order with their change and
+  trend; one card per brand with its own spend call, spend, sales, MER, share of company spend, Meta / Google split and
+  daily goal, and "Open" to go to that brand; the days, with each brand's MER. `GET /api/ads/company` (and the demo).
+- **Changed** Only spend, store sales and orders are added across brands; platform-claimed sales, ROAS, rules and goals
+  stay per brand. Campaigns, Creatives, Funnel, Actions and the other tabs stay one brand at a time (Ridhi / CPC).
+
 ## 2026-11-27 (Ads phase 3: Google Ads next to Meta)
 
 Owner request 2026-11-27: start phase 3 (Google Ads). Read-only checks of the Google login on 27 Nov: it reaches Ridhi's

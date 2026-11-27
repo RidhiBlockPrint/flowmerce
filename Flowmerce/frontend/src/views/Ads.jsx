@@ -21,12 +21,14 @@ import {
     AdStatus, AdsError, AdsGate, AdsKpi, AdsRangeBar, DropOff, FunnelSteps, GapPill, Pick, PlatformTag, Ratio, SearchBox, Tag,
     VerdictPill, useSort,
 } from '../components/ads';
-import { AdsDayStrip, ChangeChip, GoalCard, KpiTile, MiniStats, TodayPlan } from '../components/adsOverview';
+import { AdsDayStrip, BrandCard, ChangeChip, GoalCard, KpiTile, MiniStats, TodayPlan } from '../components/adsOverview';
+import { BRAND_COLOR } from '../components/metrics';
 import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
 import { Button, Card, PageHead, Paged, Pill } from '../components/ui';
 
 const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v ?? '');
+const BOTH_BRANDS = [{ key: 'all', label: 'Both' }, ...BRANDS];
 const SERIES = { sales: 'var(--accent)', spend: 'var(--ink-2)', mer: 'var(--info)' };
 const STATUS_OPTIONS = [{ key: 'active', label: 'Active' }, { key: 'off', label: 'Paused' }];
 const GROUP_KIND = { ad_set: 'ad set', ad_group: 'ad group', asset_group: 'asset group' };
@@ -45,8 +47,12 @@ function videoLine(v) {
 export default function Ads() {
     const [sp, setSp] = useSearchParams();
     const globalBrand = useBrandParam();
-    const brand = globalBrand ?? (BRANDS.some((b) => b.key === sp.get('store')) ? sp.get('store') : 'ridhi');
     const tab = TABS.some((t) => t.key === sp.get('tab')) ? sp.get('tab') : 'overview';
+    const store = BRANDS.some((b) => b.key === sp.get('store')) ? sp.get('store') : null;
+    const brand = globalBrand ?? store ?? 'ridhi';
+    // Top bar on All: the Overview shows both brands together (the company view) until a brand is picked here; the
+    // other tabs are one brand at a time (Ridhi unless CPC is picked).
+    const company = !globalBrand && !store && tab === 'overview';
     const tabDef = TABS.find((t) => t.key === tab);
     const platform = platformFor(tab, sp.get('platform'));
     const settings = useApi(`/ads/settings${qs({ brand })}`);
@@ -77,14 +83,17 @@ export default function Ads() {
     // Choosing the other platform on a one-platform tab goes back to the Overview, where both exist.
     const setPlatform = (p) => update({ platform: p === 'all' ? null : p, ...(tabDef.only && p !== 'all' && p !== tabDef.only ? { tab: null, campaign: null } : {}) });
     return (<>
-      <PageHead title={tab === 'overview' ? 'Ads' : tabLabel('/ads', tab)} crumbs={tab === 'overview' ? null : 'Ads'} sub="Meta and Google Ads next to the store's own sales. One brand at a time; nothing here changes an ad account."
+      <PageHead title={tab === 'overview' ? 'Ads' : tabLabel('/ads', tab)} crumbs={tab === 'overview' ? null : 'Ads'}
+        sub={company ? 'Both brands together: their Meta and Google ad spend next to both stores’ own sales. Nothing here changes an ad account.'
+            : 'Meta and Google Ads next to the store’s own sales. One brand at a time; nothing here changes an ad account.'}
         actions={<>
-          {globalBrand ? null : <Seg label="Brand" size="" options={BRANDS} value={brand} onChange={(b) => update({ store: b === 'ridhi' ? null : b, campaign: null })}/>}
-          <Seg label="Platform" size="" options={PLATFORMS} value={platform} onChange={setPlatform}/>
+          {globalBrand ? null : <Seg label="Brand" size="" options={tab === 'overview' ? BOTH_BRANDS : BRANDS} value={company ? 'all' : brand}
+            onChange={(b) => update({ store: b === 'all' ? null : b, campaign: null })}/>}
+          {company ? null : <Seg label="Platform" size="" options={PLATFORMS} value={platform} onChange={setPlatform}/>}
         </>}/>
       {settings.error ? <AdsError error={settings.error} onRetry={settings.reload}/> : (<>
-        <div className="mt-16 col" style={{ gap: 16 }} key={brand}>
-          <AccountsLine settings={settings.data} platform={rq.platform}/>
+        <div className="mt-16 col" style={{ gap: 16 }} key={company ? 'company' : brand}>
+          {company ? null : <AccountsLine settings={settings.data} platform={rq.platform}/>}
           {tabDef.range ? <AdsRangeBar key={`${range.from}-${range.to}`} value={range} today={today} onChange={setRange} compare={tab !== 'search'}/> : null}
           {tab === 'campaigns' ? <CampaignsTab rq={rq} lines={lines} onAds={(id) => goTab('creatives', { campaign: id })}/>
               : tab === 'creatives' ? <CreativesTab rq={rq} lines={lines} campaign={sp.get('campaign')} onCampaign={(id) => update({ campaign: id })}/>
@@ -93,10 +102,57 @@ export default function Ads() {
               : tab === 'gap' ? <GapTab brand={brand}/>
               : tab === 'actions' ? <ActionsTab brand={brand} platform={platform}/>
               : tab === 'rules' ? <RulesTab brand={brand} onSaved={settings.reload}/>
+              : company ? <CompanyOverview rq={rq} onOpen={(b) => update({ store: b })}/>
               : <OverviewTab rq={rq} onTab={goTab} onPickDay={(day) => setRange({ r: 'custom', from: day, to: day })}/>}
         </div>
       </>)}
     </>);
+}
+
+/* ------------------------------------------------------------------ Both brands (top bar on All) */
+/**
+ * The company view for directors: both brands' ad spend (Meta and Google) against both stores' sales, company MER and
+ * cost per order with their change and 14-day trend; one card per brand with its own spend call (open it to act); and
+ * the days, with each brand's MER. Platform-claimed sales are never added across brands or platforms.
+ */
+function CompanyOverview({ rq, onOpen }) {
+    const q = useApi(`/ads/company${qs({ from: rq.from, to: rq.to, compare: rq.compare, cfrom: rq.cfrom })}`);
+    return (<AdsGate query={q} rows={8}>
+      {(d) => {
+          const m = d.metrics;
+          const last14 = d.trend.slice(-14);
+          const spark = (field) => last14.map((r) => r[field]);
+          const ready = d.brands.filter((b) => b.ready);
+          return (<>
+            <div className="ads-kpi-row">
+              <KpiTile label="Company ad spend" block={m.spend} format={usd} good="none" spark={spark('spend')} sparkColor="var(--ink-2)"
+                help="Meta and Google ad spend of both brands in these days, in dollars."/>
+              <KpiTile label="Store sales" block={m.sales_ex_bulk} format={usd} spark={spark('sales_ex_bulk')}
+                help="Both stores' orders as placed, bulk orders left out (as in MER)."/>
+              <KpiTile label="Company MER" block={m.mer_ex_bulk} format={x2} spark={spark('mer_ex_bulk')} sparkColor="var(--info)"
+                help="Both stores' sales for every $1 of both brands' ad spend, bulk orders left out."/>
+              <KpiTile label="Ad cost per order" block={m.cost_per_order} format={(v) => usd(v, 2)} good="down"
+                help="All ad spend divided by all store orders of both brands."/>
+            </div>
+            <div className="grid cols-2">
+              {d.brands.map((b) => <BrandCard key={b.brand} b={b} onOpen={() => onOpen(b.brand)}/>)}
+            </div>
+            <section className="card ov-card" aria-label="Both brands by day">
+              <div className="grid cols-2">
+                <div><div className="muted small mb-8">Store sales and ad spend a day, both brands</div>
+                  <LineChart ariaLabel="Both brands' store sales and ad spend by day" height={200} yFormat={usd} area
+                    series={[{ key: 'sales', label: 'Store sales', color: SERIES.sales, points: d.trend.map((r) => ({ x: r.date, y: r.sales_ex_bulk })) },
+                        { key: 'spend', label: 'Ad spend', color: SERIES.spend, dashed: true, points: d.trend.map((r) => ({ x: r.date, y: r.spend })) }]}/></div>
+                <div><div className="muted small mb-8">MER a day, by brand</div>
+                  <LineChart ariaLabel="Each brand's MER by day" height={200} yFormat={x2}
+                    series={ready.map((b) => ({ key: b.brand, label: b.label, color: BRAND_COLOR[b.brand] ?? 'var(--accent)',
+                        points: d.trend.map((r) => ({ x: r.date, y: r[`${b.brand}_mer_ex_bulk`] ?? null })) }))}/></div>
+              </div>
+              <div className="muted xs mt-8">{d.notes.join(' ')}</div>
+            </section>
+          </>);
+      }}
+    </AdsGate>);
 }
 
 /** Which ad accounts the figures come from, their currency, and when each was last read. */

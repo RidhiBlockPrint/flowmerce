@@ -13,7 +13,7 @@ import { Sparkline } from './charts';
 import { Icon } from './Icon';
 import { CountUp, ProgressRing } from './motion';
 import { Button, Pill } from './ui';
-import { ACTION_GROUPS, GATE, usd, x2 } from '../lib/ads';
+import { ACTION_GROUPS, GATE, ratioTone, usd, x2 } from '../lib/ads';
 import { fmtDay } from '../lib/format';
 
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -249,3 +249,50 @@ export function AdsDayStrip({ days, onPick }) {
     </div>);
 }
 
+
+/* ------------------------------------------------------------------ both brands (the company view) */
+/**
+ * One brand in the company view (top bar on All): its spend call in plain words, its spend, store sales and MER with
+ * their change, its share of the company's ad spend, how its spend splits between Meta and Google, and its daily goal.
+ * `b` is one entry of GET /api/ads/company `brands`; `onOpen` shows that brand's own Overview.
+ */
+export function BrandCard({ b, onOpen }) {
+    if (!b.ready) {
+        return (<section className="card ov-card ads-brand">
+          <div className="ov-card-head"><h2 className="serif ov-serif">{b.label}</h2></div>
+          <div className="muted small">{b.message}</div>
+        </section>);
+    }
+    const g = GATE[b.gate.state] ?? GATE.amber;
+    const v = verdict(b.gate);
+    const m = b.metrics;
+    const spendOf = (p) => b.platforms.find((x) => x.platform === p)?.spend ?? null;
+    const meta = spendOf('meta') ?? 0;
+    const google = spendOf('google');
+    const split = meta + (google ?? 0);
+    const metaPct = split ? Math.round((meta / split) * 100) : 0;
+    const merTone = ratioTone(m.mer_ex_bulk.value, b.targets.mer_floor); // as on the brand's own Overview
+    return (<section className={`card ov-card ads-brand s-${b.gate.state}`} aria-label={b.label}>
+      <div className="ov-card-head"><h2 className="serif ov-serif">{b.label}</h2>
+        <span className="ads-plat-share">{b.share_of_spend === null ? '' : `${Math.round(b.share_of_spend)}% of company ad spend`}</span></div>
+      <div className="ads-verdict">
+        <span className="ads-verdict-dot" style={{ background: g.color }} aria-hidden="true"/>
+        <div><div className="ads-verdict-title">{v.title}</div><div className="ads-verdict-line">{v.line}</div></div>
+      </div>
+      <div className="ads-brand-figs">
+        <div><span>Ad spend</span><b>{usd(m.total_spend.value)}</b><ChangeChip value={m.total_spend.change_pct} good="none"/></div>
+        <div><span>Store sales</span><b>{usd(m.sales_ex_bulk.value)}</b><ChangeChip value={m.sales_ex_bulk.change_pct}/></div>
+        <div><span>MER</span><b className={merTone ? `t-${merTone}` : ''}>{x2(m.mer_ex_bulk.value)}</b><ChangeChip value={m.mer_ex_bulk.change_pct}/></div>
+        <div title="Average store sales a day over the last 7 days, against the brand's daily goal"><span>Daily goal</span><b>{b.goal.pct_of_goal}%</b>
+          <span className="muted xs">of {usd(b.goal.daily_sales_goal)}</span></div>
+      </div>
+      <div className="ads-brand-split" title="How the brand's ad spend splits between Meta and Google">
+        <div className="ads-goal-bar" aria-hidden="true"><span style={{ width: `${metaPct}%`, background: 'var(--info)' }}/></div>
+        <div className="row muted xs" style={{ justifyContent: 'space-between' }}>
+          <span>Meta {usd(meta)} ({metaPct}%)</span>
+          <span>{google === null ? 'Google not connected' : `Google ${usd(google)} (${100 - metaPct}%)`}</span>
+        </div>
+      </div>
+      <Button size="sm" variant="ghost" onClick={onOpen}>Open {b.label} <Icon name="arrowRight" size="sm"/></Button>
+    </section>);
+}
