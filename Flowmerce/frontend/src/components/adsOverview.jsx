@@ -35,7 +35,7 @@ export function ChangeChip({ value, good = 'up' }) {
  * A headline figure: label (definition on hover), the value large, its change chip and the comparison value at a
  * readable size, and the last 14 days as a sparkline. `tone` colours the value against a target ('ok', 'warn', 'crit').
  */
-export function KpiTile({ label, help, block, format, good = 'up', spark, sparkColor = 'var(--accent)', tone, compareLabel }) {
+export function KpiTile({ label, help, block, format, good = 'up', spark, sparkColor = 'var(--theme-primary)', tone, compareLabel }) {
     const b = block || {};
     const missing = b.value === null || b.value === undefined;
     return (<section className="card ads-kpi" title={help}>
@@ -131,7 +131,7 @@ export function TodayPlan({ gate, lines, targets, actions, onAllActions, warning
             <div><span className="muted small">Daily ad spend now</span><b>{usd(gate.avg_daily_spend_7d)}</b></div>
             {gate.state === 'unknown' ? null : (<>
               <Icon name="arrowRight"/>
-              <div><span className="muted small">Suggested</span><b style={{ color: g.color }}>{usd(gate.recommended_daily_spend)}</b></div>
+              <div><span className="muted small">Suggested</span><b style={{ color: g.ink }}>{usd(gate.recommended_daily_spend)}</b></div>
             </>)}
           </div>
           <div className="ads-why">
@@ -167,7 +167,7 @@ export function GoalCard({ goal, days, onSave }) {
     const [draft, setDraft] = useState(String(goal.daily_sales_goal));
     const [saving, setSaving] = useState(false);
     const pct = goal.pct_of_goal;
-    const color = pct >= 100 ? 'var(--ok)' : 'var(--saffron)';
+    const color = pct >= 100 ? 'var(--theme-good-strong)' : 'var(--theme-usual-strong)';
     const n = Number(draft);
     const ok = Number.isFinite(n) && n >= 100 && n <= 1e7;
     const save = async () => {
@@ -287,7 +287,7 @@ export function BrandCard({ b, onOpen }) {
           <span className="muted xs">of {usd(b.goal.daily_sales_goal)}</span></div>
       </div>
       <div className="ads-brand-split" title="How the brand's ad spend splits between Meta and Google">
-        <div className="ads-goal-bar" aria-hidden="true"><span style={{ width: `${metaPct}%`, background: 'var(--info)' }}/></div>
+        <div className="ads-goal-bar" aria-hidden="true"><span style={{ width: `${metaPct}%`, background: 'var(--theme-primary)' }}/></div>
         <div className="row muted xs" style={{ justifyContent: 'space-between' }}>
           <span>Meta {usd(meta)} ({metaPct}%)</span>
           <span>{google === null ? 'Google not connected' : `Google ${usd(google)} (${100 - metaPct}%)`}</span>

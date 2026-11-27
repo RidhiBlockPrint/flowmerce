@@ -137,10 +137,10 @@ function KpiRow({ days, money, bestHookRate }) {
     const overallCtr = totalImpressions ? Math.round((totalClicks / totalImpressions) * 10000) / 100 : null;
     const overallRoas = totalSpend ? Math.round((totalValue / totalSpend) * 100) / 100 : null;
     return (<div className="grid cols-4 mb-16">
-      <KpiTile label="Spend" value={money(totalSpend)} caption="Over the period" values={days.map((d) => d.spend)} color="var(--info)"/>
-      <KpiTile label="ROAS" value={overallRoas === null ? '—' : `${overallRoas}x`} caption="Value per unit spent" values={days.map((d) => d.roas).filter((v) => v !== null)} color="var(--ok)"/>
-      <KpiTile label="CTR" value={pct1(overallCtr)} caption="Clicks per 100 impressions" values={days.map((d) => d.ctr).filter((v) => v !== null)} color="var(--warn)"/>
-      <KpiTile label="Best hook rate" value={pct1(bestHookRate?.hookRate ?? null)} caption={bestHookRate ? `${bestHookRate.label || bestHookRate.key} format, 3s video views` : 'No video format yet'} color="#c2488f"/>
+      <KpiTile label="Spend" value={money(totalSpend)} caption="Over the period" values={days.map((d) => d.spend)} color="var(--theme-primary)"/>
+      <KpiTile label="ROAS" value={overallRoas === null ? '—' : `${overallRoas}x`} caption="Value per unit spent" values={days.map((d) => d.roas).filter((v) => v !== null)} color="var(--theme-good-strong)"/>
+      <KpiTile label="CTR" value={pct1(overallCtr)} caption="Clicks per 100 impressions" values={days.map((d) => d.ctr).filter((v) => v !== null)} color="var(--theme-usual-strong)"/>
+      <KpiTile label="Best hook rate" value={pct1(bestHookRate?.hookRate ?? null)} caption={bestHookRate ? `${bestHookRate.label || bestHookRate.key} format, 3s video views` : 'No video format yet'} color="var(--theme-low-strong)"/>
     </div>);
 }
 
@@ -156,13 +156,13 @@ function TrendCharts({ brand, range, currency, bestHookRate }) {
       <div className="grid cols-2 mb-16">
         <Card title="Daily spend" sub={`In ${t.data.currency}`}>
           <LineChart ariaLabel="Daily spend" height={180} yFormat={money}
-            series={[{ key: 'spend', label: 'Spend', color: 'var(--info)', points: days.map((d) => ({ x: d.date, y: d.spend })) }]}/>
+            series={[{ key: 'spend', label: 'Spend', color: 'var(--theme-primary)', points: days.map((d) => ({ x: d.date, y: d.spend })) }]}/>
         </Card>
         <Card title="Daily ROAS and CTR">
           <LineChart ariaLabel="Daily ROAS and click-through rate" height={180}
             series={[
-                { key: 'roas', label: 'ROAS (x)', color: 'var(--ok)', points: days.map((d) => ({ x: d.date, y: d.roas })) },
-                { key: 'ctr', label: 'CTR (%)', color: 'var(--warn)', points: days.map((d) => ({ x: d.date, y: d.ctr })) },
+                { key: 'roas', label: 'ROAS (x)', color: 'var(--theme-good-strong)', points: days.map((d) => ({ x: d.date, y: d.roas })) },
+                { key: 'ctr', label: 'CTR (%)', color: 'var(--theme-usual-strong)', points: days.map((d) => ({ x: d.date, y: d.ctr })) },
             ]}/>
         </Card>
       </div>

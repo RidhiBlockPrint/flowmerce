@@ -874,6 +874,11 @@ def test_company_adds_spend_and_sales_and_keeps_each_brand(
     assert [b["share_of_spend"] for b in two["brands"]] == [50.0, 50.0]
     day = two["trend"][-1]
     assert day["spend"] == day["ridhi_spend"] + day["cpc_spend"]
+    # each platform's spend is added over both brands; shares are of the company's spend
+    meta = next(p for p in two["platforms"] if p["platform"] == "meta")
+    own = next(p for p in o["platforms"] if p["platform"] == "meta")
+    assert meta["spend"] == round(2 * own["spend"], 2)
+    assert abs(sum(p["share_of_spend"] for p in two["platforms"]) - 100) < 0.2
     assert "ridhi_mer_ex_bulk" in day and two["from"] == o["from"]
 
 

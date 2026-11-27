@@ -29,7 +29,7 @@ import { Button, Card, PageHead, Paged, Pill } from '../components/ui';
 
 const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v ?? '');
 const BOTH_BRANDS = [{ key: 'all', label: 'Both' }, ...BRANDS];
-const SERIES = { sales: 'var(--accent)', spend: 'var(--ink-2)', mer: 'var(--info)' };
+const SERIES = { sales: 'var(--theme-primary)', spend: 'var(--theme-usual-strong)', mer: 'var(--theme-good-strong)' };
 const STATUS_OPTIONS = [{ key: 'active', label: 'Active' }, { key: 'off', label: 'Paused' }];
 const GROUP_KIND = { ad_set: 'ad set', ad_group: 'ad group', asset_group: 'asset group' };
 const Note = ({ children }) => <div className="muted small" style={{ padding: '10px 16px' }}>{children}</div>;
@@ -129,7 +129,7 @@ function CompanyOverview({ rq, onOpen }) {
                 help="Meta and Google ad spend of both brands in these days, in dollars."/>
               <KpiTile label="Store sales" block={m.sales_ex_bulk} format={usd} spark={spark('sales_ex_bulk')}
                 help="Both stores' orders as placed, bulk orders left out (as in MER)."/>
-              <KpiTile label="Company MER" block={m.mer_ex_bulk} format={x2} spark={spark('mer_ex_bulk')} sparkColor="var(--info)"
+              <KpiTile label="Company MER" block={m.mer_ex_bulk} format={x2} spark={spark('mer_ex_bulk')} sparkColor={SERIES.mer}
                 help="Both stores' sales for every $1 of both brands' ad spend, bulk orders left out."/>
               <KpiTile label="Ad cost per order" block={m.cost_per_order} format={(v) => usd(v, 2)} good="down"
                 help="All ad spend divided by all store orders of both brands."/>
@@ -206,10 +206,10 @@ function OverviewTab({ rq, onPickDay, onTab }) {
                 help={`Total ad spend in these days${one ? '' : ' (Meta + Google)'}, ${vs ?? ''}.`}/>
               <KpiTile label="Store sales" block={m.sales} format={usd} spark={spark('sales_ex_bulk')}
                 help={`Orders as placed in the store, all channels${d.bulk.orders ? `; includes ${d.bulk.orders} bulk order${d.bulk.orders === 1 ? '' : 's'} (${usd(d.bulk.amount)})` : ''}.`}/>
-              <KpiTile label="MER" block={m.mer_ex_bulk} format={x2} spark={spark('mer_ex_bulk')} sparkColor="var(--info)" tone={ratioTone(m.mer_ex_bulk.value, d.targets.mer_floor)}
+              <KpiTile label="MER" block={m.mer_ex_bulk} format={x2} spark={spark('mer_ex_bulk')} sparkColor={SERIES.mer} tone={ratioTone(m.mer_ex_bulk.value, d.targets.mer_floor)}
                 help={`Store sales for every $1 of all ad spend, bulk orders left out. Target ${x2(d.targets.mer)}.`}/>
               <KpiTile label={one ? `${PLATFORM_LABEL[d.platform]} ROAS` : 'Meta ROAS'} block={roas} format={x2} spark={spark(d.platform === 'google' ? 'google_roas' : 'meta_roas')}
-                sparkColor="var(--info)" tone={d.platform === 'google' ? undefined : ratioTone(roas.value, d.targets.roas)}
+                sparkColor={SERIES.mer} tone={d.platform === 'google' ? undefined : ratioTone(roas.value, d.targets.roas)}
                 help={`Sales the platform claims for every $1 spent on it. Target ${x2(d.targets.roas)}. Platforms can claim the same order, so this is higher than MER.`}/>
             </div>
             <MiniStats items={[
@@ -230,7 +230,7 @@ function OverviewTab({ rq, onPickDay, onTab }) {
                       <span className="ads-plat-share">{p.share_of_spend === null ? '' : `${Math.round(p.share_of_spend)}% of spend`}</span>
                     </div>
                     {p.spend === null ? <div className="muted small">Google Ads is the next build step.</div> : (<>
-                      <div className="ads-goal-bar" aria-hidden="true"><span style={{ width: `${p.share_of_spend ?? 0}%`, background: p.platform === 'meta' ? 'var(--info)' : 'var(--saffron)' }}/></div>
+                      <div className="ads-goal-bar" aria-hidden="true"><span style={{ width: `${p.share_of_spend ?? 0}%`, background: p.platform === 'meta' ? 'var(--theme-primary)' : 'var(--theme-primary-soft)' }}/></div>
                       <div className="ads-plat-figs">
                         <div><span>Spend</span><b>{usd(p.spend)}</b></div>
                         <div><span>Purchases</span><b>{fmtInt(p.purchases)}</b></div>

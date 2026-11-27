@@ -2,6 +2,41 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-27 (Home: the CEO dashboard, layout "A · Bento"; one colour theme for every dashboard)
+
+Owner requests 2026-11-27: Home showed only sales; it should show what is going on in the business for the CEO, with
+the Meta and Google Ads figures of both brands; no headline sentence and no recommendations; one dashboard that adds
+both brands on All and shows one brand on Ridhi or CPC; the CRO Overview's colours on every dashboard; and, after a
+first version copied the CRO Overview too closely, three researched layouts to choose from
+(`design-mockups/home-ceo/`: A Bento, B Briefing, C Chart first). The owner chose **A · Bento**. Verified on demo data
+only: frontend tests 131 passed (4 Home tests), CRO and Ads unit tests 242 passed (14 new), ruff and mypy --strict
+clean on the changed Python, production build passes, and in the browser (All, Ridhi and CPC on every period).
+**Not yet seen with live data.** Creative Strategist has no demo data, so its new colours were not seen.
+
+- **Changed** Home is the Bento dashboard, the same for All, Ridhi and CPC, with a period switch (Today, Yesterday,
+  7 days, 30 days, Month to date) against the period before: a large Sales tile (total sales, the days drawn against
+  the days before, net / returns / discounts), Orders, Average order, Conversion (on the last 28 days' usual band) and
+  Visits tiles, a wide Ads tile (ad spend and its Meta / Google split, sales per $1 of ads on the cut back / hold /
+  grow zones with the target, ad cost per order), the brands' share of sales (one brand: Meta's and Google's share of
+  the ad spend), the month's goal and pace, and a row of operations figures (delivery problems, on time, decisions
+  waiting, data freshness). Figures only; the to-do list, content pipeline, blog clicks, brand report and automation
+  runs stay under "Show more".
+- **Added** `GET /api/cro/home-period?brand=&period=` (`cro/company.py`): one store's CRO figures for the period, or
+  both stores added together: orders, sales, visits, checkouts and monthly goals are added; conversion, average order
+  and revenue per visit are worked out again from the sums (never averaged); too-early is judged on the totals; only
+  days both stores have reached are shown. Also the sales chart (at least 14 days, with the days before), the daily
+  figures, each brand's share of sales and the month's goal. Demo answer too; the demo stores have sample monthly goals
+  (demo data version 6).
+- **Added** `GET /api/ads/company` also returns `platforms`: each platform's spend over both brands and its share (spend
+  can be added; what a platform claims as sales, and its ROAS, stays per brand). Demo answer too.
+- **Changed** One colour theme for every dashboard, taken from the CRO Overview (`--theme-*` in `globals.css`): sage
+  green good, amber usual, salmon below usual (with stronger steps for thin lines), navy for the figure in focus and its
+  light blue for the rest. Moved onto it: the Ads Overview (spend call stripes and dot, cut back / hold / grow meter,
+  goal ring and bars, charts and sparklines, funnel and drop-off bars), SEO & Blog's ring and meters, Creative
+  Strategist's tiles and charts, Shipping's age-band ring, and Home. Text keeps the darker green / brown / red inks.
+  Still to do: three small charts inside `views/Shipping.jsx` (on-time bar, delivery-time and delivered bars), held
+  back while the FedEx work in that file is not committed.
+
 ## 2026-11-27 (Ads: "All" in the top bar shows both brands together)
 
 Owner report 2026-11-27 (screen recording): on the Ads page "All" and "Ridhi" showed the same figures, because Ads

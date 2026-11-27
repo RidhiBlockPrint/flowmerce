@@ -1734,6 +1734,18 @@ def company(
                 "google_saved_to": o["google_saved_to"],
             }
         )
+    # Each platform's spend over the brands that use it (Home's Meta / Google split, 2026-11-27).
+    # Spend can be added; what a platform claims as sales, and so its ROAS, stays per brand.
+    by_platform: dict[str, float] = {}
+    for p in ready:
+        for row in p["o"]["platforms"]:
+            if row.get("spend") is not None:
+                name = str(row["platform"])
+                by_platform[name] = by_platform.get(name, 0.0) + float(row["spend"])
+    platforms = [
+        {"platform": name, "spend": round(v, 2), "share_of_spend": pct(v, spend or 0)}
+        for name, v in by_platform.items()
+    ]
     return {
         "from": first["from"],
         "to": first["to"],
@@ -1741,6 +1753,7 @@ def company(
         "compare": first["compare"],
         "metrics": out_metrics,
         "brands": brands,
+        "platforms": platforms,
         "trend": trend,
         "notes": [
             "Both brands together: ad spend is Meta and Google for both brands; store sales are "

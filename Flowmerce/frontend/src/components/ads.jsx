@@ -103,7 +103,7 @@ export function Change({ value, good = 'up' }) {
 }
 
 /* ------------------------------------------------------------------ video drop-off and funnel */
-const Bar = ({ value, max = 100, color = 'var(--accent)', title, height = 6 }) => (
+const Bar = ({ value, max = 100, color = 'var(--theme-primary)', title, height = 6 }) => (
     <span title={title} style={{ display: 'block', height, borderRadius: height / 2, background: 'var(--surface-3)', overflow: 'hidden' }}>
       <span style={{ display: 'block', height: '100%', width: `${Math.max(0, Math.min(100, (value ?? 0) / max * 100))}%`, background: color }}/>
     </span>);
@@ -115,7 +115,7 @@ export function DropOff({ video }) {
     const weakest = steps.slice(1).reduce((a, b) => ((b[1] ?? 101) < (a[1] ?? 101) ? b : a));
     return (<div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 34px)', gap: 4 }} aria-label="Video drop-off">
       {steps.map(([label, v, max], i) => (<div key={label} title={`${label}: ${pct1(v)}`}>
-        <Bar value={v} max={max} color={i === 0 ? (v < 20 ? 'var(--crit)' : 'var(--ok)') : label === weakest[0] ? 'var(--warn)' : 'var(--accent)'}/>
+        <Bar value={v} max={max} color={i === 0 ? (v < 20 ? 'var(--theme-low-strong)' : 'var(--theme-good-strong)') : label === weakest[0] ? 'var(--theme-usual-strong)' : 'var(--theme-primary)'}/>
         <div className="xs num muted" style={{ textAlign: 'center', marginTop: 2 }}>{v === null || v === undefined ? '—' : Math.round(v)}</div>
       </div>))}
     </div>);
@@ -138,7 +138,7 @@ export function FunnelSteps({ steps }) {
                 {pct1(s.rate)} of the step before{s.previous_rate === null || s.previous_rate === undefined ? '' : ` (was ${pct1(s.previous_rate)})`}</span> : null}
             </div>
             {/* Square-root scale: a plain scale would leave every step after the first too thin to see. */}
-            <div className="mt-4"><Bar value={Math.sqrt(s.value / top) * 100} color={dropped ? 'var(--crit)' : 'var(--accent)'} height={10}/></div>
+            <div className="mt-4"><Bar value={Math.sqrt(s.value / top) * 100} color={dropped ? 'var(--theme-low-strong)' : 'var(--theme-primary)'} height={10}/></div>
           </div>);
       })}
     </div>);

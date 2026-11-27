@@ -644,6 +644,11 @@ export const routes = [
       brands: parts.map(({ brand, o }) => ({ brand, label: LABEL[brand], ready: true, gate: o.gate, targets: o.targets, gate_lines: o.gate_lines,
         metrics: { total_spend: o.metrics.total_spend, sales_ex_bulk: o.metrics.sales_ex_bulk, mer_ex_bulk: o.metrics.mer_ex_bulk, orders: o.metrics.orders },
         share_of_spend: pctOf(o.metrics.total_spend.value, spend), platforms: o.platforms, goal: o.goal, meta_saved_to: o.meta_saved_to, google_saved_to: null })),
+      // Each platform's spend over both brands (spend can be added; claimed sales and ROAS stay per brand).
+      platforms: ['meta', 'google'].map((platform) => {
+        const v = parts.reduce((n, p) => n + (p.o.platforms.find((x) => x.platform === platform)?.spend ?? 0), 0);
+        return { platform, spend: round2(v), share_of_spend: pctOf(v, spend) };
+      }).filter((p) => p.spend > 0),
       trend: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).map((t) => ({ ...t, spend: round2(t.spend), sales_ex_bulk: round2(t.sales_ex_bulk),
         mer_ex_bulk: t.spend ? round2(t.sales_ex_bulk / t.spend) : null })),
       notes: ['Both brands together: ad spend is Meta and Google for both brands; store sales are both stores’ own orders (bulk orders left out of MER). Platform-claimed sales are never added together.',

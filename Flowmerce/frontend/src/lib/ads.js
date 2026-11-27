@@ -89,12 +89,13 @@ export const ACTION_STATUS = [
     { key: 'skipped', label: 'Skipped' },
 ];
 
-/** The scaling gate and the day colours: a label and the colours to draw it with. */
+/** The scaling gate and the day colours: a label, the theme colour to draw it with, the ink for text in it, and its
+ *  pale background. */
 export const GATE = {
-    green: { label: 'Green', word: 'Room to scale', color: 'var(--ok)', soft: 'var(--ok-soft)' },
-    amber: { label: 'Amber', word: 'Hold', color: 'var(--warn)', soft: 'var(--warn-soft)' },
-    red: { label: 'Red', word: 'Cut back', color: 'var(--crit)', soft: 'var(--crit-soft)' },
-    unknown: { label: 'No call', word: 'No call yet', color: 'var(--faint)', soft: 'var(--surface-3)' },
+    green: { label: 'Green', word: 'Room to scale', color: 'var(--theme-good-strong)', ink: 'var(--ok)', soft: 'var(--ok-soft)' },
+    amber: { label: 'Amber', word: 'Hold', color: 'var(--theme-usual-strong)', ink: 'var(--warn)', soft: 'var(--warn-soft)' },
+    red: { label: 'Red', word: 'Cut back', color: 'var(--theme-low-strong)', ink: 'var(--crit)', soft: 'var(--crit-soft)' },
+    unknown: { label: 'No call', word: 'No call yet', color: 'var(--faint)', ink: 'var(--muted)', soft: 'var(--surface-3)' },
 };
 
 /** Every setting on the Rules tab, grouped as it is shown. `only` hides a field unless the Meta account is in that currency. */
