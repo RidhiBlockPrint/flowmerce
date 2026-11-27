@@ -29,6 +29,7 @@ import { Button, Card, PageHead, Paged, Pill } from '../components/ui';
 const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v ?? '');
 const SERIES = { sales: 'var(--accent)', spend: 'var(--ink-2)', mer: 'var(--info)' };
 const STATUS_OPTIONS = [{ key: 'active', label: 'Active' }, { key: 'off', label: 'Paused' }];
+const GROUP_KIND = { ad_set: 'ad set', ad_group: 'ad group', asset_group: 'asset group' };
 const Note = ({ children }) => <div className="muted small" style={{ padding: '10px 16px' }}>{children}</div>;
 /** A name column no wider than `max` px: real ad and campaign names are long, so they end in "…" and show in
  *  full on hover instead of pushing the table wider than its card. */
@@ -234,7 +235,7 @@ function CampaignsTab({ rq, lines, onAds }) {
                 })}</tbody>
               </table></div>
             </Card>) : null}
-            <Card title="All campaigns" sub={`${fmtDate(d.from)} – ${fmtDate(d.to)}. Click a campaign to see its ad sets.`} flush>
+            <Card title="All campaigns" sub={`${fmtDate(d.from)} – ${fmtDate(d.to)}. Click a campaign to see its ${d.platform === 'google' ? 'ad groups and asset groups' : d.platform === 'meta' ? 'ad sets' : 'ad sets or groups'}.`} flush>
               <div className="toolbar" style={{ padding: '12px 16px 0' }}>
                 <SearchBox value={f.q} onChange={(v) => set({ q: v })} placeholder="Search campaigns"/>
                 <Pick label="Type" value={f.type} onChange={(v) => set({ type: v })} options={types}/>
@@ -271,13 +272,13 @@ function CampaignTable({ campaigns, target, lines, onAds, resetKey }) {
           </tr>
           {open === c.id ? (c.groups.length ? (<>
             {c.groups.map((g) => (<tr key={g.name} style={{ background: 'var(--surface-2)' }}>
-              <td style={{ paddingLeft: 36 }}><span className="small">{g.name}</span> <span className="muted xs">· ad set · {g.active_ads} of {g.ads} ads active</span></td>
+              <td style={{ paddingLeft: 36 }}><span className="small">{g.name}</span> <span className="muted xs">· {GROUP_KIND[g.kind] ?? 'group'}{g.ads === null ? '' : ` · ${g.active_ads} of ${g.ads} ads active`}</span></td>
               <td/><td/><td className="r">{usd(g.spend)}</td><td className="r">{fmtInt(g.purchases)}</td><td className="r"><Ratio value={g.roas} target={target}/></td><td className="hide-sm"/><td className="hide-sm"/><td/><td className="hide-sm"/>
             </tr>))}
-            <tr style={{ background: 'var(--surface-2)' }}><td colSpan={10} style={{ paddingLeft: 36 }}>
-              <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); onAds(c.id); }}>See this campaign&rsquo;s {c.ads} ads <Icon name="arrowRight" size="sm"/></Button></td></tr>
+            {c.platform === 'meta' ? (<tr style={{ background: 'var(--surface-2)' }}><td colSpan={10} style={{ paddingLeft: 36 }}>
+              <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); onAds(c.id); }}>See this campaign&rsquo;s {c.ads} ads <Icon name="arrowRight" size="sm"/></Button></td></tr>) : null}
           </>) : (<tr style={{ background: 'var(--surface-2)' }}><td colSpan={10} style={{ paddingLeft: 36 }} className="muted small">
-            {c.platform === 'google' ? 'Ad groups and asset groups arrive with the live Google data.' : 'No ad sets with spend in these days.'}</td></tr>)) : null}
+            {c.platform === 'google' ? 'No ad groups or asset groups with spend in these days.' : 'No ad sets with spend in these days.'}</td></tr>)) : null}
         </Fragment>))}</tbody>
       </table></div>)}
     </Paged>);
@@ -420,7 +421,7 @@ function TermTable({ rows: all, name, head, extra, size = 8 }) {
     return (<Paged rows={rows} size={size}>
       {(page) => (<div className="table-wrap"><table className="t compact">
         <thead><tr>{th(name, head, { right: false })}{th('spend', 'Spend')}{th('clicks', 'Clicks')}{th('purchases', 'Purch.')}{th('value', 'Sales', { className: 'hide-sm' })}{th('roas', 'ROAS')}</tr></thead>
-        <tbody>{page.map((r) => (<tr key={r[name]}>
+        <tbody>{page.map((r) => (<tr key={r.id ?? `${r[name]}|${r.match_type ?? ''}`}>
           <td>{r[name]} {extra ? extra(r) : null} {r.is_brand ? <Tag>Brand</Tag> : null}</td>
           <td className="r">{usd(r.spend, 2)}</td><td className="r">{fmtInt(r.clicks)}</td><td className="r">{fmtInt(r.purchases)}</td><td className="r hide-sm">{usd(r.value)}</td><td className="r"><Ratio value={r.roas}/></td>
         </tr>))}</tbody>

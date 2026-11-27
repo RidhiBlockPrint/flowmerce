@@ -1,9 +1,12 @@
-"""The Ads page's answers, built from schema `ads` (figures), cro.orders (store sales) and the rules
-in metrics.py. Each public function answers one /api/ads route with the shape the screens read
-(the preview copy's sample data, frontend/src/demo/modules/ads.js, returns the same shapes).
+"""The Ads page's answers, built from schema `ads` (Meta and Google figures), cro.orders (store
+sales) and the rules in metrics.py. Each public function answers one /api/ads route with the shape
+the screens read (the preview copy's sample data, frontend/src/demo/modules/ads.js, returns the
+same shapes).
 
-Phase 2 reads Meta only. Google Ads arrives in phase 3: until then a Google request is answered with
-GoogleNotConnectedError, and "All" shows Meta with a note that Google spend is not included yet.
+Platforms: "All" adds Meta and Google spend (never their claimed sales: the total is the store's
+own); MER, cost per order and the spend call always use the spend of every connected platform.
+A brand whose Google Ads account is not set (or not read yet) is shown with Meta only, and asking
+for Google alone answers GoogleNotConnectedError with the reason.
 """
 
 from __future__ import annotations
@@ -17,23 +20,37 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from . import data, metrics
-from .config import BRAND_STORE, STORE_TIMEZONE, check_brand, meta_account
+from .config import BRAND_STORE, STORE_TIMEZONE, check_brand, google_account, meta_account
+from .google_ads import CHANNEL_TYPE
 from .metrics import Totals, block, div, pct, ratio
 from .sync import account_today
 
 MAX_RANGE_DAYS = 366
 TREND_MIN_DAYS = 14
 TREND_MAX_DAYS = 60
-TYPE_LABEL = {"cbo": "CBO", "abo": "ABO", "catalog": "Catalog", "retargeting": "Retargeting"}
+TYPE_LABEL = {
+    "cbo": "CBO",
+    "abo": "ABO",
+    "catalog": "Catalog",
+    "retargeting": "Retargeting",
+    "pmax": "Performance Max",
+    "search": "Search",
+    "display": "Display",
+    "shopping": "Shopping",
+    "video": "Video",
+    "demand_gen": "Demand Gen",
+    "app": "App",
+    "smart": "Smart",
+    "local": "Local",
+    "other": "Other",
+}
+GOOGLE_STATUS = {"ENABLED": "ACTIVE", "PAUSED": "PAUSED", "REMOVED": "REMOVED"}
 READ_ONLY = (
     "Flowmerce does not change anything in Meta or Google. Make the change in the ad account, then "
     "mark "
     "it done here."
 )
-GOOGLE_NOTE = (
-    "Google Ads is not connected yet (the next build step), so there are no Google figures or "
-    "suggestions."
-)
+GOOGLE_RULES_NOTE = "No Google rules are agreed yet, so there are no automatic Google suggestions."
 GLOSSARY = [
     (
         "MER",
@@ -133,9 +150,12 @@ class NotReadyError(Exception):
 
 
 class GoogleNotConnectedError(Exception):
-    """A Google Ads figure was asked for before phase 3."""
+    """Google figures were asked for, but the brand's Google Ads account is not set or not read
+    yet."""
 
-    message = "Google Ads is not connected yet: it is the next build step. Choose Meta or All."
+    def __init__(self, message: str = "") -> None:
+        self.message = message or "Google Ads is not connected for this brand. Choose Meta or All."
+        super().__init__(self.message)
 
 
 @dataclass(frozen=True)
@@ -152,6 +172,18 @@ class Ctx:
     cmp: str  # one of COMPARES
     rules: dict[str, float]
     cfrom: date | None = None  # the first day of a custom comparison
+    g_key: str | None = None  # the brand's Google Ads account, when it is set and has been read
+    g_account: dict[str, Any] | None = None
+
+    @property
+    def meta_on(self) -> bool:
+        """Whether Meta's figures are in the chosen platforms."""
+        return self.platform in ("all", "meta")
+
+    @property
+    def google_on(self) -> bool:
+        """Whether Google's figures are in the chosen platforms (and can be read)."""
+        return self.g_key is not None and self.platform in ("all", "google")
 
     @property
     def days(self) -> int:
@@ -240,6 +272,31 @@ def _account(brand: str) -> tuple[str, dict[str, Any]]:
     return acc.key, row
 
 
+def _google(brand: str) -> tuple[str | None, dict[str, Any] | None, str]:
+    """The brand's Google Ads account key and row when it can be shown, else (None, None, why)."""
+    acc = google_account(brand)
+    if acc is None:
+        return (
+            None,
+            None,
+            "No Google Ads account is set for this brand yet "
+            f"({brand.upper()}_GOOGLE_ADS_CUSTOMER_ID in the server's .env), so there are no "
+            "Google figures. Choose Meta or All.",
+        )
+    row = data.account(acc.key)
+    if row is None or row.get("first_day") is None:
+        why = (
+            f" The last attempt said: {row['last_error']}" if row and row.get("last_error") else ""
+        )
+        return (
+            None,
+            None,
+            "The first read of the Google Ads account has not finished yet; it runs with the "
+            f"hourly Meta read.{why} Choose Meta or All for now.",
+        )
+    return acc.key, row, ""
+
+
 def context(
     brand: str,
     platform: str = "all",
@@ -247,19 +304,19 @@ def context(
     to: str | None = None,
     compare: str | None = None,
     cfrom: str | None = None,
-    *,
-    google_ok: bool = False,
 ) -> Ctx:
     """Resolve a request: the account's days up to today (today is still running), the last 7
     complete days by default, and the comparison (the previous period when none is given)."""
     platform = platform if platform in ("all", "meta", "google") else "all"
-    if platform == "google" and not google_ok:
-        raise GoogleNotConnectedError
     try:
         check_brand(brand)  # before any read that uses it
     except ValueError as e:
         raise InputError(str(e)) from None
-    (key, row), saved_rules = _together(lambda: _account(brand), lambda: data.rules(brand))
+    (key, row), saved_rules, (g_key, g_row, g_why) = _together(
+        lambda: _account(brand), lambda: data.rules(brand), lambda: _google(brand)
+    )
+    if platform == "google" and g_key is None:
+        raise GoogleNotConnectedError(g_why)
     today = account_today(str(row.get("timezone") or "UTC"))
     end = min(_day(to) or today - timedelta(days=1), today)
     start = min(_day(frm) or end - timedelta(days=6), end)
@@ -282,6 +339,8 @@ def context(
         cmp,
         metrics.rules_for(brand, saved_rules),
         first,
+        g_key,
+        g_row,
     )
 
 
@@ -337,14 +396,31 @@ def settings(brand: str) -> dict[str, Any]:
         "token_days_left": days_left,
         "converted_at": data.fx_rate(currency, today) if currency != "USD" else None,
     }
+    accounts = [meta]
+    g_key, g_row, g_why = _google(brand)
+    if g_key and g_row:
+        g_currency = str(g_row.get("currency") or "USD")
+        accounts.append(
+            {
+                "platform": "google",
+                "name": g_row.get("name") or g_key,
+                "currency": g_currency,
+                "timezone": g_row.get("timezone"),
+                "status": g_row.get("last_status") or "ok",
+                "last_read_at": g_row.get("last_run_at"),
+                "last_error": g_row.get("last_error"),
+                "token_days_left": None,
+                "converted_at": data.fx_rate(g_currency, today) if g_currency != "USD" else None,
+            }
+        )
     return {
         "brand": brand,
         "reporting_currency": "USD",
         "today": today.isoformat(),
         "data_from": row.get("first_day"),
-        "accounts": [meta],
+        "accounts": accounts,
         "product_lines": [{"key": k, "label": label} for k, label, _ in metrics.PRODUCT_LINES],
-        "google": {"connected": False, "note": GOOGLE_NOTE},
+        "google": {"connected": g_key is not None, "note": g_why or None},
     }
 
 
@@ -361,6 +437,33 @@ def _meta_days(c: Ctx, since: date, until: date) -> dict[str, dict[str, Any]]:
     return {str(r["day"]): r for r in data.account_days(c.key, since, until)}
 
 
+def _google_days(c: Ctx, since: date, until: date) -> dict[str, dict[str, Any]]:
+    """Google's per day totals (US dollars), or nothing when the brand has no Google account."""
+    if c.g_key is None:
+        return {}
+    return {str(r["day"]): r for r in data.g_days(c.g_key, since, until)}
+
+
+AD_FIELDS = ("spend", "value", "purchases", "impressions", "clicks")
+
+
+def _merge(*parts: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per day sums of several platforms' days (spend, claimed value, purchases, impressions,
+    clicks). Claimed value is only ever summed per platform for a ROAS, never shown as a total."""
+    out: dict[str, dict[str, Any]] = {}
+    for part in parts:
+        for day, r in part.items():
+            t = out.setdefault(day, dict.fromkeys(AD_FIELDS, 0.0))
+            for f in AD_FIELDS:
+                t[f] += float(r.get(f) or 0)
+    return out
+
+
+def _chosen(c: Ctx, meta: dict[str, Any], google: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The days of the platforms the page asked for."""
+    return _merge(*([meta] if c.meta_on else []), *([google] if c.google_on else []))
+
+
 def _sum(rows: dict[str, dict[str, Any]], since: date, until: date, field: str) -> float:
     total = 0.0
     d = since
@@ -371,18 +474,26 @@ def _sum(rows: dict[str, dict[str, Any]], since: date, until: date, field: str) 
 
 
 def _side(
-    meta: dict[str, dict[str, Any]], store: dict[str, dict[str, Any]], since: date, until: date
+    chosen: dict[str, dict[str, Any]],
+    store: dict[str, dict[str, Any]],
+    since: date,
+    until: date,
+    total: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    spend = _sum(meta, since, until, "spend")
-    value = _sum(meta, since, until, "value")
-    purchases = _sum(meta, since, until, "purchases")
+    """Figures for since..until: spend, claimed value and purchases of the chosen platforms; MER,
+    cost per order and total_spend from the spend of every connected platform (`total`, defaults to
+    the chosen ones)."""
+    spend = _sum(chosen, since, until, "spend")
+    value = _sum(chosen, since, until, "value")
+    purchases = _sum(chosen, since, until, "purchases")
+    every = _sum(total if total is not None else chosen, since, until, "spend")
     sales = _sum(store, since, until, "sales")
     bulk = _sum(store, since, until, "bulk_amount")
     orders = _sum(store, since, until, "orders")
     bulk_orders = _sum(store, since, until, "bulk_orders")
     return {
         "spend": spend,
-        "total_spend": spend,
+        "total_spend": every,
         "value": value,
         "purchases": purchases,
         "roas": div(value, spend),
@@ -390,10 +501,10 @@ def _side(
         "sales": sales,
         "sales_ex_bulk": sales - bulk,
         "orders": orders,
-        "mer": div(sales, spend),
-        "mer_ex_bulk": div(sales - bulk, spend),
+        "mer": div(sales, every),
+        "mer_ex_bulk": div(sales - bulk, every),
         "aov": div(sales - bulk, orders - bulk_orders),
-        "cost_per_order": div(spend, orders),
+        "cost_per_order": div(every, orders),
         "bulk_orders": bulk_orders,
         "bulk_amount": bulk,
     }
@@ -417,14 +528,18 @@ def overview(
         c.to - timedelta(days=TREND_MAX_DAYS - 1),
     )
     since = min(c.prev_from, trend_from, c.to - timedelta(days=6))
-    meta, store, latest, rate = _together(
+    meta, google, store, latest, g_latest, rate = _together(
         lambda: _meta_days(c, since, c.to),
+        lambda: _google_days(c, since, c.to),
         lambda: _store(c, since, c.to),
         lambda: data.latest_day(c.key),
+        lambda: data.g_latest_day(c.g_key) if c.g_key else None,
         lambda: _rate_now(c),
     )
-    cur = _side(meta, store, c.frm, c.to)
-    prev = _side(meta, store, c.prev_from, c.prev_to) if c.compare else None
+    every = _merge(meta, google)
+    chosen = _chosen(c, meta, google)
+    cur = _side(chosen, store, c.frm, c.to, every)
+    prev = _side(chosen, store, c.prev_from, c.prev_to, every) if c.compare else None
     keys = [
         "spend",
         "total_spend",
@@ -436,41 +551,46 @@ def overview(
         "aov",
         "cost_per_order",
     ]
-    if c.platform == "meta":
+    if c.platform != "all":
         keys += ["roas", "value", "purchases", "cpa"]
     out_metrics = {k: block(cur[k], prev[k] if prev else None) for k in keys}
 
     def mer(n: int) -> float | None:
-        s = _side(meta, store, c.to - timedelta(days=n - 1), c.to)
+        s = _side(every, store, c.to - timedelta(days=n - 1), c.to)
         v = s["mer_ex_bulk"]
         return float(v) if v is not None else None
 
-    week = _side(meta, store, c.to - timedelta(days=6), c.to)
-    g = metrics.gate(
-        mer(3), mer(7), week["spend"] / 7, c.rules, latest is not None and latest >= c.to
-    )
+    # The spend call needs every platform's spend for the last days: a platform not read up to the
+    # range's end would make MER look better than it is.
+    saved = [latest] + ([g_latest] if c.g_key else [])
+    complete = all(x is not None and x >= c.to for x in saved)
+    week = _side(every, store, c.to - timedelta(days=6), c.to)
+    g = metrics.gate(mer(3), mer(7), week["total_spend"] / 7, c.rules, complete)
     trend = []
     d = trend_from
     while d <= c.to:
         m = meta.get(d.isoformat()) or {}
+        gd = google.get(d.isoformat()) or {}
         s = store.get(d.isoformat()) or {}
-        spend = float(m.get("spend") or 0)
+        m_spend = float(m.get("spend") or 0)
+        g_spend = float(gd.get("spend") or 0)
+        spend = m_spend + g_spend
         sales = float(s.get("sales") or 0)
         ex = sales - float(s.get("bulk_amount") or 0)
         day_mer = div(ex, spend)
         trend.append(
             {
                 "date": d.isoformat(),
-                "meta_spend": round(spend, 2),
-                "google_spend": None,
+                "meta_spend": round(m_spend, 2),
+                "google_spend": round(g_spend, 2) if c.g_key else None,
                 "spend": round(spend, 2),
                 "sales": round(sales, 2),
                 "sales_ex_bulk": round(ex, 2),
                 "mer": ratio(sales, spend),
                 "mer_ex_bulk": None if day_mer is None else round(day_mer, 2),
-                "meta_roas": ratio(float(m.get("value") or 0), spend),
-                "google_roas": None,
-                "purchases": float(m.get("purchases") or 0),
+                "meta_roas": ratio(float(m.get("value") or 0), m_spend),
+                "google_roas": ratio(float(gd.get("value") or 0), g_spend) if c.g_key else None,
+                "purchases": float(m.get("purchases") or 0) + float(gd.get("purchases") or 0),
                 "orders": int(s.get("orders") or 0),
                 "colour": metrics.day_colour(day_mer, c.rules),
                 "in_range": d >= c.frm,
@@ -479,46 +599,63 @@ def overview(
         d += timedelta(days=1)
     goal = c.rules["goal_daily_sales"]
     avg_sales = week["sales_ex_bulk"] / 7
-    platforms = [
-        {
-            "platform": "meta",
-            "account": c.account.get("name"),
-            "spend": round(cur["spend"], 2),
-            "purchases": cur["purchases"],
-            "value": round(cur["value"], 2),
-            "roas": ratio(cur["value"], cur["spend"]),
-            "cpa": ratio(cur["spend"], cur["purchases"]),
-            "prev_roas": ratio(prev["value"], prev["spend"]) if prev else None,
-            "prev_spend": round(prev["spend"], 2) if prev else None,
-            "share_of_spend": 100.0 if cur["spend"] else None,
-        },
-        {
-            "platform": "google",
-            "account": "Not connected yet",
-            "spend": None,
-            "purchases": None,
-            "value": None,
-            "roas": None,
-            "cpa": None,
-            "prev_roas": None,
-            "prev_spend": None,
-            "share_of_spend": None,
-        },
-    ]
+
+    def platform_row(name: str, days: dict[str, Any], account: str | None) -> dict[str, Any]:
+        now_ = _side(days, store, c.frm, c.to, every)
+        before = _side(days, store, c.prev_from, c.prev_to, every) if c.compare else None
+        return {
+            "platform": name,
+            "account": account,
+            "spend": round(now_["spend"], 2),
+            "purchases": now_["purchases"],
+            "value": round(now_["value"], 2),
+            "roas": ratio(now_["value"], now_["spend"]),
+            "cpa": ratio(now_["spend"], now_["purchases"]),
+            "prev_roas": ratio(before["value"], before["spend"]) if before else None,
+            "prev_spend": round(before["spend"], 2) if before else None,
+            "share_of_spend": round(now_["spend"] / now_["total_spend"] * 100, 1)
+            if now_["total_spend"]
+            else None,
+        }
+
+    platforms = [platform_row("meta", meta, c.account.get("name"))]
+    if c.g_key:
+        platforms.append(platform_row("google", google, (c.g_account or {}).get("name")))
+    else:
+        platforms.append(
+            {
+                "platform": "google",
+                "account": "Not connected yet",
+                **dict.fromkeys(
+                    ("spend", "purchases", "value", "roas", "cpa", "prev_roas", "prev_spend"), None
+                ),
+                "share_of_spend": None,
+            }
+        )
     currency = str(c.account.get("currency") or "USD")
     notes = [
         "Platform sales are what Meta and Google each claim. They are never added together: the "
         "total is the store's own sales.",
-        "Google Ads is not connected yet, so ad spend, MER and the scaling gate use Meta spend "
-        "only for now.",
-        "Store sales are orders as placed (before later refunds), by the store's own day; Meta "
-        "figures are by the ad account's day.",
+        "MER, cost per order and the spend call use the spend of every connected platform "
+        + (
+            "(Meta and Google)."
+            if c.g_key
+            else "(Meta only: Google Ads is not connected for this brand yet)."
+        ),
+        "Store sales are orders as placed (before later refunds), by the store's own day; ad "
+        "figures are by each ad account's day.",
     ]
     if latest is not None and latest < c.to:
         notes.insert(
             0,
             f"Meta figures are saved up to {latest:%d %b} so far; the days after it are read in "
             "the next round, so spend and MER for those days are not complete yet.",
+        )
+    if c.g_key and g_latest is not None and g_latest < c.to:
+        notes.insert(
+            0,
+            f"Google figures are saved up to {g_latest:%d %b} so far; the days after it are read "
+            "in the next round.",
         )
     if currency != "USD":
         notes.append(
@@ -532,10 +669,11 @@ def overview(
         "platforms": platforms,
         "trend": trend,
         "meta_saved_to": latest.isoformat() if latest else None,
+        "google_saved_to": g_latest.isoformat() if g_latest else None,
         "goal": {
             "daily_sales_goal": goal,
             "avg_sales_7d": round(avg_sales),
-            "avg_spend_7d": round(week["spend"] / 7),
+            "avg_spend_7d": round(week["total_spend"] / 7),
             "mer_7d": g["mer_7d"],
             "pct_of_goal": round(avg_sales / goal * 100) if goal else 0,
             "gap": max(0, round(goal - avg_sales)),
@@ -867,9 +1005,103 @@ def campaigns(
     compare: str | None = None,
     cfrom: str | None = None,
 ) -> dict[str, Any]:
-    """Every Meta campaign that is active or spent, with CBO health and its ad sets."""
+    """Every campaign that is active or spent: Meta's with CBO health and their ad sets, Google's
+    with their ad groups or asset groups."""
     c = context(brand, platform, frm, to, compare, cfrom)
-    return {**_info(c), "targets": {"roas": c.rules["target_roas"]}, "campaigns": _campaign_rows(c)}
+    meta_rows, google_rows = _together(
+        lambda: _campaign_rows(c) if c.meta_on else [],
+        lambda: _google_campaign_rows(c) if c.google_on else [],
+    )
+    rows = sorted(meta_rows + google_rows, key=lambda x: -float(x["spend"] or 0))
+    return {**_info(c), "targets": {"roas": c.rules["target_roas"]}, "campaigns": rows}
+
+
+def _by_item(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(r["item"]): r for r in rows}
+
+
+def _google_campaign_rows(c: Ctx) -> list[dict[str, Any]]:
+    """Google campaigns with their figures for the range, the comparison, the last 3 and 7 days, and
+    their ad groups or asset groups."""
+    if c.g_key is None:
+        return []
+    key = c.g_key
+    currency = str((c.g_account or {}).get("currency") or "USD")
+    camps, cur, prev, d3, d7, groups, rate = _together(
+        lambda: data.g_campaigns(key),
+        lambda: _by_item(data.g_sum(key, "campaign", c.frm, c.to)),
+        lambda: _by_item(data.g_sum(key, "campaign", c.prev_from, c.prev_to)) if c.compare else {},
+        lambda: _by_item(data.g_sum(key, "campaign", c.to - timedelta(days=2), c.to)),
+        lambda: _by_item(data.g_sum(key, "campaign", c.to - timedelta(days=6), c.to)),
+        lambda: data.g_sum(key, "group", c.frm, c.to),
+        lambda: data.fx_rate(currency, c.today),
+    )
+    by_camp: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for g in groups:
+        by_camp[str(g["campaign_id"])].append(g)
+
+    def f(r: dict[str, Any] | None, field: str) -> float:
+        return float((r or {}).get(field) or 0)
+
+    out = []
+    for camp in camps:
+        cid = str(camp["id"])
+        now_, before = cur.get(cid), prev.get(cid)
+        status = GOOGLE_STATUS.get(str(camp.get("status") or ""), str(camp.get("status") or ""))
+        if status != "ACTIVE" and not f(now_, "spend") and not f(d7.get(cid), "spend"):
+            continue
+        name = str(camp.get("name") or "")
+        ctype = CHANNEL_TYPE.get(str(camp.get("channel") or ""), "other")
+        spend, value, purchases = f(now_, "spend"), f(now_, "value"), f(now_, "purchases")
+        budget = camp.get("daily_budget")
+        out.append(
+            {
+                "id": cid,
+                "platform": "google",
+                "name": name,
+                "type": ctype,
+                "type_label": TYPE_LABEL.get(ctype, "Other"),
+                "product_line": metrics.product_line(name),
+                "status": status,
+                "is_brand": "brand" in name.lower(),
+                "daily_budget": round(float(budget) / rate, 2) if budget is not None else None,
+                "spend": round(spend, 2),
+                "purchases": purchases,
+                "value": round(value, 2),
+                "roas": ratio(value, spend),
+                "cpa": ratio(spend, purchases),
+                "prev_spend": round(f(before, "spend"), 2) if c.compare else None,
+                "prev_roas": ratio(f(before, "value"), f(before, "spend")) if c.compare else None,
+                "impressions": int(f(now_, "impressions")),
+                "clicks": int(f(now_, "clicks")),
+                "ctr": pct(f(now_, "clicks"), f(now_, "impressions")),
+                "cpm": ratio(spend * 1000, f(now_, "impressions")),
+                "roas_3d": ratio(f(d3.get(cid), "value"), f(d3.get(cid), "spend")),
+                "roas_7d": ratio(f(d7.get(cid), "value"), f(d7.get(cid), "spend")),
+                "atc": None,
+                "frequency": None,
+                "groups": sorted(
+                    (
+                        {
+                            "name": str(g.get("label") or g["item"]),
+                            "kind": str(g.get("extra") or "ad_group"),
+                            "ads": None,
+                            "active_ads": None,
+                            "spend": round(f(g, "spend"), 2),
+                            "purchases": f(g, "purchases"),
+                            "roas": ratio(f(g, "value"), f(g, "spend")),
+                        }
+                        for g in by_camp.get(cid, [])
+                        if f(g, "spend") or f(g, "purchases")
+                    ),
+                    key=lambda g: -float(g["spend"] or 0),
+                ),
+                "ads": None,
+                "active_ads": None,
+                "health": None,
+            }
+        )
+    return out
 
 
 # ------------------------------------------------------------------ funnel
@@ -883,10 +1115,17 @@ FUNNEL_META = [
 ]
 
 
-def _steps(cur: dict[str, float], prev: dict[str, float] | None) -> list[dict[str, Any]]:
+FUNNEL_GOOGLE = [("impressions", "Impressions"), ("clicks", "Clicks"), ("purchases", "Purchases")]
+
+
+def _steps(
+    cur: dict[str, float],
+    prev: dict[str, float] | None,
+    steps: list[tuple[str, str]] = FUNNEL_META,
+) -> list[dict[str, Any]]:
     out = []
-    for i, (key, label) in enumerate(FUNNEL_META):
-        before = FUNNEL_META[i - 1][0] if i else None
+    for i, (key, label) in enumerate(steps):
+        before = steps[i - 1][0] if i else None
         out.append(
             {
                 "key": key,
@@ -915,21 +1154,42 @@ def funnel(
     """Meta's funnel from impression to purchase, and the store's orders and AOV, against the
     comparison."""
     c = context(brand, platform, frm, to, compare, cfrom)
-    meta, store = _together(
-        lambda: _meta_days(c, c.prev_from, c.to), lambda: _store(c, c.prev_from, c.to)
+    meta, google, store = _together(
+        lambda: _meta_days(c, c.prev_from, c.to),
+        lambda: _google_days(c, c.prev_from, c.to),
+        lambda: _store(c, c.prev_from, c.to),
     )
 
-    def span(since: date, until: date) -> dict[str, float]:
-        return {k: _sum(meta, since, until, k) for k, _ in FUNNEL_META}
+    def span(
+        days: dict[str, Any], steps: list[tuple[str, str]], since: date, until: date
+    ) -> dict[str, float]:
+        return {k: _sum(days, since, until, k) for k, _ in steps}
 
-    cur = span(c.frm, c.to)
-    prev = span(c.prev_from, c.prev_to) if c.compare else None
-    s = _side(meta, store, c.frm, c.to)
-    b = _side(meta, store, c.prev_from, c.prev_to) if c.compare else None
+    every = _merge(meta, google)
+    s = _side(every, store, c.frm, c.to)
+    b = _side(every, store, c.prev_from, c.prev_to) if c.compare else None
+    meta_part = None
+    if c.meta_on:
+        meta_part = {
+            "steps": _steps(
+                span(meta, FUNNEL_META, c.frm, c.to),
+                span(meta, FUNNEL_META, c.prev_from, c.prev_to) if c.compare else None,
+            )
+        }
+    google_part = None
+    if c.google_on:
+        google_part = {
+            "steps": _steps(
+                span(google, FUNNEL_GOOGLE, c.frm, c.to),
+                span(google, FUNNEL_GOOGLE, c.prev_from, c.prev_to) if c.compare else None,
+                FUNNEL_GOOGLE,
+            ),
+            "note": "Google reports clicks and purchases only; it has no page-view or cart steps.",
+        }
     return {
         **_info(c),
-        "meta": {"steps": _steps(cur, prev)},
-        "google": None,
+        "meta": meta_part,
+        "google": google_part,
         "store": {
             "sessions": block(None, None),
             "orders": block(s["orders"], b["orders"] if b else None),
@@ -938,9 +1198,12 @@ def funnel(
         },
         "notes": [
             "Store sessions and conversion rate are on the Conversion (CRO) page; they are not "
-            "repeated "
-            "here yet.",
-            GOOGLE_NOTE,
+            "repeated here yet.",
+            *(
+                []
+                if c.g_key
+                else ["Google Ads is not connected for this brand, so its funnel is not shown."]
+            ),
         ],
     }
 
@@ -1191,7 +1454,7 @@ def actions(brand: str, platform: str) -> dict[str, Any]:
         "open": len(open_),
         "daily_impact": sum(a["daily_impact"] for a in open_),
         "history": history,
-        "google_note": GOOGLE_NOTE,
+        "google_note": GOOGLE_RULES_NOTE,
         "read_only": READ_ONLY,
     }
 
@@ -1254,7 +1517,103 @@ def save_rules(brand: str, changes: Any, by: str) -> dict[str, Any]:
     return rules(brand)
 
 
-def search_terms(brand: str) -> dict[str, Any]:
-    """Google keywords, search terms and products. Google Ads arrives in phase 3: until then this "
-    "raises."""
-    raise GoogleNotConnectedError
+TERMS_SHOWN = 300  # rows per list; the rest have the least spend
+
+
+@_kept
+def search_terms(
+    brand: str,
+    frm: str | None = None,
+    to: str | None = None,
+    compare: str | None = None,
+    cfrom: str | None = None,
+) -> dict[str, Any]:
+    """Google's keywords, search terms and products for the range, and how much of Google's claimed
+    sales came from people searching for the brand by name."""
+    c = context(brand, "google", frm, to, compare, cfrom)
+    if c.g_key is None:
+        raise GoogleNotConnectedError
+    key = c.g_key
+    camps, terms, keywords, products, totals = _together(
+        lambda: data.g_campaigns(key),
+        lambda: data.g_sum(key, "term", c.frm, c.to),
+        lambda: data.g_sum(key, "keyword", c.frm, c.to),
+        lambda: data.g_sum(key, "product", c.frm, c.to),
+        lambda: data.g_sum(key, "campaign", c.frm, c.to),
+    )
+    brand_ids = {str(x["id"]) for x in camps if "brand" in str(x.get("name") or "").lower()}
+
+    def merged(rows: list[dict[str, Any]], group: Any) -> list[dict[str, Any]]:
+        out: dict[Any, dict[str, Any]] = {}
+        for r in rows:
+            k = group(r)
+            t = out.setdefault(
+                k,
+                {
+                    "id": "|".join(map(str, k)) if isinstance(k, tuple) else str(k),
+                    "is_brand": False,
+                    **dict.fromkeys(("spend", "value", "purchases", "impressions", "clicks"), 0.0),
+                },
+            )
+            for f in ("spend", "value", "purchases", "impressions", "clicks"):
+                t[f] += float(r.get(f) or 0)
+            t["is_brand"] = t["is_brand"] or str(r.get("campaign_id")) in brand_ids
+            t["_label"], t["_extra"] = str(r.get("label") or r["item"]), str(r.get("extra") or "")
+        rows_out = []
+        for t in out.values():
+            if not t["spend"] and not t["purchases"]:
+                continue
+            rows_out.append(
+                {
+                    **{k: v for k, v in t.items() if not k.startswith("_")},
+                    "spend": round(t["spend"], 2),
+                    "value": round(t["value"], 2),
+                    "impressions": int(t["impressions"]),
+                    "clicks": int(t["clicks"]),
+                    "roas": ratio(t["value"], t["spend"]),
+                    "cpa": ratio(t["spend"], t["purchases"]),
+                    "_label": t["_label"],
+                    "_extra": t["_extra"],
+                }
+            )
+        rows_out.sort(key=lambda r: -float(r["spend"]))
+        return rows_out[:TERMS_SHOWN]
+
+    def tidy(
+        rows: list[dict[str, Any]], name: str, extra: str | None = None
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                **{k: v for k, v in r.items() if not k.startswith("_")},
+                name: r["_label"],
+                **({extra: r["_extra"]} if extra else {}),
+            }
+            for r in rows
+        ]
+
+    def tot(rows: list[dict[str, Any]], f: str, only: set[str] | None = None) -> float:
+        return sum(float(r.get(f) or 0) for r in rows if only is None or str(r["item"]) in only)
+
+    return {
+        **_info(c),
+        "keywords": tidy(
+            merged(
+                keywords, lambda r: (str(r.get("label") or "").lower(), str(r.get("extra") or ""))
+            ),
+            "text",
+            "match_type",
+        ),
+        "terms": tidy(merged(terms, lambda r: str(r.get("label") or r["item"]).lower()), "term"),
+        "products": tidy(merged(products, lambda r: str(r["item"])), "title"),
+        "brand_share": {
+            "spend": round(tot(totals, "spend", brand_ids), 2),
+            "value": round(tot(totals, "value", brand_ids), 2),
+            "total_value": round(tot(totals, "value"), 2),
+            "total_spend": round(tot(totals, "spend"), 2),
+        },
+        "notes": [
+            "Purchases are Google's main purchase action only (secondary purchase tags and click "
+            "actions are left out). Search terms come from Search campaigns; Performance Max does "
+            "not report them per term.",
+        ],
+    }

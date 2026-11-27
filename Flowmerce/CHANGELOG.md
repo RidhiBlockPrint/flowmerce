@@ -2,6 +2,36 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-27 (Ads phase 3: Google Ads next to Meta)
+
+Owner request 2026-11-27: start phase 3 (Google Ads). Read-only checks of the Google login on 27 Nov: it reaches Ridhi's
+account (135-111-7947, USD, India time) without a developer token, a second unused "Ridhi Block Print" account, a manager
+account with no accounts under it, and one closed account; **no Cotton Print Club account**. Ridhi, 20 to 26 Nov: $854.43
+spent, 56.8 purchases worth $7,105.64; the new client reproduces those figures exactly. Verified: Ads tests 83 passed
+(25 new, no network), ruff and mypy clean on Ads, frontend tests 126 passed, a production build. Verified on
+real data after the owner ran `db/central/117_ads_google.sql`: the first Ridhi read (30 Aug to 27 Nov, 7,465 rows,
+49 s) stores $854.44 / 56.8 purchases / $7,105.64 for 20 to 26 Nov, and the Overview, Campaigns and Search terms tabs
+show it (86% of Google's claimed sales came from brand search, on $104 of $854).
+
+- **Added** `modules/ads/google_ads.py`: a read-only Google Ads API client (v26, REST): account, campaigns, and daily
+  figures per campaign, ad or asset group, search term, keyword and product. Purchases are Google's primary purchase
+  conversions; the "Ridhi Shopify (web) click" action (filed as a purchase, worth $1) and the secondary web purchase tag
+  (the same orders again) are left out.
+- **Added** `modules/ads/google_sync.py` and `db/central/117_ads_google.sql` (`ads.g_campaigns`, `ads.g_daily`, functions
+  g_replace, g_days, g_sum): the hourly job reads each brand's Google account after its Meta account, 90 days on the
+  first run, 28 days nightly, 3 days otherwise.
+- **Changed** Overview: "All" adds Google spend to Meta's; MER, cost per order, the goal's spend and the spend call use
+  both. Meta and Google each keep their own ROAS (claimed sales are never added together). The spend call waits until
+  both accounts are read to the range's end.
+- **Changed** Campaigns, Funnel and Search terms show Google: campaign type (Performance Max, Search, Display, ...), brand
+  search marked, ad groups and asset groups under each campaign; Google's impressions, clicks and purchases; keywords,
+  search terms and products with the share of Google's sales that came from brand search.
+- **Changed** A brand without a Google account says so calmly (which `.env` line is missing, or that the first read has not
+  finished) instead of a red "could not load" box. "All" still works with Meta only.
+- **Fixed** The background job brought the next round forward (5 minutes) after any failure, re-reading every account;
+  failures that waiting does not fix (no access, closed account, refused sign-in) now wait for the normal round, and
+  missing Google tables are a calm "waiting", so Meta's hourly allowance is not spent on retries.
+
 ## 2026-11-25 (Creative Strategist: Claude writes the creative)
 
 Owner request 2026-11-25, from a product spec the owner shared (purpose, what it monitors, main outputs). Read against

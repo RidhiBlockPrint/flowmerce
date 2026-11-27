@@ -96,8 +96,80 @@ class FakeData:
         }
 
     # reads
+    google_row: dict[str, Any] | None = None  # set by the Google tests (test_google.py)
+
     def account(self, key: str, c: Any = None) -> dict[str, Any] | None:
-        return self.account_row
+        return self.google_row if key.startswith("google:") else self.account_row
+
+    # Google: two campaigns (Performance Max $70 a day, brand Search $30 a day)
+    G_CAMPAIGNS = (
+        ("g_pmax", "PF-Max | Sales | Quilt", "PERFORMANCE_MAX", 70.0, 150.0, 1.0),
+        ("g_brand", "Brand Campaign | Sales | Search", "SEARCH", 30.0, 150.0, 2.0),
+    )
+
+    def g_campaigns(self, key: str, c: Any = None) -> list[dict[str, Any]]:
+        return [
+            {"id": i, "name": n, "channel": ch, "status": "ENABLED", "daily_budget": sp + 5}
+            for i, n, ch, sp, _v, _p in self.G_CAMPAIGNS
+        ]
+
+    def g_days(self, key: str, since: date, until: date, c: Any = None) -> list[dict[str, Any]]:
+        out, d = [], since
+        while d <= until:
+            out.append(
+                {
+                    "day": iso(d),
+                    "spend": 100.0,
+                    "value": 300.0,
+                    "purchases": 3.0,
+                    "impressions": 5000,
+                    "clicks": 120,
+                }
+            )
+            d += timedelta(days=1)
+        return out
+
+    def g_sum(
+        self, key: str, kind: str, since: date, until: date, c: Any = None
+    ) -> list[dict[str, Any]]:
+        n = (until - since).days + 1
+        rows = {
+            "campaign": [(i, i, nm, "", sp, v, pu) for i, nm, _ch, sp, v, pu in self.G_CAMPAIGNS],
+            "group": [
+                ("ag1", "g_pmax", "Quilt asset group", "asset_group", 70.0, 150.0, 1.0),
+                ("ad1", "g_brand", "Brand words", "ad_group", 30.0, 150.0, 2.0),
+            ],
+            "term": [
+                ("ridhi block print", "g_brand", "ridhi block print", "", 20.0, 120.0, 1.5),
+                ("Ridhi Block Print", "g_brand", "Ridhi Block Print", "", 5.0, 30.0, 0.5),
+                ("quilt king", "g_brand", "quilt king", "", 5.0, 0.0, 0.0),
+            ],
+            "keyword": [
+                ("1~1", "g_brand", "Ridhi Block Print", "BROAD", 25.0, 150.0, 2.0),
+                ("2~1", "g_brand", "Ridhi Block Print", "PHRASE", 5.0, 0.0, 0.0),
+            ],
+            "product": [
+                ("p1", "g_pmax", "Quilt | Sage Queen", "", 50.0, 150.0, 1.0),
+                ("p2", "g_pmax", "Pillow cover", "", 0.0, 0.0, 0.0),
+            ],
+        }[kind]
+        return [
+            {
+                "item": it,
+                "campaign_id": cid,
+                "label": lb,
+                "extra": ex,
+                "spend": sp * n,
+                "value": v * n,
+                "purchases": pu * n,
+                "impressions": 1000 * n,
+                "clicks": 40 * n,
+            }
+            for it, cid, lb, ex, sp, v, pu in rows
+        ]
+
+    def g_latest_day(self, key: str, c: Any = None) -> date | None:
+        return self.latest
 
     def rules(self, brand: str, c: Any = None) -> dict[str, Any]:
         return dict(self.saved_rules)
@@ -248,6 +320,19 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeData:
     # checks the keeping itself).
     monkeypatch.setattr(data, "ANSWER_SECONDS", 0)
     monkeypatch.setattr(data, "latest_day", lambda key, c=None: f.latest)
+    # Google is off unless a test sets it up (test_google.py): the real .env is not used.
+    for name in (
+        "GOOGLE_ADS_CLIENT_ID",
+        "GOOGLE_ADS_CLIENT_SECRET",
+        "GOOGLE_ADS_REFRESH_TOKEN",
+        "GOOGLE_ADS_DEVELOPER_TOKEN",
+        "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+        "RIDHI_GOOGLE_ADS_CUSTOMER_ID",
+        "CPC_GOOGLE_ADS_CUSTOMER_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("g_campaigns", "g_days", "g_sum", "g_latest_day"):
+        monkeypatch.setattr(data, name, getattr(f, name))
     for name in (
         "account",
         "rules",
@@ -628,6 +713,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     for b in ("RIDHI", "CPC"):
         monkeypatch.delenv(f"{b}_META_AD_ACCOUNT_ID", raising=False)
         monkeypatch.delenv(f"{b}_META_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv(f"{b}_GOOGLE_ADS_CUSTOMER_ID", raising=False)  # no network in tests
     return create_app()
 
 
@@ -637,8 +723,8 @@ def test_routes_are_mounted_and_explain_what_is_missing(app: Any) -> None:
     assert r.status_code == 503 and r.json()["code"] == "not_configured"
     r = c.get("/api/ads/overview?brand=nope")
     assert r.status_code == 400 and r.json()["code"] == "bad_request"
-    r = c.get("/api/ads/search-terms?brand=ridhi")
-    assert r.status_code == 503 and r.json()["code"] == "google_not_connected"
+    r = c.get("/api/ads/search-terms?brand=ridhi")  # no Meta account either: that is said first
+    assert r.status_code == 503 and r.json()["code"] == "not_configured"
     assert c.post("/api/ads/sync?brand=ridhi").status_code == 403  # changes need the CSRF header
     assert c.post("/api/ads/sync?brand=ridhi", headers=CSRF).json()["state"] == "not_configured"
 

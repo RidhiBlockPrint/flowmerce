@@ -461,3 +461,95 @@ def action_history(
         )
         .rows
     )
+
+
+# ------------------------------------------------------------------ Google Ads (117_ads_google.sql)
+def save_g_campaigns(rows: list[dict[str, Any]], c: SupabaseClient | None = None) -> None:
+    """Upsert Google campaigns, 500 per request."""
+    for i in range(0, len(rows), 500):
+        _c(c).upsert("g_campaigns", rows[i : i + 500], on_conflict="id")
+    _changed()
+
+
+def g_replace(
+    key: str,
+    kind: str,
+    since: date,
+    until: date,
+    rows: list[dict[str, Any]],
+    c: SupabaseClient | None = None,
+) -> int:
+    """Replace one kind's Google rows of the account for since..until (one transaction)."""
+    n = _c(c).rpc(
+        "g_replace",
+        {
+            "p_key": key,
+            "p_kind": kind,
+            "p_from": since.isoformat(),
+            "p_to": until.isoformat(),
+            "p_rows": rows,
+        },
+    )
+    return int(n or 0)
+
+
+def g_campaigns(key: str, c: SupabaseClient | None = None) -> list[dict[str, Any]]:
+    """The account's Google campaigns (kept SMALL_SECONDS)."""
+    return _small_read(
+        ("g_campaigns", key),
+        c,
+        lambda: _all(
+            _c(c),
+            "g_campaigns",
+            [
+                ("select", "id,name,channel,status,daily_budget,bid_strategy"),
+                ("account_key", f"eq.{key}"),
+            ],
+        ),
+    )
+
+
+def g_days(
+    key: str, since: date, until: date, c: SupabaseClient | None = None
+) -> list[dict[str, Any]]:
+    """Per day totals of the Google account in US dollars, oldest first."""
+    return list(
+        _c(c).rpc("g_days", {"p_key": key, "p_from": since.isoformat(), "p_to": until.isoformat()})
+        or []
+    )
+
+
+def g_sum(
+    key: str, kind: str, since: date, until: date, c: SupabaseClient | None = None
+) -> list[dict[str, Any]]:
+    """Per item totals of one kind (campaign, group, term, keyword, product) in US dollars."""
+    return list(
+        _c(c).rpc(
+            "g_sum",
+            {"p_key": key, "p_kind": kind, "p_from": since.isoformat(), "p_to": until.isoformat()},
+        )
+        or []
+    )
+
+
+def g_latest_day(key: str, c: SupabaseClient | None = None) -> date | None:
+    """The newest Google account day with saved figures, or None before the first read."""
+
+    def read() -> date | None:
+        rows = (
+            _c(c)
+            .select(
+                "g_daily",
+                [
+                    ("select", "day"),
+                    ("account_key", f"eq.{key}"),
+                    ("kind", "eq.campaign"),
+                    ("order", "day.desc"),
+                ],
+                limit=1,
+            )
+            .rows
+        )
+        return date.fromisoformat(str(rows[0]["day"])) if rows else None
+
+    return _small_read(("g_latest", key), c, read)

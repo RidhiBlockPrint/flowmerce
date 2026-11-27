@@ -2,8 +2,11 @@
 Supabase client.
 
 The account IDs and tokens come from the server's environment (.env): RIDHI_META_AD_ACCOUNT_ID,
-RIDHI_META_ACCESS_TOKEN, CPC_META_AD_ACCOUNT_ID, CPC_META_ACCESS_TOKEN. They are never stored in
-Supabase, never sent to the browser and never logged.
+RIDHI_META_ACCESS_TOKEN, CPC_META_AD_ACCOUNT_ID, CPC_META_ACCESS_TOKEN for Meta;
+GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_REFRESH_TOKEN (one Google login for
+both brands), optional GOOGLE_ADS_DEVELOPER_TOKEN and GOOGLE_ADS_LOGIN_CUSTOMER_ID (a manager
+account), and RIDHI_GOOGLE_ADS_CUSTOMER_ID / CPC_GOOGLE_ADS_CUSTOMER_ID for Google. They are
+never stored in Supabase, never sent to the browser and never logged.
 """
 
 from __future__ import annotations
@@ -28,6 +31,11 @@ STORE_TIMEZONE: dict[str, str] = {"ridhi": "America/New_York", "cpc": "America/P
 # Checked 2026-11-24.
 META_API_VERSION = "v27.0"
 META_BASE_URL = "https://graph.facebook.com"
+# Google Ads API, read with plain REST (googleAds:search). Each version is withdrawn about a year
+# after release, so it is pinned and checked. v26 answered on 2026-11-27.
+GOOGLE_ADS_API_VERSION = "v26"
+GOOGLE_ADS_BASE_URL = "https://googleads.googleapis.com"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 - an address, not a secret
 
 # Days loaded on the first sync, and re-read by the nightly full sync (Meta keeps revising recent
 # days as late purchases are attributed). Every other run re-reads the last few days only.
@@ -61,15 +69,61 @@ def meta_account(brand: str) -> MetaAccount | None:
     return MetaAccount(brand, raw if raw.startswith("act_") else f"act_{raw}", token)
 
 
-def google_configured(brand: str) -> bool:
-    """Whether the brand's Google Ads keys are set. Google Ads is read from phase 3 on; until then
-    the page says it is not connected even when this is true."""
-    names = (
-        "GOOGLE_ADS_DEVELOPER_TOKEN",
-        "GOOGLE_ADS_REFRESH_TOKEN",
-        f"{brand.upper()}_GOOGLE_ADS_CUSTOMER_ID",
+@dataclass(frozen=True)
+class GoogleAccount:
+    """One brand's Google Ads account as set in .env, with the shared Google login."""
+
+    brand: str
+    customer_id: str  # ten digits, no dashes
+    client_id: str
+    client_secret: str
+    refresh_token: str
+    developer_token: str  # may be empty: Google answered this login without one (2026-11-27)
+    login_customer_id: str  # a manager account to read through, or empty
+
+    @property
+    def key(self) -> str:
+        """The account's key in schema `ads` ('google:ridhi')."""
+        return f"google:{self.brand}"
+
+
+def _digits(v: str | None) -> str:
+    return "".join(ch for ch in (v or "") if ch.isdigit())
+
+
+def google_account(brand: str) -> GoogleAccount | None:
+    """The brand's Google Ads account, or None when its customer ID or the Google login is not
+    set."""
+    env = {
+        n: (os.environ.get(n) or "").strip()
+        for n in (
+            "GOOGLE_ADS_CLIENT_ID",
+            "GOOGLE_ADS_CLIENT_SECRET",
+            "GOOGLE_ADS_REFRESH_TOKEN",
+            "GOOGLE_ADS_DEVELOPER_TOKEN",
+            "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+        )
+    }
+    customer = _digits(os.environ.get(f"{brand.upper()}_GOOGLE_ADS_CUSTOMER_ID"))
+    if len(customer) != 10 or not all(
+        env[n]
+        for n in ("GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN")
+    ):
+        return None
+    return GoogleAccount(
+        brand,
+        customer,
+        env["GOOGLE_ADS_CLIENT_ID"],
+        env["GOOGLE_ADS_CLIENT_SECRET"],
+        env["GOOGLE_ADS_REFRESH_TOKEN"],
+        env["GOOGLE_ADS_DEVELOPER_TOKEN"],
+        _digits(env["GOOGLE_ADS_LOGIN_CUSTOMER_ID"]),
     )
-    return all((os.environ.get(n) or "").strip() for n in names)
+
+
+def google_configured(brand: str) -> bool:
+    """Whether the brand's Google Ads account and the Google login are set."""
+    return google_account(brand) is not None
 
 
 def check_brand(brand: str) -> str:

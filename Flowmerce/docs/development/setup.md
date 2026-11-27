@@ -32,18 +32,21 @@ Runtime dependencies of the core package: none (standard library only). The `seo
 
 CRO uses Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` and each brand's existing Shopify keys (`RIDHI_SHOPIFY_*`, `CPC_SHOPIFY_*`). Supabase must expose the `cro` schema (Data API → Exposed schemas), and `db/central/112_cro.sql`, `113_cro_orders.sql` and `114_cro_tracking.sql` (recommendation status, experiments, free-shipping amount) must have been run. Conversion figures need each store's app to have the `read_reports` scope and Level 2 protected customer data access. The Products tab's views and product groups use GA4 through the SEO module's Google service account (`GOOGLE_SERVICE_ACCOUNT_FILE`, `RIDHI_GA4_PROPERTY_ID`, `CPC_GA4_PROPERTY_ID`); without them the tab still shows sales, refunds, price bands and products bought together.
 
-### Ads module (Meta Ads; Google Ads in phase 3)
+### Ads module (Meta Ads and Google Ads)
 
 | Variable | Default | What it does |
 |---|---|---|
 | `RIDHI_META_AD_ACCOUNT_ID`, `CPC_META_AD_ACCOUNT_ID` | none | Each brand's Meta ad account (with or without `act_`). A brand without one is skipped |
 | `RIDHI_META_ACCESS_TOKEN`, `CPC_META_ACCESS_TOKEN` | none | A token with the `ads_read` permission (read-only). The page shows how many days it has left |
-| `ADS_SYNC_MINUTES` | `60` | How often the background job reads the Meta accounts into schema `ads`; `0` turns it off |
+| `ADS_SYNC_MINUTES` | `60` | How often the background job reads the Meta and Google accounts into schema `ads`; `0` turns it off |
 | `META_APP_ID`, `META_APP_SECRET`, `META_BUSINESS_ID` | none | Not used yet (kept in `.env` for a system-user token later) |
-| `GOOGLE_ADS_*`, `RIDHI_/CPC_GOOGLE_ADS_CUSTOMER_ID` | none | Not used yet: Google Ads is phase 3 |
+| `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN` | none | One Google login (OAuth, scope `adwords`) that can read the brands' Google Ads accounts. Read-only use only |
+| `RIDHI_GOOGLE_ADS_CUSTOMER_ID`, `CPC_GOOGLE_ADS_CUSTOMER_ID` | none | Each brand's Google Ads account (10 digits, dashes allowed). A brand without one shows Meta only |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | none | Optional: Google answered this login without one (27 Nov 2026). Set it if Google starts asking |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | none | Optional: a manager account to read the brand accounts through (when the login reaches them only via a manager) |
 
 Ads uses Shipping's `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`. Before the page can show anything:
-1. run `db/central/115_ads.sql` in Supabase (SQL Editor);
+1. run `db/central/115_ads.sql` in Supabase (SQL Editor), then `117_ads_google.sql` for Google;
 2. add `ads` under Project Settings -> Data API -> Exposed schemas (next to `ops` and `cro`);
 3. restart Flowmerce. A minute later the job reads both Meta accounts; the first read loads 90 days and takes about
    5 to 10 minutes per account. Until it finishes, the page says so.

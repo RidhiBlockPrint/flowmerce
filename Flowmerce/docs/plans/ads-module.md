@@ -1,6 +1,6 @@
 # Plan: Ads module (Meta Ads + Google Ads, both brands)
 
-Status: **phase 1 built (2026-11-24); phase 2 built 2026-11-24, waiting for `db/central/115_ads.sql` to be run in Supabase; phase 3 (Google Ads) not started.** Phase 2 also covers what phase 4 listed (rules, Actions, the gap), because the screens already ask for them.
+Status: **phase 1 built (2026-11-24); phase 2 built 2026-11-24, waiting for `db/central/115_ads.sql` to be run in Supabase; phase 3 (Google Ads) built 2026-11-27 and live for Ridhi (117_ads_google.sql run the same day); Cotton Print Club's Google Ads account is not reachable by the Google login yet (see Things to fix, 1).** Phase 2 also covers what phase 4 listed (rules, Actions, the gap), because the screens already ask for them.
 
 Phase 1 status: The owner approved phase 1 on 2026-11-24: the `/ads`
 screens run on sample numbers in the demo copy (`frontend/src/demo/modules/ads.js`) and say "not connected yet" on live

@@ -54,6 +54,7 @@ export const AD_STATUS = {
     ACTIVE: { label: 'Active', tone: 'ok' },
     PAUSED: { label: 'Paused', tone: 'neutral' },
     ADSET_PAUSED: { label: 'Ad set paused', tone: 'neutral' },
+    REMOVED: { label: 'Removed', tone: 'neutral' },
 };
 
 /** The rule set's answer for one ad (Rules tab), in the order the chips are shown. */
@@ -156,6 +157,9 @@ export function explainAdsError(err) {
         return { title: 'Ads is not connected yet', tone: 'warn', text: 'The ad account keys or the Ads tables are not set up on the server.' };
     if (err?.code === 'token_expired')
         return { title: 'The ad account sign-in has expired', tone: 'crit', text: err.message };
+    // A brand without a Google Ads account (or not read yet) is not an error: say why, calmly.
+    if (err?.code === 'google_not_connected')
+        return { title: 'Google Ads is not connected for this brand', tone: 'info', text: err.message };
     return null;
 }
 
