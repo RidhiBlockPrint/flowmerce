@@ -79,16 +79,14 @@ function OverviewTab({ brand, update, onOpen, onChanged }) {
     const toast = useToast();
     return (<SourceGate query={q}>
       {(d) => (<>
-          {d.critical ? (<div className="row-wrap mb-12">
-              <Button icon="download" onClick={() => download(`/shipping/export/escalation${qs({ brand })}`).catch(toast.error)}
-                title="Download the critical orders to send to the carriers">Escalation list (CSV)</Button>
-            </div>) : null}
           <div className="ov-hero">
             <AgeCard kpis={d.kpis} go={(cat) => update({ tab: 'shipments', cat: cat || null, page: null })}/>
             <HeadlineNumbers d={d} an={an.data} update={update}/>
           </div>
           <JourneyStrip steps={d.journey ?? []} update={update}/>
-          <Triage query={ck} onOpen={onOpen} update={update}/>
+          <Triage query={ck} onOpen={onOpen} update={update}
+            extra={d.critical ? <Button size="sm" icon="download" onClick={() => download(`/shipping/export/escalation${qs({ brand })}`).catch(toast.error)}
+              title="Download the critical orders to send to the carriers">Escalation list (CSV)</Button> : null}/>
           <More id="ship-overview" label="Show hand checks and data source">
             <div className="grid cols-2">
               <Card title="Hand checks" sub="Orders a person has to look at, each in one list only">
@@ -114,14 +112,17 @@ function AgeCard({ kpis, go }) {
 }
 
 const ON_TIME_GOAL = 90;
+/* Chart colours are the dashboard theme (owner rule 2026-11-27, `--theme-*` in globals.css): green good, amber
+   usual, salmon below; navy for the figure in focus, light blue for the rest. Text keeps the --ok / --warn / --crit inks. */
+const TONE_FILL = { ok: 'var(--theme-good)', warn: 'var(--theme-usual)', crit: 'var(--theme-low)' };
 const shortWeek = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-/** Mini bar chart: rows [{ key, label, value }], tallest = full height. */
-function VizBars({ rows, color, format = fmtInt }) {
+/** Mini bar chart: rows [{ key, label, value }], tallest = full height; `lastColor` marks the latest row. */
+function VizBars({ rows, color, lastColor, format = fmtInt }) {
     const max = Math.max(1, ...rows.map((r) => r.value || 0));
     return (<>
       <span className="viz-bars" role="img" aria-label={rows.map((r) => `${r.label}: ${format(r.value)}`).join(', ')}>
-        {rows.map((r) => <span key={r.key} title={`${r.label}: ${format(r.value)}`}><i style={{ height: `${Math.max(((r.value || 0) / max) * 100, 4)}%`, background: color }}/></span>)}
+        {rows.map((r, i) => <span key={r.key} title={`${r.label}: ${format(r.value)}`}><i style={{ height: `${Math.max(((r.value || 0) / max) * 100, 4)}%`, background: lastColor && i === rows.length - 1 ? lastColor : color }}/></span>)}
       </span>
       <span className="viz-labels">{rows.map((r) => <span key={r.key}>{r.short ?? r.label}</span>)}</span>
     </>);
@@ -145,14 +146,14 @@ function HeadlineNumbers({ d, an, update }) {
         foot={dl.withPromisedDate ? `${fmtInt(dl.withPromisedDate)} of ${fmtInt(dl.delivered)} had a promised date` : 'No promised dates in 30 days'} onClick={toAnalytics}>
         {has(dl.onTimePct) ? (<>
             <span className="viz-meter" role="img" aria-label={`${dl.onTimePct}% on time; goal ${ON_TIME_GOAL}%`}>
-              <span className="fill" style={{ width: `${dl.onTimePct}%`, background: `var(--${tone ?? 'ok'})` }}/>
+              <span className="fill" style={{ width: `${dl.onTimePct}%`, background: TONE_FILL[tone ?? 'ok'] }}/>
               <span className="mark" style={{ left: `calc(${ON_TIME_GOAL}% - 1px)` }} title={`Goal ${ON_TIME_GOAL}%`}/>
             </span>
             <span className="viz-scale"><span>0%</span><span>Goal {ON_TIME_GOAL}%</span></span>
           </>) : null}
       </MiniStat>
       <MiniStat label="Average delivery time" value={has(dl.avgDays) ? `${dl.avgDays} d` : '—'} foot="Dispatch to delivery, 30 days" onClick={toAnalytics}>
-        {dist.length ? <VizBars rows={dist.map((r) => ({ ...r, short: r.label.replace(/\s*days?$/, '').replace('-', '–') }))} color="var(--info)"/> : null}
+        {dist.length ? <VizBars rows={dist.map((r) => ({ ...r, short: r.label.replace(/\s*days?$/, '').replace('-', '–') }))} color="var(--theme-primary-soft)"/> : null}
       </MiniStat>
       <MiniStat label="Value at risk" value={risk.value} tone={v.orders ? 'crit' : undefined} foot={risk.foot} onClick={() => update({ tab: 'shipments', cat: 'red', page: null })}>
         {an ? (<span className="viz-chips">
@@ -161,7 +162,7 @@ function HeadlineNumbers({ d, an, update }) {
           </span>) : null}
       </MiniStat>
       <MiniStat label="Delivered" value={fmtInt(dl.delivered ?? 0)} foot="Last 30 days, by week" onClick={toAnalytics}>
-        {weeks.length ? <VizBars rows={weeks.map((w) => ({ key: w.week, label: `Week of ${shortWeek(w.week)}`, short: shortWeek(w.week), value: w.delivered }))} color="var(--ok)"/> : null}
+        {weeks.length ? <VizBars rows={weeks.map((w) => ({ key: w.week, label: `Week of ${shortWeek(w.week)}`, short: shortWeek(w.week), value: w.delivered }))} color="var(--theme-primary-soft)" lastColor="var(--theme-primary)"/> : null}
       </MiniStat>
     </MiniGrid>);
 }
@@ -192,11 +193,12 @@ const NEXT_STEP = {
     duplicate_tracking: { label: 'Fix tracking', shopify: true },
 };
 
-/** Today's hand checks, most urgent first, each with its next step. The full list lives on the Hand checks tab. */
-function Triage({ query, onOpen, update }) {
+/** Today's hand checks, most urgent first, each with its next step. The full list lives on the Hand checks tab. `extra`
+ *  is a further action for the heading (the escalation list download). */
+function Triage({ query, onOpen, update, extra }) {
     const [kind, setKind] = useState('');
     const head = <SectionHead title="Today’s triage" note="Most urgent first. Each row has its next step; open an order for its full tracking."
-      action={<Button size="sm" onClick={() => update({ tab: 'checks' })}>All hand checks</Button>}/>;
+      action={<span className="row-wrap">{extra}<Button size="sm" onClick={() => update({ tab: 'checks' })}>All hand checks</Button></span>}/>;
     if (query.error)
         return <>{head}<Card><ErrorState error={query.error} onRetry={query.reload}/></Card></>;
     if (!query.data)
@@ -212,7 +214,9 @@ function Triage({ query, onOpen, update }) {
       </div>
       <Card flush className="triage">
         {!shown.length ? <Empty icon="checkCircle" title="Nothing to review">No open problems of this kind.</Empty> : (
-            <Paged rows={shown} size={8} resetKey={kind}>{(page) => page.map((r) => <TriageRow key={`${r.brand}|${r.order}`} r={r} onOpen={onOpen}/>)}</Paged>)}
+            <Paged rows={shown} size={8} resetKey={kind}>{(page) => (<div className="triage-list">
+              {page.map((r) => <TriageRow key={`${r.brand}|${r.order}`} r={r} onOpen={onOpen}/>)}
+            </div>)}</Paged>)}
       </Card>
     </>);
 }
@@ -366,7 +370,7 @@ function AnalyticsTab({ brand, update }) {
               <BarList rows={d.aging.map((a) => ({ key: a.key, label: a.label, value: a.value, onClick: () => go({ cat: a.key }) }))} format={fmtInt}/>
             </Card>
             <Card title="Active shipments by week created"><LineChart ariaLabel="Active shipments by week created" height={200} yFormat={fmtInt}
-                series={[{ key: 'active', label: 'Active', points: d.weeks.map((w) => ({ x: w.week, y: w.value })) }]}/></Card>
+                series={[{ key: 'active', label: 'Active', color: 'var(--theme-primary)', points: d.weeks.map((w) => ({ x: w.week, y: w.value })) }]}/></Card>
           </div>
           <div className="grid cols-2">
             <Card title="Critical by carrier" sub="Top carriers by active shipments">
@@ -417,7 +421,7 @@ function DeliveryPerformance({ dp, period, setPeriod }) {
           <div><div className="muted xs">Delivery time (days from dispatch)</div><BarList rows={dp.distribution} format={fmtInt} empty="No deliveries in this period."/></div>
           <div><div className="muted xs">On-time delivery by week</div>
             <LineChart ariaLabel="On-time delivery percentage by week" height={180} yFormat={(v) => `${Math.round(v)}%`}
-              series={[{ key: 'ontime', label: 'On time %', points: dp.trend.map((w) => ({ x: w.week, y: w.onTimePct })) }]}/></div>
+              series={[{ key: 'ontime', label: 'On time %', color: 'var(--theme-primary)', points: dp.trend.map((w) => ({ x: w.week, y: w.onTimePct })) }]}/></div>
         </div>
       </Card>
       <div className="grid cols-2">{table('Delivery by carrier', dp.byCarrier, 'carrier')}{table('Delivery by region', dp.byRegion, 'region')}</div>

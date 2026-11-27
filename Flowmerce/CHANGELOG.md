@@ -2,6 +2,20 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-27 (Shipping: less empty space on the Overview)
+
+Owner request 2026-11-27: "there is a lot of white space in the shipping dashboard, reduce the dashboard". Measured on
+the live page (1,440 px wide): each row of Today's triage kept a 236 px column for its problem tags, while most rows have
+one 112 px tag, and that squeezed the reason onto two lines; the escalation download sat alone on a row of its own.
+Checked in the demo preview at 1,440, 1,280 and 1,101 px (columns line up, nothing overflows) and below 1,100 px (the
+stacked rows as before); frontend tests and the production build pass.
+
+- **Changed** Today's triage rows share one set of columns (CSS subgrid), each as wide as its widest cell on the page and
+  no wider, so the reason gets the room and fits on one line on a desktop screen; rows are a little less tall (padding
+  9 px instead of 12 px). Browsers without subgrid keep the old fixed columns.
+- **Changed** "Escalation list (CSV)" moved from its own row above the ring into the triage heading, beside "All hand
+  checks" (shown only when there are critical orders, as before).
+
 ## 2026-11-27 (Home: the CEO dashboard, layout "A · Bento"; one colour theme for every dashboard)
 
 Owner requests 2026-11-27: Home showed only sales; it should show what is going on in the business for the CEO, with
@@ -35,8 +49,9 @@ visits and ad spend add up to the All figures. Creative Strategist has no demo d
   light blue for the rest. Moved onto it: the Ads Overview (spend call stripes and dot, cut back / hold / grow meter,
   goal ring and bars, charts and sparklines, funnel and drop-off bars), SEO & Blog's ring and meters, Creative
   Strategist's tiles and charts, Shipping's age-band ring, and Home. Text keeps the darker green / brown / red inks.
-  Still to do: three small charts inside `views/Shipping.jsx` (on-time bar, delivery-time and delivered bars), held
-  back while the FedEx work in that file is not committed.
+  Shipping's other charts followed the same day (`views/Shipping.jsx`): the on-time bar (green / amber / salmon), the
+  delivery-time bars and the delivered-by-week bars (light blue, the latest week navy), and the Analytics tab's two line
+  charts, which had been given no colour and so drew no line at all (now navy).
 
 - **Fixed** (found on the live site the same day) On Today, the Ads tile compared the ad accounts' day, which runs ahead
   of the stores' day ($1,711 spent by 03:30 store time against $199 of sales), with the whole day before, so sales per
