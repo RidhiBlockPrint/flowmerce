@@ -220,7 +220,11 @@ export function StoreTiles({ h, scale }) {
 
 /** The wide Ads tile: ad spend and its Meta / Google split, sales per $1 of ads on the cut back / hold / grow zones with
  *  the target, and ad cost per order. `ads` is useHomeAds' data. */
-export function AdsTile({ ads, error, scope }) {
+export function AdsTile({ ads, error, scope, today = false }) {
+    // Today the ad accounts' day runs ahead of the stores' day (seen live 27 Nov: $1,711 spent by 03:30 store time,
+    // $199 of sales), so the two ratios and every change against the full day before would be false alarms. Today
+    // shows the spend so far only; the ratios are for complete days, like Conversion and Visits.
+    const partNote = 'Today the ad accounts’ day and the stores’ day do not cover the same hours yet, so this is shown for complete days only.';
     const note = error ? explainAdsError(error) : null;
     const m = ads?.metrics;
     const ready = (ads?.brands ?? []).filter((b) => b.ready);
@@ -238,36 +242,50 @@ export function AdsTile({ ads, error, scope }) {
         : error ? <div className="muted small">Ad figures could not be read.</div>
         : !m ? <div className="muted small">Reading the ad accounts…</div> : (<div className="hb-ads-grid">
           <div title={HELP.spend}>
-            <div className="hb-label">Ad spend</div>
-            <div className="hb-fig"><span className="hb-num num">{has(m.spend?.value) ? <CountUp value={usd(m.spend.value)}/> : '—'}</span><Chip v={change(m.spend)} good="none"/></div>
+            <div className="hb-label">{today ? 'Ad spend so far' : 'Ad spend'}</div>
+            <div className="hb-fig"><span className="hb-num num">{has(m.spend?.value) ? <CountUp value={usd(m.spend.value)}/> : '—'}</span>{today ? null : <Chip v={change(m.spend)} good="none"/>}</div>
             {split.length ? (<>
               <div className="hb-split">{split.map((p, i) => <span key={p.platform} style={{ width: `${p.share_of_spend ?? 0}%`, background: colors[i % 2] }}/>)}</div>
               <div className="hb-was">{split.map((p) => `${PLATFORM_LABEL[p.platform] ?? p.platform} ${Math.round(p.share_of_spend ?? 0)}%`).join(' · ')}</div>
             </>) : null}
           </div>
-          <div className="hb-well" title={HELP.mer}>
-            <div className="hb-label">Sales per $1 of ads</div>
-            <div className="hb-fig"><span className={`hb-mid num t-${ratioTone(mer, target) || 'none'}`}>{x2(mer)}</span><Chip v={change(m.mer_ex_bulk)}/></div>
-            {has(mer) ? <Bullet value={mer} lo={0} hi={top} low={red} high={green} mark={target} markLabel="target" format={(v) => x2(v)}/> : null}
-          </div>
-          <div className="hb-well" title={HELP.cpo}>
-            <div className="hb-label">Ad cost per order</div>
-            <div className="hb-fig"><span className="hb-mid num">{has(m.cost_per_order?.value) ? usd(m.cost_per_order.value, 2) : '—'}</span><Chip v={change(m.cost_per_order)} good="down"/></div>
-            <Spark values={(ads.trend ?? []).map((d) => d.spend)} color="var(--theme-usual-strong)" height={28}/>
-            <div className="hb-mini">ad spend by day</div>
-          </div>
+          {today ? (<>
+            <div className="hb-well" title={partNote}>
+              <div className="hb-label">Sales per $1 of ads</div>
+              <div className="hb-fig"><span className="hb-mid num">—</span></div>
+              <div className="hb-was">complete days only</div>
+            </div>
+            <div className="hb-well" title={partNote}>
+              <div className="hb-label">Ad cost per order</div>
+              <div className="hb-fig"><span className="hb-mid num">—</span></div>
+              <div className="hb-was">complete days only</div>
+            </div>
+          </>) : (<>
+            <div className="hb-well" title={HELP.mer}>
+              <div className="hb-label">Sales per $1 of ads</div>
+              <div className="hb-fig"><span className={`hb-mid num t-${ratioTone(mer, target) || 'none'}`}>{x2(mer)}</span><Chip v={change(m.mer_ex_bulk)}/></div>
+              {has(mer) ? <Bullet value={mer} lo={0} hi={top} low={red} high={green} mark={target} markLabel="target" format={(v) => x2(v)}/> : null}
+            </div>
+            <div className="hb-well" title={HELP.cpo}>
+              <div className="hb-label">Ad cost per order</div>
+              <div className="hb-fig"><span className="hb-mid num">{has(m.cost_per_order?.value) ? usd(m.cost_per_order.value, 2) : '—'}</span><Chip v={change(m.cost_per_order)} good="down"/></div>
+              <Spark values={(ads.trend ?? []).map((d) => d.spend)} color="var(--theme-usual-strong)" height={28}/>
+              <div className="hb-mini">ad spend by day</div>
+            </div>
+          </>)}
         </div>)}
     </section>);
 }
 
 /** On All: each brand's share of sales, with its sales per $1 of ads. On one brand: Meta's and Google's share of the ad
  *  spend, with each one's return. */
-export function MixTile({ h, ads, brands, oneBrand }) {
+export function MixTile({ h, ads, brands, oneBrand, today = false }) {
     const name = (id) => brands.find((b) => b.id === id)?.short ?? id;
     const colors = ['var(--theme-primary)', 'var(--theme-primary-soft)'];
     if (!oneBrand) {
         const rows = h.by_brand ?? [];
-        const merOf = (id) => ads?.brands?.find((b) => b.brand === id)?.metrics?.mer_ex_bulk?.value;
+        // Today: orders, not sales per $1 of ads (the ad day runs ahead of the store day; see AdsTile).
+        const merOf = (id) => (today ? null : ads?.brands?.find((b) => b.brand === id)?.metrics?.mer_ex_bulk?.value);
         const lead = rows[0];
         return (<section className="card hb-tile">
           <div className="hb-label">Brands · share of sales</div>
@@ -296,11 +314,13 @@ export function MixTile({ h, ads, brands, oneBrand }) {
 
 /** The month's sales goal: how much of it is reached, and the pace (sales so far against the goal's share for the days
  *  gone). The goal is set per store on the CRO page; on All both stores' goals are added. */
-export function GoalTile({ goal }) {
+export function GoalTile({ goal, oneBrand = false }) {
     if (!goal) return (<section className="card hb-tile">
       <div className="hb-label">Monthly goal</div>
-      <div className="hb-was" style={{ margin: '8px 0 10px' }}>No monthly sales goal yet{' '}for every store.</div>
-      <Link className="btn sm" href="/cro">Set it on the CRO page</Link>
+      <div className="hb-was" style={{ margin: '8px 0 10px' }}>
+        {oneBrand ? 'No monthly sales goal set for this store yet.' : 'Not every store has a monthly sales goal yet.'}
+      </div>
+      <Link className="btn sm" href="/cro">{oneBrand ? 'Set it on the CRO page' : 'Set them on the CRO page'}</Link>
     </section>);
     const tone = goal.pace_pct >= 100 ? 'good' : goal.pace_pct >= 90 ? 'usual' : 'bad';
     const k = (v) => (v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : usd(v));

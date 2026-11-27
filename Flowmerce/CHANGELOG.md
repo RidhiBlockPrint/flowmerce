@@ -11,7 +11,8 @@ first version copied the CRO Overview too closely, three researched layouts to c
 (`design-mockups/home-ceo/`: A Bento, B Briefing, C Chart first). The owner chose **A · Bento**. Verified on demo data
 only: frontend tests 131 passed (4 Home tests), CRO and Ads unit tests 242 passed (14 new), ruff and mypy --strict
 clean on the changed Python, production build passes, and in the browser (All, Ridhi and CPC on every period).
-**Not yet seen with live data.** Creative Strategist has no demo data, so its new colours were not seen.
+Checked on the live site the same day: All, Ridhi and CPC load on every period, and both stores' orders, sales,
+visits and ad spend add up to the All figures. Creative Strategist has no demo data, so its new colours were not seen.
 
 - **Changed** Home is the Bento dashboard, the same for All, Ridhi and CPC, with a period switch (Today, Yesterday,
   7 days, 30 days, Month to date) against the period before: a large Sales tile (total sales, the days drawn against
@@ -36,6 +37,13 @@ clean on the changed Python, production build passes, and in the browser (All, R
   Strategist's tiles and charts, Shipping's age-band ring, and Home. Text keeps the darker green / brown / red inks.
   Still to do: three small charts inside `views/Shipping.jsx` (on-time bar, delivery-time and delivered bars), held
   back while the FedEx work in that file is not committed.
+
+- **Fixed** (found on the live site the same day) On Today, the Ads tile compared the ad accounts' day, which runs ahead
+  of the stores' day ($1,711 spent by 03:30 store time against $199 of sales), with the whole day before, so sales per
+  $1 of ads showed 0.12 (down 94%) and ad cost per order $570 (up 1,000%). Today now shows the ad spend so far without a
+  change; both ratios, and each brand's sales per $1 of ads on All, are for complete days only, like Conversion and
+  Visits. The monthly goal tile's empty state reads "Not every store has a monthly sales goal yet" (one brand: "No
+  monthly sales goal set for this store yet").
 
 ## 2026-11-27 (Ads: "All" in the top bar shows both brands together)
 

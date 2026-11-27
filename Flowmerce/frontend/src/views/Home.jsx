@@ -77,9 +77,9 @@ export default function Home() {
         <div className="hb-grid">
           <SalesHero h={h} scope={scope}/>
           <StoreTiles h={h} scale={scale}/>
-          <AdsTile ads={ads.data} error={ads.error} scope={scope}/>
-          <MixTile h={h} ads={ads.data} brands={brands} oneBrand={oneBrand}/>
-          <GoalTile goal={h.goal}/>
+          <AdsTile ads={ads.data} error={ads.error} scope={scope} today={h.period === 'today'}/>
+          <MixTile h={h} ads={ads.data} brands={brands} oneBrand={oneBrand} today={h.period === 'today'}/>
+          <GoalTile goal={h.goal} oneBrand={oneBrand}/>
         </div>
         {h.cvr_error ? <div className="hb-note"><ExplainedError error={{ code: h.cvr_error.state, message: h.cvr_error.message }}/></div> : null}
       </>)}
