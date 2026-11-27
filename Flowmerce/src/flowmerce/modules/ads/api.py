@@ -53,7 +53,8 @@ def _call[T](fn: Callable[[], T]) -> T:
             message = (
                 "The Ads tables are missing, or the `ads` schema is not exposed in Supabase "
                 "(Project Settings "
-                "-> Data API -> Exposed schemas). Run db/central/115_ads.sql first."
+                "-> Data API -> Exposed schemas). Run db/central/115_ads.sql (and "
+                "117_ads_google.sql for Google) first."
             )
         raise HttpError(_SUPABASE_STATUS.get(e.state, 502), message, e.state) from None
 
@@ -127,9 +128,9 @@ def funnel(request: Request, brand: str = "ridhi", platform: str = "all") -> dic
 
 @ads.get("/search-terms")
 def search_terms(request: Request, brand: str = "ridhi") -> dict[str, Any]:
-    """Google keywords, search terms and products (phase 3)."""
+    """Google keywords, search terms and products for the chosen days."""
     require_perm(request, "view")
-    return _call(lambda: service.search_terms(brand))
+    return _call(lambda: service.search_terms(brand, *_range(request)))
 
 
 @ads.get("/gap")

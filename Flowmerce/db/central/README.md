@@ -24,7 +24,9 @@ Every file is safe to run more than once, and none of them writes to the hub's `
 | `113_cro_orders.sql` | CRO's own order copy: `cro.orders` (money breakdown), `cro.order_lines`, `cro.sync_state`; functions `save_orders`, `begin_sync`/`end_sync` (per-store lock), `delete_change_log`; drops 112's `daily_sales` view. **Not yet run** |
 | `114_cro_tracking.sql` | CRO recommendation status, experiments log, free-shipping amount |
 | `115_ads.sql` | Ads module: schema `ads` with accounts (+ sync state), campaigns, ad_sets, ads, daily (one row per ad per account day), fx_rates (INR starts at 88), rules, action_status, action_history; functions begin/end_sync, replace_daily, save_lifetime, reopen_action, account_days, ad_windows, store_days (reads `cro.orders`). Not in `supabase_setup.sql`: run it on its own, then expose `ads`. **Not yet run** |
+| `117_ads_google.sql` | Ads module, Google Ads (phase 3): `ads.g_campaigns` (type, status, daily budget) and `ads.g_daily` (one row per campaign, ad or asset group, search term, keyword or product per account day: spend, impressions, clicks, purchases, value); functions g_replace, g_days, g_sum. Needs 115. Not in `supabase_setup.sql`: run it on its own. Run by the owner on 2026-11-27 |
 | `rollback/115_rollback_ads.sql` | Removes `ads` only; refuses while team-recorded Ads data exists (rules, action marks, rates). **Destructive, owner approval** |
+| `rollback/117_rollback_ads_google.sql` | Removes the Google tables and functions from `ads` only (Meta, rules and marks stay); the Google figures are read again after 117 is re-run |
 | `rollback/999_rollback_central.sql` | Removes `ops` + `seo`; refuses while real data exists. **Destructive, owner approval** |
 | `rollback/112_rollback_cro.sql` | Removes `cro` only (112 + 113); refuses while team-recorded CRO data exists. **Destructive, owner approval** |
 
