@@ -194,13 +194,26 @@ def test_findings_honours_an_explicit_date_range_from_the_page_s_own_picker() ->
     assert out["to"] == yesterday.isoformat()
 
 
-def test_findings_clamps_an_explicit_until_to_yesterday() -> None:
-    """Today is still being restated; a picker that lets today be the end of a custom range must
-    not error, it should just show through yesterday instead."""
+def test_findings_allows_an_explicit_until_of_today_and_marks_it_partial() -> None:
+    """Today's figures are still being restated by the ad platform, but the sync already reads
+    them, so a picker that ends on today should show them through, marked partial rather than
+    hidden."""
     today = datetime.now(UTC).date()
-    yesterday = today - timedelta(days=1)
-    out = service.findings("ridhi", since=yesterday - timedelta(days=3), until=today)
-    assert out["to"] == yesterday.isoformat()
+    out = service.findings("ridhi", since=today - timedelta(days=3), until=today)
+    assert out["to"] == today.isoformat()
+    assert out["partial"] is True
+
+
+def test_findings_clamps_an_explicit_until_in_the_future_to_today() -> None:
+    today = datetime.now(UTC).date()
+    out = service.findings("ridhi", since=today - timedelta(days=3), until=today + timedelta(days=5))
+    assert out["to"] == today.isoformat()
+
+
+def test_findings_an_explicit_range_ending_yesterday_is_not_partial() -> None:
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    out = service.findings("ridhi", since=yesterday - timedelta(days=3), until=yesterday)
+    assert out["partial"] is False
 
 
 def test_findings_rejects_an_explicit_range_with_the_start_after_the_end() -> None:

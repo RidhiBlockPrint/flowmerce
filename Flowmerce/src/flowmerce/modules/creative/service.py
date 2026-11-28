@@ -41,12 +41,15 @@ def _range(days: int) -> tuple[date, date]:
 def _explicit_range(since: date, until: date) -> tuple[date, date]:
     """A caller-picked date range (the page's own calendar), checked the same way as `_range`.
 
-    `until` is clamped to yesterday rather than refused: a picker that lets today be the end of
-    "custom range" would otherwise error on the one day people are most likely to pick.
+    `until` is clamped to today rather than refused: a picker that lets today be the end of
+    "custom range" would otherwise error on the one day people are most likely to pick. Today is
+    allowed through (unlike `_range`'s rolling windows): the Ads sync already reads today's figures
+    every run, so there is something real to show; the caller marks it "partial" rather than hiding
+    it, since Meta can still revise today's numbers later.
     """
-    yesterday = datetime.now(UTC).date() - timedelta(days=1)
-    if until > yesterday:
-        until = yesterday
+    today = datetime.now(UTC).date()
+    if until > today:
+        until = today
     if since > until:
         raise InputError("The start date must be on or before the end date.")
     if (until - since).days + 1 > 400:
@@ -220,6 +223,7 @@ def findings(
         "currency": currency,
         "from": since.isoformat(),
         "to": until.isoformat(),
+        "partial": until >= datetime.now(UTC).date(),
         "adsSeen": len({str(r.get("ad_id") or "") for r in rows if r.get("ad_id")}),
         "formats": [g.as_dict(low, spend_floor) for g in by_format],
         "hooks": [g.as_dict(low, spend_floor) for g in by_hook],
@@ -310,6 +314,7 @@ def _demo_trend(brand: str, since: date, until: date, currency: str) -> dict[str
         "currency": currency,
         "from": since.isoformat(),
         "to": until.isoformat(),
+        "partial": until >= datetime.now(UTC).date(),
         "days": days,
     }
 
@@ -353,6 +358,7 @@ def trend(
         "currency": currency,
         "from": since.isoformat(),
         "to": until.isoformat(),
+        "partial": until >= datetime.now(UTC).date(),
         "days": [_day_point(day, acc) for day, acc in sorted(by_day.items())],
     }
 

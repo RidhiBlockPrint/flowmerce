@@ -248,7 +248,7 @@ function InsightsTab({ brand, range, setRange, today }) {
         <SourceTag source={d.source}/>
         <span className="muted small">{fmtInt(d.adsSeen)} ads seen{d.currency ? ` · spend in ${d.currency}` : ''}</span>
       </div>
-      <div className="muted xs mb-12">{n === 1 ? fmtSpan(d.from, d.from) : `${fmtSpan(d.from, d.to)} · ${n} days`}{range.to > d.to ? ' · today is not in yet: figures run through yesterday' : ''}</div>
+      <div className="muted xs mb-12">{n === 1 ? fmtSpan(d.from, d.from) : `${fmtSpan(d.from, d.to)} · ${n} days`}{d.partial ? ' · today is still running: its figures may change later' : ''}</div>
       <TrendCharts brand={brand} range={range} currency={d.currency} bestHookRate={d.comparisons.formatHookRate.best}/>
       <div className="grid cols-3 mb-16">
         <ComparisonCard title="Format: ROAS" cmp={d.comparisons.formatRoas} money={money}/>
