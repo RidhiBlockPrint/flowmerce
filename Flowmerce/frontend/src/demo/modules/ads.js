@@ -621,4 +621,37 @@ export const routes = [
     db.ads.rules[c.brand] = next;
     return { brand: c.brand, rules: next };
   }],
+  // Both brands together (the company view on the Overview when the top bar says All): the same shape as the Python
+  // module's GET /api/ads/company, built from each brand's own overview answer.
+  ['GET', '/ads/company', ({ query, db }) => {
+    const overviewOf = routes.find((r) => r[1] === '/ads/overview')[2];
+    const parts = ['ridhi', 'cpc'].map((brand) => ({ brand, o: overviewOf({ query: { ...query, brand, platform: 'all' }, db }) }));
+    const sum = (key, side) => parts.reduce((s, p) => s + (p.o.metrics[key][side] ?? 0), 0);
+    const pair = (key) => [sum(key, 'value'), parts.every((p) => p.o.metrics[key].baseline_value === null) ? null : sum(key, 'baseline_value')];
+    const [spend, spendB] = pair('total_spend'), [sales, salesB] = pair('sales'), [ex, exB] = pair('sales_ex_bulk'), [orders, ordersB] = pair('orders');
+    const days = new Map();
+    for (const { brand, o } of parts) for (const r of o.trend) {
+      const t = days.get(r.date) ?? { date: r.date, spend: 0, sales_ex_bulk: 0 };
+      t.spend += r.spend; t.sales_ex_bulk += r.sales_ex_bulk;
+      t[`${brand}_spend`] = r.spend; t[`${brand}_sales_ex_bulk`] = r.sales_ex_bulk; t[`${brand}_mer_ex_bulk`] = r.mer_ex_bulk;
+      days.set(r.date, t);
+    }
+    const LABEL = { ridhi: 'Demo Ridhi', cpc: 'Demo CPC' };
+    const first = parts[0].o;
+    return { from: first.from, to: first.to, days: first.days, compare: first.compare,
+      metrics: { spend: block(spend, spendB), sales: block(sales, salesB), sales_ex_bulk: block(ex, exB), orders: block(orders, ordersB),
+        mer_ex_bulk: block(div(ex, spend), spendB ? div(exB, spendB) : null), cost_per_order: block(div(spend, orders), ordersB ? div(spendB, ordersB) : null) },
+      brands: parts.map(({ brand, o }) => ({ brand, label: LABEL[brand], ready: true, gate: o.gate, targets: o.targets, gate_lines: o.gate_lines,
+        metrics: { total_spend: o.metrics.total_spend, sales_ex_bulk: o.metrics.sales_ex_bulk, mer_ex_bulk: o.metrics.mer_ex_bulk, orders: o.metrics.orders },
+        share_of_spend: pctOf(o.metrics.total_spend.value, spend), platforms: o.platforms, goal: o.goal, meta_saved_to: o.meta_saved_to, google_saved_to: null })),
+      // Each platform's spend over both brands (spend can be added; claimed sales and ROAS stay per brand).
+      platforms: ['meta', 'google'].map((platform) => {
+        const v = parts.reduce((n, p) => n + (p.o.platforms.find((x) => x.platform === platform)?.spend ?? 0), 0);
+        return { platform, spend: round2(v), share_of_spend: pctOf(v, spend) };
+      }).filter((p) => p.spend > 0),
+      trend: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).map((t) => ({ ...t, spend: round2(t.spend), sales_ex_bulk: round2(t.sales_ex_bulk),
+        mer_ex_bulk: t.spend ? round2(t.sales_ex_bulk / t.spend) : null })),
+      notes: ['Both brands together: ad spend is Meta and Google for both brands; store sales are both stores’ own orders (bulk orders left out of MER). Platform-claimed sales are never added together.',
+        'Each brand keeps its own spend call, rules and goal: open a brand to act on it.'] };
+  }],
 ];

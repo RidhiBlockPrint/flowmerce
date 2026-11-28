@@ -22,13 +22,15 @@ import { MonthNav, ScheduleDialog, WEEKDAYS, addDays, addMonths, monthDays, mont
 
 /** How each slot state reads and is coloured. */
 export const SLOT = {
-    ready: { label: 'Ready', long: 'Written and approved, in Flowmerce; waiting for a reviewer to authorize it', tone: 'ok', color: 'var(--ok)' },
-    writing: { label: 'Writing', long: 'Claude is writing it', tone: 'info', color: 'var(--info)' },
-    planned: { label: 'Planned', long: 'Topic chosen 5 days before', tone: 'neutral', color: '#c9c0b5' },
-    failed: { label: 'Stopped', long: 'The automatic run stopped', tone: 'crit', color: 'var(--crit)' },
-    missed: { label: 'Missed', long: 'Not written in time', tone: 'warn', color: 'var(--warn)' },
+    ready: { label: 'Ready', long: 'Written and approved, in Flowmerce; waiting for a reviewer to authorize it', tone: 'ok', color: 'var(--theme-good)' },
+    writing: { label: 'Writing', long: 'Claude is writing it', tone: 'info', color: 'var(--theme-primary)' },
+    planned: { label: 'Planned', long: 'Topic chosen 5 days before', tone: 'neutral', color: 'var(--theme-neutral)' },
+    failed: { label: 'Stopped', long: 'The automatic run stopped', tone: 'crit', color: 'var(--theme-low-strong)' },
+    missed: { label: 'Missed', long: 'Not written in time', tone: 'warn', color: 'var(--theme-usual-strong)' },
     skipped: { label: 'Skipped', long: 'Skipped by a person', tone: 'neutral', color: 'var(--line-2)' },
 };
+/** A meter's fill in the dashboard theme for a score's tone (the figure itself keeps the tone's ink). */
+const METER = { ok: 'var(--theme-good-strong)', warn: 'var(--theme-usual-strong)', crit: 'var(--theme-low-strong)' };
 const GROUPS = [['seo', 'SEO'], ['aeo', 'AEO'], ['geo', 'GEO'], ['llmo', 'LLMO']];
 const DAY_MS = 864e5;
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -71,16 +73,16 @@ function Overview({ d, onChanged, canRun, brands, brand }) {
           <MiniStat label="Live in the last 30 days" value={fmtInt(c.liveLast30)} foot="Articles published on Shopify"/>
           <MiniStat label="Average quality" value={p.averageQuality === null ? '—' : `${p.averageQuality}/100`} tone={p.averageQuality === null ? undefined : scoreTone(p.averageQuality)}
             foot="Fields, SEO, AEO, GEO, LLMO">
-            {p.averageQuality !== null ? <span className="viz-meter"><span className="fill" style={{ width: `${p.averageQuality}%`, background: `var(--${scoreTone(p.averageQuality)})` }}/></span> : null}
+            {p.averageQuality !== null ? <span className="viz-meter"><span className="fill" style={{ width: `${p.averageQuality}%`, background: METER[scoreTone(p.averageQuality)] ?? 'var(--theme-primary)' }}/></span> : null}
           </MiniStat>
           <MiniStat label="Projected clicks a month" value={p.monthlyClicksFromNext4Weeks === null ? '—' : `+${fmtInt(p.monthlyClicksFromNext4Weeks)}`}
             foot={p.clicksPerArticleMonth === null ? 'Needs 28 days of Search Console data and 3 live articles' : `From the next ${c.next4Weeks} blogs, at today's ${p.clicksPerArticleMonth} a month per live article (${p.basedOnArticles} articles)`}/>
           <MiniStat label="Claude cost, next 4 weeks" value={`$${p.claudeUsdNext4Weeks.toFixed(2)}`}
             foot={`About $${p.blogEstimateUsd.toFixed(2)} a blog${budgetShare !== null ? ` · ${budgetShare}% of a month's budget` : ''}`}>
-            {budgetShare !== null ? <span className="viz-meter"><span className="fill" style={{ width: `${Math.min(100, budgetShare)}%`, background: 'var(--accent)' }}/></span> : null}
+            {budgetShare !== null ? <span className="viz-meter"><span className="fill" style={{ width: `${Math.min(100, budgetShare)}%`, background: 'var(--theme-primary)' }}/></span> : null}
           </MiniStat>
           <MiniStat label="Claude today" value={`$${Number(d.budget?.todayUsd ?? 0).toFixed(2)}`} foot={`of $${Number(d.budget?.dailyLimitUsd ?? 0).toFixed(2)} daily limit`}>
-            <span className="viz-meter"><span className="fill" style={{ width: `${Math.min(100, (100 * (d.budget?.todayUsd ?? 0)) / (d.budget?.dailyLimitUsd || 1))}%`, background: 'var(--info)' }}/></span>
+            <span className="viz-meter"><span className="fill" style={{ width: `${Math.min(100, (100 * (d.budget?.todayUsd ?? 0)) / (d.budget?.dailyLimitUsd || 1))}%`, background: 'var(--theme-primary)' }}/></span>
           </MiniStat>
         </MiniGrid>
       </div>

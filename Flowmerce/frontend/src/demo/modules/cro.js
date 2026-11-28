@@ -62,6 +62,8 @@ export function seed(db) {
   }
   db.cro = {
     days, products, enabled: { RBP: true, CPC: true },
+    // Sample monthly revenue goals (modules/cro/goals.py), so the CRO goal bar and Home's goal tile have one to show.
+    goals: { ridhi: 240000, cpc: 70000 },
     rules: [
       { id: 1, store: 'RBP', kind: 'cvr_drop', title: 'Conversion rate drop 20%', threshold: 20, product_keyword: null, is_active: true, last_checked_at: hoursAgo(0.2) },
       { id: 2, store: 'RBP', kind: 'no_product_orders', title: 'No quilt orders for 12 hours', threshold: 12, product_keyword: 'quilt', is_active: true, last_checked_at: hoursAgo(0.2) },
@@ -131,6 +133,128 @@ function block(value, baseline, tooEarly, label) {
     change_pct: tooEarly || value === null || !baseline ? null : round(((value - baseline) / baseline) * 100),
     too_early: tooEarly,
   };
+}
+
+/** Each store's Home sales summary (same shape as the Python module's GET /api/cro/home stores). */
+function homeStores(db, brands) {
+  return brands.map((brand) => {
+    const all = rows(db, brand);
+    const today = all[all.length - 1];
+    const y = all[all.length - 2];
+    const net = (d) => round(d.subtotal - d.refunded);
+    const weeks = [8, 15, 22, 29].map((i) => all[all.length - 1 - i]);
+    const lastWeek = { ...all[all.length - 8], ...scale(all[all.length - 8], 0.55) };
+    const mk = (cur, bases, label, baseLabel) => {
+      const early = cur.orders < 20;
+      return { label, orders: block(cur.orders, avg(bases.map((b) => [b]), (s) => s[0].orders), early, baseLabel),
+        net_sales: block(net(cur), avg(bases.map((b) => [b]), (s) => net(s[0])), early, baseLabel) };
+    };
+    const c = cvrComparison(db, brand);
+    return { brand, state: 'ok', timezone: TZ[brand],
+      yesterday: mk(y, weeks, 'Yesterday', 'vs 4-week weekday average'),
+      today: mk(today, [lastWeek], 'Today so far', 'vs same time last week'),
+      conversion: { value: c.yesterday_cvr, previous: c.previous_cvr, date: c.yesterday_date }, conversion_state: null,
+      trend: complete(db, brand).slice(-14).map((d) => ({ date: d.date, orders: d.orders, revenue: round(d.revenue), net: net(d) })),
+      last_order_at: hoursAgo(0.4), order_data: orderData };
+  });
+}
+
+/* ------------------------------------------------------------------ Home's summary (GET /cro/home-period)
+ * Same rules as the Python module cro/company.py: one store passes through unchanged; for both stores, counts and
+ * money are added and rates are worked out again from the sums (conversion = checkouts / visits, average order =
+ * sales / orders, revenue per visit = sales / visits), too-early is judged on the totals, a day is shown only when
+ * every store has it, and the stores' monthly goals are added. The period is compared with the one before. */
+const shiftDate = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+const ratio2 = (a, b, scale = 1) => (a === null || a === undefined || !b ? null : round((a / b) * scale));
+const HOME_PERIODS = ['today', 'yesterday', '7d', '30d', 'mtd'];
+
+function homePeriodRange(period, today) {
+  if (period === 'today') return [today, today];
+  if (period === 'yesterday') return [shiftDate(today, -1), shiftDate(today, -1)];
+  if (period === '7d' || period === '30d') return [shiftDate(today, period === '7d' ? -7 : -30), shiftDate(today, -1)];
+  if (period === 'mtd') return [`${today.slice(0, 8)}01`, today];
+  throw new DemoError(400, `period must be one of ${HOME_PERIODS.join(', ')}`, 'bad_request');
+}
+
+function homeStoreDays(trend, conv) {
+  const by = new Map(conv.map((r) => [r.date, r]));
+  return trend.map((r) => {
+    const c = by.get(r.date);
+    return { date: r.date, orders: r.orders, revenue: round(r.revenue), net: round(r.net), aov: ratio2(r.revenue, r.orders),
+      sessions: c ? c.sessions : null, completed_checkout: c ? c.completed_checkout : null, conversion_rate: c ? c.conversion_rate : null };
+  });
+}
+
+function homeCombineDays(stores) {
+  const by = new Map();
+  for (const days of stores) for (const d of days) by.set(d.date, [...(by.get(d.date) ?? []), d]);
+  return [...by.keys()].sort().filter((k) => by.get(k).length === stores.length).map((k) => {
+    const list = by.get(k);
+    const visits = list.every((r) => r.sessions !== null);
+    const sessions = visits ? list.reduce((n, r) => n + r.sessions, 0) : null;
+    const done = visits ? list.reduce((n, r) => n + (r.completed_checkout || 0), 0) : null;
+    const orders = list.reduce((n, r) => n + r.orders, 0);
+    const revenue = round(list.reduce((n, r) => n + r.revenue, 0));
+    return { date: k, orders, revenue, net: round(list.reduce((n, r) => n + r.net, 0)), aov: ratio2(revenue, orders), sessions,
+      completed_checkout: done, conversion_rate: visits ? ratio2(done, sessions, 100) : null };
+  });
+}
+
+function homeCombineSeries(stores) {
+  if (!stores.length || stores.some((s) => s.length !== stores[0].length)) return [];
+  return stores[0].map((row, i) => ({ date: row.date, orders: stores.reduce((n, s) => n + s[i].orders, 0),
+    revenue: round(stores.reduce((n, s) => n + s[i].revenue, 0)), net: round(stores.reduce((n, s) => n + s[i].net, 0)) }));
+}
+
+function homeAdded(blocks) {
+  const total = (k) => (blocks.some((b) => b[k] === null || b[k] === undefined) ? null : round(blocks.reduce((n, b) => n + b[k], 0)));
+  return [total('value'), total('baseline_value')];
+}
+
+function homeVisits(days, from, to) {
+  const picked = days.filter((d) => d.date >= from && d.date <= to && d.sessions !== null);
+  return [picked.reduce((n, d) => n + d.sessions, 0), picked.reduce((n, d) => n + (d.completed_checkout || 0), 0)];
+}
+
+function homeCombineMetrics(parts, days, current, previous, partial) {
+  const label = parts[0].orders.baseline_label;
+  const [orders, ordersB] = homeAdded(parts.map((p) => p.orders));
+  const [revenue, revenueB] = homeAdded(parts.map((p) => p.revenue));
+  const early = (orders || 0) < 20;
+  const out = { orders: block(orders, ordersB, early, label), revenue: block(revenue, revenueB, early, label),
+    aov: block(ratio2(revenue, orders), ratio2(revenueB, ordersB), early, label) };
+  const [sessions, done] = homeVisits(days, ...current);
+  const [baseSessions, baseDone] = homeVisits(days, ...previous);
+  if (!sessions) {
+    out.conversion_rate = { ...block(null, null, true, label), sessions: null, base_label: 'Shopify reports sessions for complete days only' };
+    return out;
+  }
+  const earlyS = sessions < 500;
+  const baseS = baseSessions || null;
+  out.conversion_rate = { ...block(ratio2(done, sessions, 100), ratio2(baseDone, baseS, 100), earlyS, label),
+    sessions, baseline_sessions: baseS, base_label: `${orders || 0} orders from ${sessions.toLocaleString('en-US')} sessions` };
+  out.sessions = block(sessions, baseS, earlyS, label);
+  if (!partial) out.revenue_per_session = block(ratio2(revenue, sessions), ratio2(revenueB, baseS), earlyS, label);
+  return out;
+}
+
+function homeCombineBreakdown(parts, tooEarly) {
+  const label = parts[0].baseline_label;
+  return { baseline_label: label, too_early: tooEarly, rows: parts[0].rows.map((row) => {
+    const [value, base] = homeAdded(parts.map((p) => p.rows.find((r) => r.key === row.key)));
+    return { key: row.key, label: row.label, ...block(value, base, tooEarly, label) };
+  }) };
+}
+
+function homeMonthGoal(goals, sales, today) {
+  if (!goals.length || goals.some((g) => !(g > 0)) || sales.some((v) => v === null || v === undefined)) return null;
+  const goal = round(goals.reduce((n, g) => n + g, 0));
+  const got = round(sales.reduce((n, v) => n + v, 0));
+  const [y, m, d] = today.split('-').map(Number);
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const expected = (goal * d) / days;
+  return { month: new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' }), goal, sales: got,
+    pct: round((got / goal) * 100, 1), pace_pct: expected ? round((got / expected) * 100, 1) : null, day: d, days };
 }
 
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -697,28 +821,49 @@ export const routes = [
     return { brand, days, from: c[0]?.date, to: c[c.length - 1]?.date, metric: 'cvr', weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], cells,
       hours_with_data: cells.length, average_cvr: avgCvr, source: 'shopify_sessions' };
   }],
+  ['GET', '/cro/home-period', ({ query, db }) => {
+    const brands = query.brand ? [storeOf(query).brand] : ['ridhi', 'cpc'];
+    const period = query.period || 'yesterday';
+    if (!HOME_PERIODS.includes(period)) throw new DemoError(400, `period must be one of ${HOME_PERIODS.join(', ')}`, 'bad_request');
+    const call = (path, q) => routes.find((r) => r[1] === path)[2]({ query: q, db });
+    const today = brands.map((b) => rows(db, b).at(-1).date).sort()[0];
+    const [from, to] = homePeriodRange(period, today);
+    const n = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1;
+    const chartFrom = shiftDate(to, -(Math.max(14, n) - 1));
+    const prevFrom = shiftDate(from, -n);
+    const spanFrom = [shiftDate(to, -27), chartFrom, prevFrom].sort()[0];
+    const monthFrom = `${today.slice(0, 8)}01`;
+    const parts = brands.map((brand) => {
+      const one = { brand, from, to, compare: 'previous' };
+      const overview = call('/cro/overview', one);
+      const month = period === 'mtd' ? overview : call('/cro/overview', { brand, from: monthFrom, to: today, compare: 'none' });
+      const chart = call('/cro/sales-trend', { brand, from: chartFrom, to, compare: 'previous' });
+      return { brand, overview, breakdown: call('/cro/sales-breakdown', one), chart: { current: chart.current, previous: chart.previous },
+        days: homeStoreDays(call('/cro/sales-trend', { brand, from: spanFrom, to, compare: 'none' }).current,
+          call('/cro/conversion', { brand, from: spanFrom, to, compare: 'none' }).trend),
+        monthSales: month.metrics.revenue.value, goal: db.cro.goals?.[brand] ?? 0 };
+    });
+    const partial = to === today;
+    let { metrics } = parts[0].overview;
+    let { breakdown, days, chart } = parts[0];
+    let byBrand = [];
+    if (parts.length > 1) {
+      days = homeCombineDays(parts.map((p) => p.days));
+      metrics = homeCombineMetrics(parts.map((p) => p.overview.metrics), days, [from, to], [prevFrom, shiftDate(from, -1)], partial);
+      breakdown = homeCombineBreakdown(parts.map((p) => p.breakdown), (metrics.orders.value || 0) < 20);
+      chart = { current: homeCombineSeries(parts.map((p) => p.chart.current)), previous: homeCombineSeries(parts.map((p) => p.chart.previous)) };
+      byBrand = parts.map((p) => ({ brand: p.brand, revenue: p.overview.metrics.revenue.value, orders: p.overview.metrics.orders.value,
+        share: ratio2(p.overview.metrics.revenue.value, metrics.revenue.value, 100) }));
+    }
+    return { brands, period, from, to, today, is_partial: partial, period_label: parts[0].overview.period_label,
+      baseline_label: metrics.orders.baseline_label, timezone: parts.length === 1 ? parts[0].overview.timezone : null, metrics,
+      breakdown: { rows: breakdown.rows, baseline_label: breakdown.baseline_label, too_early: breakdown.too_early }, chart, days, by_brand: byBrand,
+      goal: homeMonthGoal(parts.map((p) => p.goal), parts.map((p) => p.monthSales), today),
+      last_order_at: parts.map((p) => p.overview.health.last_order_at).sort().at(-1), orders_synced_at: orderData.last_run_at, cvr_error: null };
+  }],
   ['GET', '/cro/home', ({ query, db }) => {
     const brands = query.brand ? [storeOf(query).brand] : ['ridhi', 'cpc'];
-    return { stores: brands.map((brand) => {
-      const all = rows(db, brand);
-      const today = all[all.length - 1];
-      const y = all[all.length - 2];
-      const net = (d) => round(d.subtotal - d.refunded);
-      const weeks = [8, 15, 22, 29].map((i) => all[all.length - 1 - i]);
-      const lastWeek = { ...all[all.length - 8], ...scale(all[all.length - 8], 0.55) };
-      const mk = (cur, bases, label, baseLabel) => {
-        const early = cur.orders < 20;
-        return { label, orders: block(cur.orders, avg(bases.map((b) => [b]), (s) => s[0].orders), early, baseLabel),
-          net_sales: block(net(cur), avg(bases.map((b) => [b]), (s) => net(s[0])), early, baseLabel) };
-      };
-      const c = cvrComparison(db, brand);
-      return { brand, state: 'ok', timezone: TZ[brand],
-        yesterday: mk(y, weeks, 'Yesterday', 'vs 4-week weekday average'),
-        today: mk(today, [lastWeek], 'Today so far', 'vs same time last week'),
-        conversion: { value: c.yesterday_cvr, previous: c.previous_cvr, date: c.yesterday_date }, conversion_state: null,
-        trend: complete(db, brand).slice(-14).map((d) => ({ date: d.date, orders: d.orders, revenue: round(d.revenue), net: net(d) })),
-        last_order_at: hoursAgo(0.4), order_data: orderData };
-    }) };
+    return { stores: homeStores(db, brands) };
   }],
   ['GET', '/cro/recommendations', ({ query, db }) => {
     const { brand, store } = storeOf(query);

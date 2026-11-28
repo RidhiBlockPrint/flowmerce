@@ -1,19 +1,19 @@
 'use client';
+import { useState } from 'react';
 import Link from 'next/link';
 import { More } from '../components/More';
 import { useApp } from '../lib/app';
 import { useNavigate } from '../lib/nav';
 import { useApi, qs } from '../lib/api';
-import { useHomeData } from '../lib/home';
-import { fmtCompact, fmtDate, fmtInt, timeAgo } from '../lib/format';
+import { HOME_PERIODS, useHomeAds, useHomeData, useHomePeriod } from '../lib/home';
+import { conversionScale } from '../lib/cro';
+import { fmtCompact, fmtInt, timeAgo } from '../lib/format';
 import { BrandTag, Card, Empty, ErrorState, LoadingBlock, PageHead, Paged, Pill } from '../components/ui';
-import { Icon } from '../components/Icon';
 import { BRAND_COLOR } from '../components/metrics';
 import { LineChart } from '../components/charts';
-import { ListCard, ListRow, brandLabel } from '../components/home';
-import { Greeting, Journey, MiniGrid, MiniStat, RingBody, RingCard, SectionHead, TodoRow } from '../components/dash';
-import { ageSegments } from '../lib/shipping';
-import { SalesDashboard } from '../components/cro';
+import { AdsTile, GoalTile, ListCard, ListRow, MixTile, OpsRow, SalesHero, StoreTiles, brandLabel } from '../components/home';
+import { ExplainedError, Seg } from '../components/cro';
+import { Journey, MiniGrid, MiniStat, RingCard, SectionHead, TodoRow } from '../components/dash';
 
 const SEVERITY = {
     critical: { tone: 'crit', label: 'Critical' },
@@ -34,51 +34,80 @@ const sum = (rows, f) => rows.reduce((n, r) => n + (r[f] ?? 0), 0);
 
 /* Article lifecycle, left to right. `statuses` matches the Articles page filter. */
 const CONTENT_STAGES = [
-    { key: 'drafts', label: 'Ideas and drafts', statuses: ['idea', 'draft', 'changes_requested'], color: '#a59d93' },
-    { key: 'review', label: 'In review', statuses: ['in_review'], color: 'var(--info)' },
-    { key: 'approved', label: 'Approved', statuses: ['approved', 'publish_requested'], color: '#d6a419' },
-    { key: 'scheduled', label: 'Scheduled', statuses: ['scheduled'], color: 'var(--saffron)' },
-    { key: 'published', label: 'Published', statuses: ['published'], color: 'var(--ok)' },
+    { key: 'drafts', label: 'Ideas and drafts', statuses: ['idea', 'draft', 'changes_requested'], color: 'var(--theme-neutral)' },
+    { key: 'review', label: 'In review', statuses: ['in_review'], color: 'var(--theme-primary-soft)' },
+    { key: 'approved', label: 'Approved', statuses: ['approved', 'publish_requested'], color: 'var(--theme-usual-strong)' },
+    { key: 'scheduled', label: 'Scheduled', statuses: ['scheduled'], color: 'var(--theme-usual)' },
+    { key: 'published', label: 'Published', statuses: ['published'], color: 'var(--theme-good)' },
 ];
 
 /**
- * Home: the management view across modules. A plain-language headline, sales (daily orders and net sales per store,
- * from GET /api/cro/home) next to the shipping snapshot, one to-do list, then the content pipeline, its headline
- * numbers and the article journey. The to-do list (decisions, alerts, failed runs, delivery problems). Ridhi and CPC are never
- * added together where it matters (search clicks, the brand report). Every figure comes from GET /api/home and
- * GET /api/articles/counts (real records).
+ * Home: the CEO view, layout "A · Bento" (owner, 2026-11-27; design-mockups/home-ceo/a-bento.html). One dashboard for
+ * All, Ridhi and CPC, for a period (Today, Yesterday, 7 days, 30 days, Month to date) against the one before: a large
+ * Sales tile, orders, average order, conversion and visits, a wide Ads tile, the brands' (or channels') shares, the
+ * month's goal, and a small row of operations figures. Figures only: no headline sentence and no advice. On All both
+ * brands are added together on the server (GET /api/cro/home-period, GET /api/ads/company). The to-do list, content
+ * pipeline, blog clicks, brand report and automation runs are folded under "Show more" (GET /api/home,
+ * GET /api/articles/counts).
  */
 export default function Home() {
     const { brand, me, setBrand } = useApp();
     const nav = useNavigate();
-    const { data, loading, error, reload } = useHomeData(brand);
-    const counts = useApi(`/articles/counts${qs({ brand: brand === 'all' ? undefined : brand })}`);
-    // Same address as the Shipping page's overview, so either page shows the other's answer at once.
-    const shipSummary = useApi(`/shipping/summary${qs({ brand: brand === 'all' ? undefined : brand })}`);
     const brands = me.brands;
-    const showBrand = brand === 'all';
-    const common = { brands, showBrand };
     const oneBrand = brand !== 'all';
-    if (loading || error) {
-        // The sales card sits where it sits once loaded (same parent, same place), so React keeps it instead of
-        // building it again and asking /api/cro/home a second time when the rest of Home arrives.
-        return (<>
-          <PageHead title="Home" sub={<>{brandLabel(brand, brands)} · last {data?.window?.days ?? 28} days</>}/>
-          {null}
-          <div className="grid main-side home-top">
-            <SalesDashboard brand={oneBrand ? brand : undefined} brands={brands}/>
-            <div>{error ? <ErrorState error={error} onRetry={reload}/> : <LoadingBlock rows={6}/>}</div>
-          </div>
-        </>);
-    }
+    const showBrand = !oneBrand;
+    const [period, setPeriod] = useState('yesterday');
+    const q = useHomePeriod(brand, period);
+    const h = q.data;
+    const ads = useHomeAds(brand, h?.from, h?.to);
+    const { data, loading, error, reload } = useHomeData(brand);
+    const counts = useApi(`/articles/counts${qs({ brand: oneBrand ? brand : undefined })}`);
+    // Same address as the Shipping page's overview, so either page shows the other's answer at once.
+    const shipSummary = useApi(`/shipping/summary${qs({ brand: oneBrand ? brand : undefined })}`);
+
+    const scope = oneBrand ? brands.find((b) => b.id === brand)?.short ?? brand : 'both brands';
+    const days = (h?.days ?? []).filter((d) => d.date <= (h?.to ?? ''));
+    const scale = h ? conversionScale(days.slice(-28).map((d) => d.conversion_rate), h.metrics?.conversion_rate?.value ?? null) : null;
+    const sub = h ? `${brandLabel(brand, brands)} · ${h.period_label}${h.baseline_label ? `, ${h.baseline_label}` : ''}` : brandLabel(brand, brands);
+
+    return (<>
+      <PageHead title="Home" sub={sub} actions={<Seg label="Period" options={HOME_PERIODS} value={period} onChange={setPeriod}/>}/>
+
+      {q.error && !h ? <ExplainedError error={q.error} onRetry={q.reload}/> : !h ? <LoadingBlock rows={8}/> : (<>
+        <div className="hb-grid">
+          <SalesHero h={h} scope={scope}/>
+          <StoreTiles h={h} scale={scale}/>
+          <AdsTile ads={ads.data} error={ads.error} scope={scope} today={h.period === 'today'}/>
+          <MixTile h={h} ads={ads.data} brands={brands} oneBrand={oneBrand} today={h.period === 'today'}/>
+          <GoalTile goal={h.goal} oneBrand={oneBrand}/>
+        </div>
+        {h.cvr_error ? <div className="hb-note"><ExplainedError error={{ code: h.cvr_error.state, message: h.cvr_error.message }}/></div> : null}
+      </>)}
+
+      <OpsRow shipProblems={data.shipping?.all?.problems} shipSummary={shipSummary.data} waiting={loading ? null : data.approvalsTotal}
+        ordersSyncedAt={h?.orders_synced_at} adsBrands={ads.data?.brands}/>
+
+      {loading || error ? (<More id="home" label="Show the to-do list, content pipeline and brand report">
+          {error ? <ErrorState error={error} onRetry={reload}/> : <LoadingBlock rows={6}/>}
+        </More>)
+        : <HomeDetails data={data} counts={counts} brand={brand} brands={brands} showBrand={showBrand} setBrand={setBrand} nav={nav}/>}
+    </>);
+}
+
+/**
+ * Everything that is not a headline figure, folded under "Show more": the to-do list (decisions, alerts, failed runs,
+ * delivery problems, most serious first), the content pipeline, blog search clicks, the brand report and automation
+ * runs. Ridhi and CPC are never added together here (search clicks, the brand report).
+ */
+function HomeDetails({ data, counts, brand, brands, showBrand, setBrand, nav }) {
+    const oneBrand = brand !== 'all';
+    const common = { brands, showBrand };
     const clicks = (b) => data.metrics.find((m) => m.brand === b && m.key === 'gsc_clicks');
     const sessions = (b) => data.metrics.find((m) => m.brand === b && m.key === 'ga4_sessions');
     const failedJobs = data.jobs.filter((j) => j.status === 'failed' && !j.failedOnlyBecausePaused && !(j.lastSuccessAt && j.lastSuccessAt > (j.finishedAt ?? j.startedAt ?? '')));
     const ship = data.shipping?.all;
-    const shipNote = data.shipping?.loading ? 'Still loading, open again in a moment' : 'Shipping data unavailable';
     const live = sum(data.articles, 'live');
     const total = sum(data.articles, 'total');
-    const critical = data.alerts.filter((a) => a.severity === 'critical').length;
     const n = (statuses) => (counts.data ?? []).filter((c) => statuses.includes(c.status)).reduce((a, c) => a + c.n, 0);
     const failedPublish = n(['failed']);
     const sentBack = n(['changes_requested']);
@@ -97,24 +126,10 @@ export default function Home() {
     ];
     const severity = { crit: 0, warn: 1, info: 2 };
     todo.sort((a, b) => (severity[a.tone] ?? 3) - (severity[b.tone] ?? 3));
+    const critical = data.alerts.filter((a) => a.severity === 'critical').length;
     const needs = data.approvalsTotal + critical + failedJobs.length + (ship?.problems ?? 0);
-    const parts = [
-        data.approvalsTotal ? `${fmtInt(data.approvalsTotal)} waiting for your decision` : '',
-        critical ? `${fmtInt(critical)} critical alert${critical === 1 ? '' : 's'}` : '',
-        failedJobs.length ? `${fmtInt(failedJobs.length)} failed automation run${failedJobs.length === 1 ? '' : 's'}` : '',
-        ship?.problems ? `${fmtInt(ship.problems)} delivery problem${ship.problems === 1 ? '' : 's'}` : '',
-    ];
 
-    return (<>
-      <PageHead title="Home" sub={<>{brandLabel(brand, brands)} · last {data.window?.days ?? 28} days</>}/>
-      <Greeting count={needs} parts={parts} calm="Nothing needs you today."
-        actions={<><Link className="btn" href="/publishing"><Icon name="publish" size="sm"/>Publishing</Link><Link className="btn" href="/shipping"><Icon name="truck" size="sm"/>Shipping</Link></>}/>
-
-      <div className="grid main-side home-top">
-        <SalesDashboard brand={oneBrand ? brand : undefined} brands={brands}/>
-        <ShippingSnapshot ship={ship} summary={shipSummary.data} note={shipNote} loading={data.shipping?.loading} showBrand={showBrand} brands={brands} nav={nav}/>
-      </div>
-
+    return (<More id="home" label={`Show the to-do list${needs ? ` (${fmtInt(needs)})` : ''}, content pipeline and brand report`}>
       <SectionHead title="Today&rsquo;s to-do" note="Decisions, alerts, failed runs and delivery problems, most serious first."
         action={<Link className="btn sm" href="/publishing">All decisions</Link>}/>
       <Card flush className="triage">
@@ -149,70 +164,39 @@ export default function Home() {
                   : s.key === 'published' && failedPublish ? [{ label: 'failed to publish', value: failedPublish, tone: 'crit', onClick: () => toArticles(['failed']) }] : [],
       }))}/>
 
-      <More id="home" label="Show blog trends and the brand report">
-        <Card title="Blog search clicks" sub="Daily clicks from Google search to blog pages, by brand" actions={<Link className="btn ghost sm" href="/analytics">Open SEO & traffic</Link>}>
-            {data.trend?.length ? <LineChart ariaLabel="Daily blog search clicks by brand" height={230} series={data.trend.map((t) => ({ key: t.brand, label: brands.find((b) => b.id === t.brand)?.name ?? t.brand, color: BRAND_COLOR[t.brand], points: t.points }))}/>
-              : <Empty icon="analytics" title="No trend yet">Daily figures appear once Search Console data is available.</Empty>}
-          </Card>
-        <h2 className="section-title">Report by brand</h2>
-        <div className="card flush">
-          <div className="table-wrap">
-            <table className="t">
-              <thead><tr><th>Brand</th><th className="r">Articles</th><th className="r">Live</th><th className="r">Drafts</th><th className="r">Waiting</th><th className="r">Search clicks</th><th className="r">Sessions</th><th className="r">Delivery problems</th><th><span className="sr-only">Open</span></th></tr></thead>
-              <tbody>
-                {data.articles.map((b) => {
-                    const s = data.shipping?.byBrand?.[b.brand];
-                    return (<tr key={b.brand}>
-                      <td><BrandTag id={b.brand} brands={brands}/> <span className="strong">{brands.find((x) => x.id === b.brand)?.name}</span></td>
-                      <td className="r">{fmtInt(b.total)}</td>
-                      <td className="r">{fmtInt(b.live)}</td>
-                      <td className="r">{fmtInt(b.drafts)}</td>
-                      <td className="r">{b.pendingApproval ? <Pill tone="warn">{b.pendingApproval}</Pill> : 0}</td>
-                      <td className="r">{fmtInt(clicks(b.brand)?.value)}</td>
-                      <td className="r">{fmtInt(sessions(b.brand)?.value)}</td>
-                      <td className="r">{s ? (s.problems ? <Pill tone="crit">{s.problems}</Pill> : 0) : '—'}</td>
-                      <td className="r"><Link className="btn ghost sm" href="/articles" onClick={() => setBrand(b.brand)}>Open</Link></td>
-                    </tr>);
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div className="card-foot muted xs">Ridhi and CPC are separate businesses and are never added together in this table.</div>
+      <Card title="Blog search clicks" sub="Daily clicks from Google search to blog pages, by brand" actions={<Link className="btn ghost sm" href="/analytics">Open SEO & traffic</Link>}>
+        {data.trend?.length ? <LineChart ariaLabel="Daily blog search clicks by brand" height={230} series={data.trend.map((t) => ({ key: t.brand, label: brands.find((b) => b.id === t.brand)?.name ?? t.brand, color: BRAND_COLOR[t.brand], points: t.points }))}/>
+          : <Empty icon="analytics" title="No trend yet">Daily figures appear once Search Console data is available.</Empty>}
+      </Card>
+      <h2 className="section-title">Report by brand</h2>
+      <div className="card flush">
+        <div className="table-wrap">
+          <table className="t">
+            <thead><tr><th>Brand</th><th className="r">Articles</th><th className="r">Live</th><th className="r">Drafts</th><th className="r">Waiting</th><th className="r">Search clicks</th><th className="r">Sessions</th><th className="r">Delivery problems</th><th><span className="sr-only">Open</span></th></tr></thead>
+            <tbody>
+              {data.articles.map((b) => {
+                  const s = data.shipping?.byBrand?.[b.brand];
+                  return (<tr key={b.brand}>
+                    <td><BrandTag id={b.brand} brands={brands}/> <span className="strong">{brands.find((x) => x.id === b.brand)?.name}</span></td>
+                    <td className="r">{fmtInt(b.total)}</td>
+                    <td className="r">{fmtInt(b.live)}</td>
+                    <td className="r">{fmtInt(b.drafts)}</td>
+                    <td className="r">{b.pendingApproval ? <Pill tone="warn">{b.pendingApproval}</Pill> : 0}</td>
+                    <td className="r">{fmtInt(clicks(b.brand)?.value)}</td>
+                    <td className="r">{fmtInt(sessions(b.brand)?.value)}</td>
+                    <td className="r">{s ? (s.problems ? <Pill tone="crit">{s.problems}</Pill> : 0) : '—'}</td>
+                    <td className="r"><Link className="btn ghost sm" href="/articles" onClick={() => setBrand(b.brand)}>Open</Link></td>
+                  </tr>);
+              })}
+            </tbody>
+          </table>
         </div>
-        <div className="mt-16">
-          <ListCard title="Automation and recent runs" sub="Latest pipeline runs." to="/automation" linkLabel="Open Automation" icon="clock" emptyTitle="No runs recorded" emptyText="Pipeline runs appear here once they exist.">
-            {data.jobs.length ? data.jobs.map((j) => (<ListRow key={`job-${j.id}`} icon={runInfo(j.status).icon} tone={runInfo(j.status).tone} title={j.name} brand={j.brand} {...common} meta={`started ${ago(j.startedAt, 'at an unknown time')} · last success: ${ago(j.lastSuccessAt, 'none recorded')}`} trailing={<Pill tone={runInfo(j.status).tone ?? 'neutral'}>{runInfo(j.status).label}</Pill>}/>)) : null}
-          </ListCard>
-        </div>
-      </More>
-    </>);
-}
-
-/**
- * Home's Shipping card, as tall as the Sales block beside it: the active parcels by age (ring and legend, from
- * GET /api/shipping/summary), three headline numbers, and the oldest delivery problems (from GET /api/home).
- */
-function ShippingSnapshot({ ship, summary, note, loading, showBrand, brands, nav }) {
-    const ages = summary ? ageSegments(summary.kpis, (cat) => nav(`/shipping?tab=shipments&cat=${cat}`)) : null;
-    const onTime = summary?.delivery30?.onTimePct;
-    const top = ship?.top ?? [];
-    return (<Card className="ship-snap" title="Shipping snapshot" sub={ship?.asOf ? `As of ${fmtDate(ship.asOf)}` : undefined}
-      actions={<Link className="btn ghost sm" href="/shipping">Open Shipping</Link>}>
-      {ship ? (<>
-          {ages?.total ? <RingBody compact segments={ages.segments} total={ages.total} centerLabel="active"/> : null}
-          <div className="stat-row">
-            <div className="stat"><div className="v">{fmtInt(ship.delivered30d)}</div><div className="l">Delivered (30 days)</div></div>
-            <div className="stat"><div className="v">{onTime === null || onTime === undefined ? '—' : `${onTime}%`}</div><div className="l">On time (30 days)</div></div>
-            <div className={`stat ${ship.problems ? 'alert' : ''}`}><div className="v">{fmtInt(ship.problems)}</div><div className="l">Delivery problems</div></div>
-          </div>
-          <div className="ship-snap-list">
-            <div className="ship-snap-head"><span>Oldest delivery problems</span>{ship.problems ? <Link className="link" href="/shipping">All {fmtInt(ship.problems)}</Link> : null}</div>
-            {top.length ? top.slice(0, 5).map((s) => (<Link key={s.trackingId} className="ship-row" href={`/shipping?tab=shipments&q=${encodeURIComponent(s.order ?? '')}`}>
-                <span className="o">{s.order}</span>
-                <span className="d">{s.days ?? '?'} d</span>
-                <span className="m">{s.label ? `${s.label} · ` : ''}{s.carrier}{s.place ? ` · last seen ${s.place}` : ''}{showBrand && s.brand ? ` · ${brands.find((b) => b.id === s.brand)?.short ?? s.brand}` : ''}</span>
-              </Link>)) : <div className="muted small">No delivery problems right now.</div>}
-          </div>
-        </>) : <Empty icon="truck" title={note}>{loading ? 'Shipping figures are being read and will show here shortly.' : 'Supabase is not set up or could not be reached. Open Shipping for details.'}</Empty>}
-    </Card>);
+        <div className="card-foot muted xs">Ridhi and CPC are separate businesses and are never added together in this table.</div>
+      </div>
+      <div className="mt-16">
+        <ListCard title="Automation and recent runs" sub="Latest pipeline runs." to="/automation" linkLabel="Open Automation" icon="clock" emptyTitle="No runs recorded" emptyText="Pipeline runs appear here once they exist.">
+          {data.jobs.length ? data.jobs.map((j) => (<ListRow key={`job-${j.id}`} icon={runInfo(j.status).icon} tone={runInfo(j.status).tone} title={j.name} brand={j.brand} {...common} meta={`started ${ago(j.startedAt, 'at an unknown time')} · last success: ${ago(j.lastSuccessAt, 'none recorded')}`} trailing={<Pill tone={runInfo(j.status).tone ?? 'neutral'}>{runInfo(j.status).label}</Pill>}/>)) : null}
+        </ListCard>
+      </div>
+    </More>);
 }

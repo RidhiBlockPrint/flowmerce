@@ -228,3 +228,19 @@ test('a ratio is green at its target, amber close below, red further below', () 
     assert.equal(ratioTone(null, 2.2), '');
     assert.equal(ratioTone(3, null), '');
 });
+
+test('the company view adds both brands\' spend and sales and keeps each brand\'s own answer', async () => {
+    resetDemo();
+    const q = 'from=2000-01-01&to=2099-12-31';
+    const co = await get('/ads/company');
+    const [ridhi, cpc] = await Promise.all(['ridhi', 'cpc'].map((b) => get(`/ads/overview?brand=${b}&platform=all`)));
+    assert.ok(close(co.metrics.spend.value, ridhi.metrics.total_spend.value + cpc.metrics.total_spend.value));
+    assert.ok(close(co.metrics.sales_ex_bulk.value, ridhi.metrics.sales_ex_bulk.value + cpc.metrics.sales_ex_bulk.value));
+    assert.ok(close(co.metrics.mer_ex_bulk.value, co.metrics.sales_ex_bulk.value / co.metrics.spend.value));
+    assert.deepEqual(co.brands.map((b) => b.brand), ['ridhi', 'cpc']);
+    assert.ok(close(co.brands[0].share_of_spend + co.brands[1].share_of_spend, 100, 0.01));
+    assert.equal(co.brands[0].gate.state, ridhi.gate.state);
+    const day = co.trend.at(-1);
+    assert.ok(close(day.spend, day.ridhi_spend + day.cpc_spend));
+    assert.ok(await get(`/ads/company?${q}`).catch(() => true));
+});

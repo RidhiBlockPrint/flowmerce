@@ -1617,3 +1617,148 @@ def search_terms(
             "not report them per term.",
         ],
     }
+
+
+# ------------------------------------------------------------------ both brands (the company view)
+BRAND_LABEL = {"ridhi": "Ridhi Block Print", "cpc": "Cotton Print Club"}
+
+
+@_kept
+def company(
+    frm: str | None,
+    to: str | None,
+    compare: str | None,
+    cfrom: str | None = None,
+) -> dict[str, Any]:
+    """Both brands together for directors: company ad spend (Meta + Google, both brands), the
+    stores' sales, company MER and cost per order, each brand's own answer beside them (its spend
+    call, MER, platforms and goal), and the days. Brands are added only where adding is honest:
+    spend, store sales and orders. Platform-claimed sales and ROAS stay per brand."""
+    from .config import BRANDS
+
+    def one(brand: str) -> dict[str, Any]:
+        try:
+            return {
+                "brand": brand,
+                "ready": True,
+                "o": overview(brand, "all", frm, to, compare, cfrom),
+            }
+        except NotReadyError as e:
+            return {"brand": brand, "ready": False, "message": e.message}
+
+    parts = _together(*(lambda b=b: one(b) for b in BRANDS))
+    ready = [p for p in parts if p["ready"]]
+    if not ready:
+        raise NotReadyError(
+            "not_configured",
+            " ".join(p["message"] for p in parts) or "No brand's ad account is ready yet.",
+        )
+    first = ready[0]["o"]
+
+    def total(key: str, side: str) -> float | None:
+        vals = [p["o"]["metrics"][key][side] for p in ready]
+        if all(v is None for v in vals):
+            return None
+        return sum(float(v or 0) for v in vals)
+
+    def both(key: str) -> tuple[float | None, float | None]:
+        return total(key, "value"), total(key, "baseline_value")
+
+    spend, spend_b = both("total_spend")
+    sales, sales_b = both("sales")
+    ex, ex_b = both("sales_ex_bulk")
+    orders, orders_b = both("orders")
+    out_metrics = {
+        "spend": block(spend, spend_b),
+        "sales": block(sales, sales_b),
+        "sales_ex_bulk": block(ex, ex_b),
+        "orders": block(orders, orders_b),
+        "mer_ex_bulk": block(
+            div(ex or 0, spend or 0), div(ex_b or 0, spend_b or 0) if spend_b else None
+        ),
+        "cost_per_order": block(
+            div(spend or 0, orders or 0), div(spend_b or 0, orders_b or 0) if orders_b else None
+        ),
+    }
+    days: dict[str, dict[str, Any]] = {}
+    for p in ready:
+        b = p["brand"]
+        for r in p["o"]["trend"]:
+            t = days.setdefault(r["date"], {"date": r["date"], "spend": 0.0, "sales_ex_bulk": 0.0})
+            t["spend"] += float(r["spend"] or 0)
+            t["sales_ex_bulk"] += float(r["sales_ex_bulk"] or 0)
+            t[f"{b}_spend"] = r["spend"]
+            t[f"{b}_sales_ex_bulk"] = r["sales_ex_bulk"]
+            t[f"{b}_mer_ex_bulk"] = r["mer_ex_bulk"]
+    trend = []
+    for d in sorted(days):
+        t = days[d]
+        m = div(t["sales_ex_bulk"], t["spend"])
+        trend.append(
+            {
+                **t,
+                "spend": round(t["spend"], 2),
+                "sales_ex_bulk": round(t["sales_ex_bulk"], 2),
+                "mer_ex_bulk": None if m is None else round(m, 2),
+            }
+        )
+    brands = []
+    for p in parts:
+        if not p["ready"]:
+            brands.append(
+                {
+                    "brand": p["brand"],
+                    "label": BRAND_LABEL[p["brand"]],
+                    "ready": False,
+                    "message": p["message"],
+                }
+            )
+            continue
+        o = p["o"]
+        m = o["metrics"]
+        brands.append(
+            {
+                "brand": p["brand"],
+                "label": BRAND_LABEL[p["brand"]],
+                "ready": True,
+                "gate": o["gate"],
+                "targets": o["targets"],
+                "gate_lines": o["gate_lines"],
+                "metrics": {
+                    k: m[k] for k in ("total_spend", "sales_ex_bulk", "mer_ex_bulk", "orders")
+                },
+                "share_of_spend": pct(float(m["total_spend"]["value"] or 0), spend or 0),
+                "platforms": o["platforms"],
+                "goal": o["goal"],
+                "meta_saved_to": o["meta_saved_to"],
+                "google_saved_to": o["google_saved_to"],
+            }
+        )
+    # Each platform's spend over the brands that use it (Home's Meta / Google split, 2026-11-27).
+    # Spend can be added; what a platform claims as sales, and so its ROAS, stays per brand.
+    by_platform: dict[str, float] = {}
+    for p in ready:
+        for row in p["o"]["platforms"]:
+            if row.get("spend") is not None:
+                name = str(row["platform"])
+                by_platform[name] = by_platform.get(name, 0.0) + float(row["spend"])
+    platforms = [
+        {"platform": name, "spend": round(v, 2), "share_of_spend": pct(v, spend or 0)}
+        for name, v in by_platform.items()
+    ]
+    return {
+        "from": first["from"],
+        "to": first["to"],
+        "days": first["days"],
+        "compare": first["compare"],
+        "metrics": out_metrics,
+        "brands": brands,
+        "platforms": platforms,
+        "trend": trend,
+        "notes": [
+            "Both brands together: ad spend is Meta and Google for both brands; store sales are "
+            "both stores' own orders (bulk orders left out of MER). Platform-claimed sales are "
+            "never added together.",
+            "Each brand keeps its own spend call, rules and goal: open a brand to act on it.",
+        ],
+    }

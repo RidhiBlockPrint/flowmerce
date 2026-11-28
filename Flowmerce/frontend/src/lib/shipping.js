@@ -106,8 +106,10 @@ export const SOURCE_TITLE = {
 /* Age bands (days since the last carrier update), fresh to oldest, then the hand-check sections. Every active order is
    in exactly one, so together they add up to the active total. The server's label holds the name and the day range. */
 const BANDS = ['on_track', 'yellow', 'orange', 'red', 'tracking_missing', 'invalid', 'checks'];
-const BAND_COLOUR = { on_track: 'var(--ok)', yellow: '#d6a419', orange: '#c2571a', red: 'var(--crit)',
-    tracking_missing: '#8b1e3f', invalid: 'var(--info)', checks: '#a59d93' };
+/* The dashboard theme (2026-11-27): the age bands run green, amber, peach, salmon like every other dashboard's good to
+ * bad scale; the two tracking-number problems are the theme's blues; hand checks its warm grey. */
+const BAND_COLOUR = { on_track: 'var(--theme-good)', yellow: 'var(--theme-usual)', orange: 'var(--theme-peach)', red: 'var(--theme-low-strong)',
+    tracking_missing: 'var(--theme-primary)', invalid: 'var(--theme-primary-soft)', checks: 'var(--theme-neutral)' };
 const BAND_NAME = { tracking_missing: ['Tracking missing', 'no number'], invalid: ['Invalid tracking', 'no carrier word'],
     checks: ['Fix in Shopify', 'data to correct'] };
 function splitLabel(label) {

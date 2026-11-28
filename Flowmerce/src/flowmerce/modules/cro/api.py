@@ -20,7 +20,7 @@ from ..seo.audit import audit
 from ..seo.auth import require_perm
 from ..seo.util import HttpError
 from ..shipping.supabase import SupabaseError
-from . import ai_advice, alarms, data, goals, scheduler, service, sync
+from . import ai_advice, alarms, company, data, goals, scheduler, service, sync
 from .benchmarks import BENCHMARKS
 from .config import store_for
 from .shopify import AnalyticsError
@@ -258,6 +258,14 @@ def home(request: Request, brand: str = "") -> dict[str, Any]:
     """Sales summary for Home (both stores when no brand). Never fails for data reasons."""
     require_perm(request, "view")
     return _call(lambda: service.home(brand or None))
+
+
+@cro.get("/home-period")
+def home_period(request: Request, brand: str = "", period: str = "") -> dict[str, Any]:
+    """Home's dashboard for one store, or both stores added together (no brand), for a period
+    (today, yesterday, 7d, 30d or mtd; default yesterday) against the period before."""
+    require_perm(request, "view")
+    return _call(lambda: company.home_period(brand or None, period[:10] or None))
 
 
 @cro.get("/recommendations")

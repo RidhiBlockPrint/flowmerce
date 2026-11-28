@@ -845,3 +845,48 @@ def test_rarely_changing_rows_are_kept_and_cleared_by_a_write(
     assert cl.reads == 3  # read again after the write
     assert data.rules("ridhi", CountingClient()) == {"target_roas": 2.5}  # own client: not kept
     assert cl.reads == 3
+
+
+# ------------------------------------------------------------------ both brands (company view)
+def test_company_adds_spend_and_sales_and_keeps_each_brand(
+    fake: FakeData, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CPC_META_AD_ACCOUNT_ID", raising=False)  # this computer's .env has CPC's
+    monkeypatch.delenv("CPC_META_ACCESS_TOKEN", raising=False)
+    one = service.company(None, None, None)
+    ridhi, cpc = one["brands"]
+    assert ridhi["ready"] and not cpc["ready"] and "CPC_META_AD_ACCOUNT_ID" in cpc["message"]
+    o = service.overview("ridhi", "all", None, None, None)
+    assert one["metrics"]["spend"]["value"] == o["metrics"]["total_spend"]["value"]
+    assert ridhi["share_of_spend"] == 100.0 and ridhi["gate"] == o["gate"]
+
+    monkeypatch.setenv(
+        "CPC_META_AD_ACCOUNT_ID", "456"
+    )  # the fake answers CPC with the same figures
+    monkeypatch.setenv("CPC_META_ACCESS_TOKEN", "test-token")
+    two = service.company(None, None, None)
+    m = two["metrics"]
+    assert m["spend"]["value"] == 2 * o["metrics"]["total_spend"]["value"]
+    assert m["sales_ex_bulk"]["value"] == 2 * o["metrics"]["sales_ex_bulk"]["value"]
+    assert (
+        m["mer_ex_bulk"]["value"] == o["metrics"]["mer_ex_bulk"]["value"]
+    )  # same brands: same MER
+    assert [b["share_of_spend"] for b in two["brands"]] == [50.0, 50.0]
+    day = two["trend"][-1]
+    assert day["spend"] == day["ridhi_spend"] + day["cpc_spend"]
+    # each platform's spend is added over both brands; shares are of the company's spend
+    meta = next(p for p in two["platforms"] if p["platform"] == "meta")
+    own = next(p for p in o["platforms"] if p["platform"] == "meta")
+    assert meta["spend"] == round(2 * own["spend"], 2)
+    assert abs(sum(p["share_of_spend"] for p in two["platforms"]) - 100) < 0.2
+    assert "ridhi_mer_ex_bulk" in day and two["from"] == o["from"]
+
+
+def test_company_with_no_brand_ready_says_why(
+    fake: FakeData, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for b in ("RIDHI", "CPC"):
+        monkeypatch.delenv(f"{b}_META_AD_ACCOUNT_ID", raising=False)
+    with pytest.raises(service.NotReadyError) as e:
+        service.company(None, None, None)
+    assert e.value.code == "not_configured"

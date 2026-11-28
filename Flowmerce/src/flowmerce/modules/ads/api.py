@@ -96,6 +96,17 @@ def overview(request: Request, brand: str = "ridhi", platform: str = "all") -> d
     )
 
 
+@ads.get("/company")
+def company(request: Request) -> dict[str, Any]:
+    """Both brands together (the company view): spend, store sales, MER, each brand's spend call."""
+    require_perm(request, "view")
+    return _call(
+        lambda: service.company(
+            _q(request, "from"), _q(request, "to"), _q(request, "compare"), _q(request, "cfrom")
+        )
+    )
+
+
 @ads.get("/campaigns")
 def campaigns(request: Request, brand: str = "ridhi", platform: str = "all") -> dict[str, Any]:
     """Every campaign with CBO health and its ad sets."""

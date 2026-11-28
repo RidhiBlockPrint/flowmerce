@@ -45,6 +45,27 @@
   --demo: #6b4fbb;
   --demo-soft: #f0ebfa;
 
+  /* The dashboard theme (owner, 2026-11-27: "take this color theme for every dashboard"), taken from the CRO
+     Overview: one scale for how a figure did, the same on every dashboard (sage green good, amber usual, salmon
+     below usual), navy for the figure in focus and its light blue for "the rest" / the comparison. Charts, rings,
+     bars and day tiles use these; text on them uses the darker --ok / --warn / --crit inks. */
+  --theme-good: #7fb08c;
+  --theme-usual: #f3c46c;
+  --theme-low: #eaa39a;
+  --theme-primary: #2f5d8a;
+  --theme-primary-soft: #c7d7e8;
+  --theme-usual-strong: #dca33c;
+  --z-high: var(--theme-good);
+  --z-mid: var(--theme-usual);
+  --z-low: var(--theme-low);
+  --blue-mid: var(--theme-primary-soft);
+  /* Stronger steps of the same tones, for thin lines and stripes that must read on white, and two in-between
+     tones for scales with more than three steps (Shipping's age bands). */
+  --theme-good-strong: #5f9a6f;
+  --theme-low-strong: #d9776b;
+  --theme-peach: #eeae7c;
+  --theme-neutral: #c9c0b5;
+
   --serif: 'Libre Caslon Text', 'New York', 'Iowan Old Style', Georgia, serif;
   --sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
@@ -828,7 +849,11 @@ button.journey-flag:hover { filter: brightness(.96); text-decoration: underline;
 .sec-head h2 { font-size: 22px; }
 .chip-n { opacity: .6; margin-left: 2px; }
 .triage { margin-top: 10px; margin-bottom: 18px; }
-.triage-row { display: grid; grid-template-columns: 44px minmax(130px, .8fr) minmax(0, 2fr) 236px 186px; gap: 14px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line-2); }
+/* The rows share one set of columns (subgrid, owner 2026-11-27: less empty space), so each column is as wide as its
+   widest cell on the page and no wider: a single problem tag no longer sits in a 236px column, and the reason gets
+   the room (one line on a desktop screen). Browsers without subgrid keep the fixed columns. */
+.triage-list { display: grid; grid-template-columns: 44px fit-content(220px) minmax(0, 1fr) fit-content(130px) max-content; column-gap: 14px; }
+.triage-row { display: grid; grid-template-columns: 44px minmax(130px, .8fr) minmax(0, 2fr) 236px 186px; grid-template-columns: subgrid; grid-column: 1 / -1; gap: 14px; align-items: center; padding: 9px 16px; border-top: 1px solid var(--line-2); }
 .triage-row:first-child { border-top: 0; }
 .triage-row:hover { background: var(--surface-2); }
 .triage-age { width: 40px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -844,6 +869,7 @@ button.journey-flag:hover { filter: brightness(.96); text-decoration: underline;
 .triage-tags { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .triage-acts { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
 @media (max-width: 1100px) {
+  .triage-list { display: block; }
   .triage-row { grid-template-columns: 44px minmax(0, 1fr) auto; }
   .triage-why { grid-column: 2 / -1; grid-row: 2; }
   .triage-tags { display: none; }
@@ -1253,7 +1279,7 @@ a.blogcal-slot:hover { transform: translateY(-1px); box-shadow: var(--shadow-1);
 /* CRO Overview, design A2 (components/croOverview.jsx). Cards stay neutral; colour comes only from the content
  * calendar lanes (.lane-*): blue this period, saffron usual or an event, green strong, red below usual or lost.
  * The three --z-* tones are the lane colours lightened so arcs and bars read as one scale. */
-.ov-trio, .ov-strip-wrap, .ov-sales { --z-low: #eaa39a; --z-mid: #f3c46c; --z-high: #7fb08c; --blue-mid: #c7d7e8; }
+/* --z-low, --z-mid, --z-high and --blue-mid are the dashboard theme, set on :root (2026-11-27). */
 .lane-chip.plain { background: var(--surface); border: 1px solid var(--line); color: var(--ink-2); }
 button.lane-chip { cursor: pointer; border: 0; font-family: inherit; min-height: 28px; padding: 4px 9px; }
 button.lane-chip.plain { border: 1px solid var(--line); }
@@ -1855,8 +1881,8 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
 
 /* Today's plan: the spend call on the left, what to do on the right. A coloured stripe says the call at a glance. */
 .ads-plan { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 0; padding: 0; overflow: hidden; }
-.ads-plan.s-red { box-shadow: inset 5px 0 0 var(--crit); } .ads-plan.s-amber { box-shadow: inset 5px 0 0 var(--warn); }
-.ads-plan.s-green { box-shadow: inset 5px 0 0 var(--ok); }
+.ads-plan.s-red { box-shadow: inset 5px 0 0 var(--theme-low-strong); } .ads-plan.s-amber { box-shadow: inset 5px 0 0 var(--theme-usual-strong); }
+.ads-plan.s-green { box-shadow: inset 5px 0 0 var(--theme-good-strong); }
 .ads-plan.s-unknown { box-shadow: inset 5px 0 0 var(--faint); }
 .ads-plan-call { display: flex; flex-direction: column; gap: 16px; padding: 20px 24px 20px 28px; min-width: 0; }
 .ads-plan-todo { display: flex; flex-direction: column; gap: 10px; padding: 20px 22px; background: var(--surface-2); border-left: 1px solid var(--line-2); min-width: 0; }
@@ -1891,9 +1917,9 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
 .ads-meter-bar { position: relative; height: 20px; display: flex; align-items: center; }
 .ads-meter-track { position: relative; flex: 1; height: 12px; border-radius: 6px; overflow: hidden; background: var(--surface-3); }
 .ads-meter-track .z { position: absolute; top: 0; bottom: 0; animation: ads-grow 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; transform-origin: left; }
-.ads-meter-track .z-red { left: 0; background: color-mix(in srgb, var(--crit) 55%, var(--surface)); }
-.ads-meter-track .z-amber { background: color-mix(in srgb, var(--warn) 50%, var(--surface)); animation-delay: 80ms; }
-.ads-meter-track .z-green { background: color-mix(in srgb, var(--ok) 55%, var(--surface)); animation-delay: 160ms; }
+.ads-meter-track .z-red { left: 0; background: var(--theme-low); }
+.ads-meter-track .z-amber { background: var(--theme-usual); animation-delay: 80ms; }
+.ads-meter-track .z-green { background: var(--theme-good); animation-delay: 160ms; }
 .ads-meter-target { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; border-radius: 1px; background: var(--ink-2); }
 .ads-meter-dot { position: absolute; top: 50%; width: 18px; height: 18px; border-radius: 50%; transform: translate(-50%, -50%);
   box-shadow: 0 0 0 2px var(--surface); animation: ads-slide 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
@@ -1932,9 +1958,9 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
   align-items: end; margin-top: 18px; }
 .ads-goal-col { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
 .ads-goal-col .v { font-size: 11.5px; font-weight: 650; color: var(--ink-2); margin-bottom: 3px; white-space: nowrap; }
-.ads-goal-col .b { width: 100%; max-width: 44px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--saffron) 70%, var(--surface));
+.ads-goal-col .b { width: 100%; max-width: 44px; border-radius: 4px 4px 0 0; background: var(--theme-usual);
   transform-origin: bottom; animation: ads-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-.ads-goal-col .b.hit { background: var(--ok); }
+.ads-goal-col .b.hit { background: var(--theme-good); }
 @keyframes ads-rise { from { transform: scaleY(0); } }
 .ads-goal-line { position: absolute; left: 0; right: 0; height: 0; border-top: 1.5px dashed var(--ink-2); z-index: 1; pointer-events: none; }
 .ads-goal-line em { position: absolute; right: 0; bottom: 2px; font-style: normal; font-size: 11px; font-weight: 650; color: var(--ink-2);
@@ -1999,4 +2025,82 @@ button.lane-chip.off { opacity: 0.45; text-decoration: line-through; }
   .ovcal { grid-template-columns: minmax(0, 1fr); }
   .ovcal-side { min-height: 0; }
   .ovcal-side-in { position: static; }
+}
+
+/* Ads company view (top bar on All): one card per brand, same stripe as Today's plan, its figures in a row. */
+.ads-brand { display: flex; flex-direction: column; gap: 14px; }
+.ads-brand.s-red { box-shadow: inset 5px 0 0 var(--theme-low-strong); } .ads-brand.s-amber { box-shadow: inset 5px 0 0 var(--theme-usual-strong); }
+.ads-brand.s-green { box-shadow: inset 5px 0 0 var(--theme-good-strong); } .ads-brand.s-unknown { box-shadow: inset 5px 0 0 var(--faint); }
+.ads-brand > .btn { margin-top: auto; align-self: flex-start; }
+.ads-brand .ads-verdict-title { font-size: 20px; }
+.ads-brand-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.ads-brand-figs > div { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.ads-brand-figs span:first-child { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ads-brand-figs b { font-size: 20px; font-weight: 700; }
+.ads-brand-figs b.t-ok { color: var(--ok); } .ads-brand-figs b.t-warn { color: var(--warn); } .ads-brand-figs b.t-crit { color: var(--crit); }
+.ads-brand-figs .ads-chg { font-size: 12px; padding: 1px 7px; }
+.ads-brand-split { display: flex; flex-direction: column; gap: 6px; }
+
+/* Home, the CEO view, layout "A · Bento" (owner, 2026-11-27; design-mockups/home-ceo/a-bento.html). A 4-column grid:
+   the Sales tile spans two columns and two rows, four smaller tiles beside it, then the wide Ads tile, the brands'
+   (or channels') shares and the month's goal; a row of small operations figures under it. Tile size shows how
+   important a figure is. Rows stretch, so no tile ends short of its neighbour. Colours: the --theme-* tokens. */
+.hb-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: stretch; margin-bottom: 14px; }
+.hb-tile { display: flex; flex-direction: column; padding: 16px 18px; min-width: 0; border-radius: 16px; }
+.hb-hero { grid-column: 1 / 3; grid-row: 1 / 3; }
+.hb-ads { grid-column: 1 / 3; }
+.hb-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.hb-title { font-family: var(--serif); font-weight: 400; font-size: 21px; margin: 0; }
+.hb-sub, .hb-mini { font-size: 12px; color: var(--faint); }
+.hb-mini { display: block; }
+.hb-label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); }
+.hb-fig { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin-top: 6px; }
+.hb-huge { font-family: var(--serif); font-size: 58px; line-height: 1; letter-spacing: -0.01em; }
+.hb-num { font-family: var(--serif); font-size: 40px; line-height: 1.05; }
+.hb-mid { font-family: var(--serif); font-size: 28px; line-height: 1.1; }
+.hb-mid.t-ok { color: var(--ok); } .hb-mid.t-warn { color: var(--warn); } .hb-mid.t-crit { color: var(--crit); }
+.hb-was { margin-top: 4px; font-size: 13px; color: var(--muted); }
+.hb-was b { color: var(--ink-2); font-weight: 650; }
+.hb-chip { display: inline-flex; align-items: center; white-space: nowrap; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 7px; }
+.hb-chip.good { background: var(--ok-soft); color: var(--ok); } .hb-chip.bad { background: var(--crit-soft); color: var(--crit); }
+.hb-chip.flat { background: var(--surface-3); color: var(--ink-2); }
+.hb-hero-chart { margin-top: 12px; flex: 1; min-height: 190px; }
+.hb-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 14px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.hb-legend i, .hb-kv i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; }
+.hb-tile-viz { margin-top: auto; padding-top: 12px; }
+.hb-spark { display: block; width: 100%; overflow: visible; }
+.hb-cols { display: flex; align-items: flex-end; gap: 5px; border-bottom: 1px solid var(--line-2); }
+.hb-cols > span { flex: 1; min-width: 0; border-radius: 5px 5px 2px 2px; transform-origin: bottom; animation: ov-grow-y 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.hb-cols-l { display: flex; gap: 5px; margin-top: 5px; } .hb-cols-l span { flex: 1; text-align: center; font-size: 10.5px; color: var(--faint); }
+.hb-bullet { position: relative; height: 12px; border-radius: 999px; overflow: hidden; background: var(--line-2); margin-top: 10px; }
+.hb-bullet .z { position: absolute; top: 0; bottom: 0; opacity: 0.55; }
+.hb-bullet .v { position: absolute; left: 0; top: 3px; bottom: 3px; border-radius: 999px; background: var(--theme-primary); transition: width 0.6s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.hb-bullet .t { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); }
+.hb-bullet-s { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10.5px; color: var(--faint); }
+.hb-ads-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 10px; align-items: stretch; flex: 1; }
+.hb-well { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; min-width: 0; }
+.hb-well .hb-bullet-wrap, .hb-well .hb-spark { margin-top: auto; }
+.hb-split { display: flex; gap: 2px; height: 10px; border-radius: 999px; overflow: hidden; background: var(--line-2); margin-top: 12px; }
+.hb-split > span { display: block; height: 100%; }
+.hb-mix { display: flex; align-items: center; gap: 14px; margin-top: 10px; flex: 1; }
+.hb-mix-list { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.hb-kv { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.hb-kv b { font-weight: 700; }
+.hb-ring { flex: none; }
+.hb-ring-n { font-family: var(--serif); font-size: 18px; fill: var(--ink); }
+.hb-ring-s { font-size: 11px; fill: var(--muted); }
+.hb-note { margin-bottom: 14px; }
+.hb-ops { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.hb-op { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 18px; border-radius: 16px; color: inherit; text-decoration: none; }
+.hb-op:hover { box-shadow: var(--shadow-2); }
+.hb-op-n { font-family: var(--serif); font-size: 28px; white-space: nowrap; }
+.hb-op-n.t-ok { color: var(--ok); } .hb-op-n.t-warn { color: var(--warn); } .hb-op-n.t-crit { color: var(--crit); }
+@media (max-width: 1240px) {
+  .hb-grid, .hb-ops { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hb-hero, .hb-ads { grid-column: 1 / -1; grid-row: auto; }
+}
+@media (max-width: 700px) {
+  .hb-grid, .hb-ops { grid-template-columns: minmax(0, 1fr); }
+  .hb-ads-grid { grid-template-columns: minmax(0, 1fr); }
+  .hb-huge { font-size: 44px; }
 }

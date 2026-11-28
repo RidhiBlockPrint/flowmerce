@@ -2,6 +2,78 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-27 (Shipping: less empty space on the Overview)
+
+Owner request 2026-11-27: "there is a lot of white space in the shipping dashboard, reduce the dashboard". Measured on
+the live page (1,440 px wide): each row of Today's triage kept a 236 px column for its problem tags, while most rows have
+one 112 px tag, and that squeezed the reason onto two lines; the escalation download sat alone on a row of its own.
+Checked in the demo preview at 1,440, 1,280 and 1,101 px (columns line up, nothing overflows) and below 1,100 px (the
+stacked rows as before); frontend tests and the production build pass.
+
+- **Changed** Today's triage rows share one set of columns (CSS subgrid), each as wide as its widest cell on the page and
+  no wider, so the reason gets the room and fits on one line on a desktop screen; rows are a little less tall (padding
+  9 px instead of 12 px). Browsers without subgrid keep the old fixed columns.
+- **Changed** "Escalation list (CSV)" moved from its own row above the ring into the triage heading, beside "All hand
+  checks" (shown only when there are critical orders, as before).
+
+## 2026-11-27 (Home: the CEO dashboard, layout "A · Bento"; one colour theme for every dashboard)
+
+Owner requests 2026-11-27: Home showed only sales; it should show what is going on in the business for the CEO, with
+the Meta and Google Ads figures of both brands; no headline sentence and no recommendations; one dashboard that adds
+both brands on All and shows one brand on Ridhi or CPC; the CRO Overview's colours on every dashboard; and, after a
+first version copied the CRO Overview too closely, three researched layouts to choose from
+(`design-mockups/home-ceo/`: A Bento, B Briefing, C Chart first). The owner chose **A · Bento**. Verified on demo data
+only: frontend tests 131 passed (4 Home tests), CRO and Ads unit tests 242 passed (14 new), ruff and mypy --strict
+clean on the changed Python, production build passes, and in the browser (All, Ridhi and CPC on every period).
+Checked on the live site the same day: All, Ridhi and CPC load on every period, and both stores' orders, sales,
+visits and ad spend add up to the All figures. Creative Strategist has no demo data, so its new colours were not seen.
+
+- **Changed** Home is the Bento dashboard, the same for All, Ridhi and CPC, with a period switch (Today, Yesterday,
+  7 days, 30 days, Month to date) against the period before: a large Sales tile (total sales, the days drawn against
+  the days before, net / returns / discounts), Orders, Average order, Conversion (on the last 28 days' usual band) and
+  Visits tiles, a wide Ads tile (ad spend and its Meta / Google split, sales per $1 of ads on the cut back / hold /
+  grow zones with the target, ad cost per order), the brands' share of sales (one brand: Meta's and Google's share of
+  the ad spend), the month's goal and pace, and a row of operations figures (delivery problems, on time, decisions
+  waiting, data freshness). Figures only; the to-do list, content pipeline, blog clicks, brand report and automation
+  runs stay under "Show more".
+- **Added** `GET /api/cro/home-period?brand=&period=` (`cro/company.py`): one store's CRO figures for the period, or
+  both stores added together: orders, sales, visits, checkouts and monthly goals are added; conversion, average order
+  and revenue per visit are worked out again from the sums (never averaged); too-early is judged on the totals; only
+  days both stores have reached are shown. Also the sales chart (at least 14 days, with the days before), the daily
+  figures, each brand's share of sales and the month's goal. Demo answer too; the demo stores have sample monthly goals
+  (demo data version 6).
+- **Added** `GET /api/ads/company` also returns `platforms`: each platform's spend over both brands and its share (spend
+  can be added; what a platform claims as sales, and its ROAS, stays per brand). Demo answer too.
+- **Changed** One colour theme for every dashboard, taken from the CRO Overview (`--theme-*` in `globals.css`): sage
+  green good, amber usual, salmon below usual (with stronger steps for thin lines), navy for the figure in focus and its
+  light blue for the rest. Moved onto it: the Ads Overview (spend call stripes and dot, cut back / hold / grow meter,
+  goal ring and bars, charts and sparklines, funnel and drop-off bars), SEO & Blog's ring and meters, Creative
+  Strategist's tiles and charts, Shipping's age-band ring, and Home. Text keeps the darker green / brown / red inks.
+  Shipping's other charts followed the same day (`views/Shipping.jsx`): the on-time bar (green / amber / salmon), the
+  delivery-time bars and the delivered-by-week bars (light blue, the latest week navy), and the Analytics tab's two line
+  charts, which had been given no colour and so drew no line at all (now navy).
+
+- **Fixed** (found on the live site the same day) On Today, the Ads tile compared the ad accounts' day, which runs ahead
+  of the stores' day ($1,711 spent by 03:30 store time against $199 of sales), with the whole day before, so sales per
+  $1 of ads showed 0.12 (down 94%) and ad cost per order $570 (up 1,000%). Today now shows the ad spend so far without a
+  change; both ratios, and each brand's sales per $1 of ads on All, are for complete days only, like Conversion and
+  Visits. The monthly goal tile's empty state reads "Not every store has a monthly sales goal yet" (one brand: "No
+  monthly sales goal set for this store yet").
+
+## 2026-11-27 (Ads: "All" in the top bar shows both brands together)
+
+Owner report 2026-11-27 (screen recording): on the Ads page "All" and "Ridhi" showed the same figures, because Ads
+showed one brand at a time and quietly fell back to Ridhi. Owner decision: both brands combined. Verified: Ads tests 85
+passed, demo tests (Ads 19), frontend tests 127 passed, and in the browser on demo and real data (20 to 26 Nov: company
+ad spend $30,842 = Ridhi $22,461 + CPC $8,381, store sales $54,011, company MER 1.75 against 2.05 the week before).
+
+- **Added** The company view on the Ads Overview (top bar on All, page switch "Both", the default there): company ad
+  spend (Meta and Google, both brands), both stores' sales, company MER and ad cost per order with their change and
+  trend; one card per brand with its own spend call, spend, sales, MER, share of company spend, Meta / Google split and
+  daily goal, and "Open" to go to that brand; the days, with each brand's MER. `GET /api/ads/company` (and the demo).
+- **Changed** Only spend, store sales and orders are added across brands; platform-claimed sales, ROAS, rules and goals
+  stay per brand. Campaigns, Creatives, Funnel, Actions and the other tabs stay one brand at a time (Ridhi / CPC).
+
 ## 2026-11-27 (Ads phase 3: Google Ads next to Meta)
 
 Owner request 2026-11-27: start phase 3 (Google Ads). Read-only checks of the Google login on 27 Nov: it reaches Ridhi's
