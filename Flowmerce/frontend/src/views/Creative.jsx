@@ -1,7 +1,8 @@
 'use client';
 /* Creative Strategist: what the ads show (by format and hook), saved concept ideas with a ready brief, and the
  * creative pack Claude writes from those findings. One store at a time, like CRO: when the top bar says "All",
- * the page shows its own Ridhi / CPC switch. No tab bar: the sidebar's menu opens Insights / Concepts / AI pack
+ * the page shows its own Ridhi / CPC switch. No tab bar: the sidebar's menu opens Insights / Concepts / AI pack /
+ * Ad tags / Product context
  * (?tab=), and the title names the open one. */
 import { useEffect, useRef, useState } from 'react';
 import { api, qs, useApi } from '../lib/api';
@@ -12,9 +13,9 @@ import { Icon } from '../components/Icon';
 import { useToast } from '../components/overlays';
 import { fmtInt } from '../lib/format';
 import { fmtMoney } from '../lib/shipping';
-import { LineChart, Sparkline } from '../components/charts';
 import { DateRangePicker } from '../components/croDates';
 import { fmtSpan, isRangeKey, presetRange, rangeDays } from '../lib/cro';
+import { AdTagsTab, ProductsTab, WhatWinsSection } from '../components/creativeTags';
 
 const STORES = [{ key: 'ridhi', label: 'Ridhi' }, { key: 'cpc', label: 'CPC' }];
 const DEFAULT_RANGE = 'last-30-days';
@@ -28,6 +29,8 @@ const TABS = [
     { key: 'overview', label: 'Insights' },
     { key: 'concepts', label: 'Concepts' },
     { key: 'pack', label: 'AI pack' },
+    { key: 'tags', label: 'Ad tags' },
+    { key: 'products', label: 'Product context' },
 ];
 const FUNNEL_LABEL = { tof: 'Top of funnel', mof: 'Middle of funnel', bof: 'Bottom of funnel' };
 const FUNNEL_TONE = { tof: 'info', mof: 'neutral', bof: 'ok' };
@@ -78,7 +81,12 @@ export default function Creative() {
       <div className="mt-16 creative-page">
         {tab === 'concepts' ? <ConceptsTab brand={brand}/>
             : tab === 'pack' ? <PackTab brand={brand}/>
-                : <InsightsTab brand={brand} range={range} setRange={setRange} today={today}/>}
+                : tab === 'tags' ? (<>
+                    <div className="row-wrap mb-12" style={{ alignItems: 'center', gap: 8 }}><DateRangePicker value={range} today={today} onChange={setRange}/></div>
+                    <AdTagsTab brand={brand} range={range} verdict={sp.get('verdict') ?? ''} review={sp.get('review') === '1'} setFilter={update}/>
+                  </>)
+                    : tab === 'products' ? <ProductsTab brand={brand}/>
+                        : <InsightsTab brand={brand} range={range} setRange={setRange} today={today}/>}
       </div>
     </>);
 }
@@ -117,58 +125,6 @@ function ComparisonCard({ title, cmp, money }) {
     </Card>);
 }
 
-/** One headline figure: a big number, a sparkline of the days behind it (when there is a daily
- * series for it), and a one-line caption. Matches the CRO Overview's big-number tile style. */
-function KpiTile({ label, value, caption, values, color }) {
-    return (<Card title={label} flush className={`pad-sm cc-kpi${values?.length > 1 ? ' has-spark' : ''}`} style={{ '--kpi': color }}>
-      <div className="cc-kpi-value">{value}</div>
-      {caption ? <div className="muted xs mt-4">{caption}</div> : null}
-      {values && values.length > 1 ? <div className="mt-8"><Sparkline values={values} color={color}/></div> : null}
-    </Card>);
-}
-
-/** Total spend, overall ROAS and CTR (with a sparkline of the days behind each), and the best
- * hook rate seen (a single figure: hooks have no daily series, only a per-group total). */
-function KpiRow({ days, money, bestHookRate }) {
-    const totalSpend = days.reduce((n, d) => n + (d.spend || 0), 0);
-    const totalImpressions = days.reduce((n, d) => n + (d.impressions || 0), 0);
-    const totalClicks = days.reduce((n, d) => n + (d.clicks || 0), 0);
-    const totalValue = days.reduce((n, d) => n + (d.purchaseValue || 0), 0);
-    const overallCtr = totalImpressions ? Math.round((totalClicks / totalImpressions) * 10000) / 100 : null;
-    const overallRoas = totalSpend ? Math.round((totalValue / totalSpend) * 100) / 100 : null;
-    return (<div className="grid cols-4 mb-16">
-      <KpiTile label="Spend" value={money(totalSpend)} caption="Over the period" values={days.map((d) => d.spend)} color="var(--theme-primary)"/>
-      <KpiTile label="ROAS" value={overallRoas === null ? '—' : `${overallRoas}x`} caption="Value per unit spent" values={days.map((d) => d.roas).filter((v) => v !== null)} color="var(--theme-good-strong)"/>
-      <KpiTile label="CTR" value={pct1(overallCtr)} caption="Clicks per 100 impressions" values={days.map((d) => d.ctr).filter((v) => v !== null)} color="var(--theme-usual-strong)"/>
-      <KpiTile label="Best hook rate" value={pct1(bestHookRate?.hookRate ?? null)} caption={bestHookRate ? `${bestHookRate.label || bestHookRate.key} format, 3s video views` : 'No video format yet'} color="var(--theme-low-strong)"/>
-    </div>);
-}
-
-/** Daily spend and daily ROAS/CTR, so a trend shows up instead of only one period total. */
-function TrendCharts({ brand, range, currency, bestHookRate }) {
-    const t = useApi(`/creative/trend${qs({ brand, from: range.from, to: range.to })}`);
-    const money = moneyIn(currency);
-    if (t.error || !t.data || !t.data.days.length)
-        return null;
-    const days = t.data.days;
-    return (<>
-      <KpiRow days={days} money={money} bestHookRate={bestHookRate}/>
-      <div className="grid cols-2 mb-16">
-        <Card title="Daily spend" sub={`In ${t.data.currency}`}>
-          <LineChart ariaLabel="Daily spend" height={180} yFormat={money}
-            series={[{ key: 'spend', label: 'Spend', color: 'var(--theme-primary)', points: days.map((d) => ({ x: d.date, y: d.spend })) }]}/>
-        </Card>
-        <Card title="Daily ROAS and CTR">
-          <LineChart ariaLabel="Daily ROAS and click-through rate" height={180}
-            series={[
-                { key: 'roas', label: 'ROAS (x)', color: 'var(--theme-good-strong)', points: days.map((d) => ({ x: d.date, y: d.roas })) },
-                { key: 'ctr', label: 'CTR (%)', color: 'var(--theme-usual-strong)', points: days.map((d) => ({ x: d.date, y: d.ctr })) },
-            ]}/>
-        </Card>
-      </div>
-    </>);
-}
-
 const PRIORITY_TONE = { high: 'crit', medium: 'warn', low: 'neutral' };
 
 /** What changed in the trend and what to do about it: Claude reads the figures above, not ad copy. */
@@ -205,7 +161,7 @@ function RecommendationsSection({ brand }) {
         return <LoadingBlock rows={3}/>;
     const d = q.data;
     const running = d.status === 'running';
-    return (<Card title="Recommendations" sub="What changed in the trend above and what to do about it, read from this store's own ad figures only."
+    return (<Card title="Recommendations" sub="What changed in the ad figures and what to do about it, read from this store's own ad figures only."
       actions={<Button icon="sparkle" loading={asking || running} disabled={!d.configured} onClick={ask}>{running ? 'Thinking…' : 'Ask Claude'}</Button>}>
       {!d.configured ? <div className="small" style={{ color: 'var(--warn)' }}>ANTHROPIC_API_KEY is not set, so Claude cannot write recommendations yet.</div> : null}
       <div className="row-wrap" style={{ gap: 16 }}>
@@ -249,16 +205,15 @@ function InsightsTab({ brand, range, setRange, today }) {
         <span className="muted small">{fmtInt(d.adsSeen)} ads seen{d.currency ? ` · spend in ${d.currency}` : ''}</span>
       </div>
       <div className="muted xs mb-12">{n === 1 ? fmtSpan(d.from, d.from) : `${fmtSpan(d.from, d.to)} · ${n} days`}{d.partial ? ' · today is still running: its figures may change later' : ''}</div>
-      <TrendCharts brand={brand} range={range} currency={d.currency} bestHookRate={d.comparisons.formatHookRate.best}/>
-      <div className="grid cols-3 mb-16">
-        <ComparisonCard title="Format: ROAS" cmp={d.comparisons.formatRoas} money={money}/>
-        <ComparisonCard title="Hook: click-through rate" cmp={d.comparisons.hookCtr} money={money}/>
+      <div className="mb-16">
         <ComparisonCard title="Format: hook rate (3s video views)" cmp={d.comparisons.formatHookRate} money={money}/>
       </div>
       <GroupTable title="By format" note="Image, video, carousel and search, compared on spend and results." rows={d.formats} metricKey="hookRate" metricLabel="Hook rate" money={money}/>
-      <div className="mt-16"><GroupTable title="By hook" note="Grouped by the first words of the ad's own copy. Not available until the ad's own copy text is synced." rows={d.hooks} metricKey="holdRate" metricLabel="Hold rate" money={money}/></div>
+      <div className="mt-16"><GroupTable title="By hook" note="Grouped by the first words of the ad's own copy (synced by the Ads module once 118_creative_tags.sql has run)." rows={d.hooks} metricKey="holdRate" metricLabel="Hold rate" money={money}/></div>
       <div className="mt-16"><GroupTable title="By platform" note="Meta and Google, side by side." rows={d.platforms} metricKey="cpa" metricLabel="Cost per purchase" metricFmt={money} money={money}/></div>
       <div className="muted xs mt-16">{d.note} Minimum for &ldquo;enough data&rdquo;: {fmtInt(d.thresholds.minImpressions)} impressions and {money(d.thresholds.minSpend)} spend.</div>
+      <h2 className="section-title mt-16">Winners, losers and what they have in common</h2>
+      <WhatWinsSection brand={brand} range={range}/>
       <div className="mt-16"><RecommendationsSection brand={brand}/></div>
     </>);
 }
@@ -311,7 +266,7 @@ function Variations({ brand, concept }) {
 }
 
 function ConceptCard({ brand, concept }) {
-    const [open, setOpen] = useState(null);   // null | 'brief' | 'variations'
+    const [open, setOpen] = useState(null);   // null | 'brief' | 'variations' | 'designer'
     const evidence = Array.isArray(concept.evidence) ? concept.evidence : concept.evidence ? [concept.evidence] : [];
     return (<Card title={concept.title} className="cc-prose"
       actions={<Pill tone={FUNNEL_TONE[concept.funnel_stage] ?? 'neutral'}>{FUNNEL_LABEL[concept.funnel_stage] ?? concept.funnel_stage}</Pill>}>
@@ -323,10 +278,62 @@ function ConceptCard({ brand, concept }) {
       <div className="row-wrap mt-12" style={{ gap: 8 }}>
         <Button size="sm" variant="ghost" onClick={() => setOpen(open === 'brief' ? null : 'brief')}>{open === 'brief' ? 'Hide brief' : 'View brief'}</Button>
         <Button size="sm" variant="ghost" onClick={() => setOpen(open === 'variations' ? null : 'variations')}>{open === 'variations' ? 'Hide variations' : 'Variations'}</Button>
+        <Button size="sm" variant="ghost" icon="edit" onClick={() => setOpen(open === 'designer' ? null : 'designer')}>{open === 'designer' ? 'Hide designer brief' : 'Designer brief'}</Button>
       </div>
       {open === 'brief' ? <div className="mt-12"><Brief brand={brand} conceptId={concept.id}/></div> : null}
       {open === 'variations' ? <div className="mt-12"><Variations brand={brand} concept={concept}/></div> : null}
+      {open === 'designer' ? <div className="mt-12"><DesignerBriefs brand={brand} conceptId={concept.id}/></div> : null}
     </Card>);
+}
+
+/** Claude's designer briefs for one saved concept: write a new one, copy it, approve a draft. */
+function DesignerBriefs({ brand, conceptId }) {
+    const q = useApi(`/creative/concepts/${conceptId}/designer-briefs${qs({ brand })}`);
+    const toast = useToast();
+    const [busy, setBusy] = useState(null);
+    const act = async (key, fn, ok) => {
+        setBusy(key);
+        try {
+            await fn();
+            if (ok) toast.ok(ok);
+            q.reload();
+        }
+        catch (e) {
+            toast.error(e);
+        }
+        finally {
+            setBusy(null);
+        }
+    };
+    const copy = async (text) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            toast.ok('Brief copied.');
+        }
+        catch {
+            toast.error('Could not copy; select the text instead.');
+        }
+    };
+    if (q.error) return <ErrorState error={q.error} onRetry={q.reload}/>;
+    if (!q.data) return <LoadingBlock rows={3}/>;
+    const demo = q.data.source === 'demo';
+    return (<div className="col" style={{ gap: 12 }}>
+      <div className="row-wrap" style={{ gap: 8, alignItems: 'center' }}>
+        <Button size="sm" icon="sparkle" disabled={demo} loading={busy === 'write'}
+          onClick={() => act('write', () => api.post(`/creative/concepts/${conceptId}/designer-brief${qs({ brand })}`), 'Designer brief written.')}>Write with Claude</Button>
+        <span className="small muted">{demo ? 'Available for saved concepts once an ad account is connected.' : 'Sizes, product, visual direction, words on screen, do and do not say.'}</span>
+      </div>
+      {q.data.briefs.map((b) => (<Card key={b.id} flush className="pad-sm"
+          title={`Brief #${b.id}`} sub={`${b.created_by ?? ''}${b.approved_by ? ` · approved by ${b.approved_by}` : ''}`}
+          actions={<>
+            <Pill tone={b.status === 'approved' ? 'ok' : 'warn'}>{b.status}</Pill>
+            <Button size="sm" variant="ghost" icon="link" onClick={() => copy(b.body_md)}>Copy</Button>
+            {b.status === 'draft' ? <Button size="sm" variant="ghost" icon="check" loading={busy === b.id}
+                onClick={() => act(b.id, () => api.post(`/creative/briefs/${b.id}/approve${qs({ brand })}`), 'Brief approved.')}>Approve</Button> : null}
+          </>}>
+          <pre className="brief-markdown" style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>{b.body_md}</pre>
+        </Card>))}
+    </div>);
 }
 
 function ConceptsTab({ brand }) {
@@ -361,6 +368,10 @@ function Formats({ formats }) {
       {formats.reel?.shots?.length ? (<div>
           <div className="muted xs cc-label">Reel ({formats.reel.length_seconds}s)</div>
           <ol className="small" style={{ margin: 0, paddingLeft: 18 }}>{formats.reel.shots.map((s, i) => <li key={i}>{s.at_second}s — {s.visual}{s.on_screen_text ? ` ("${s.on_screen_text}")` : ''}</li>)}</ol>
+        </div>) : null}
+      {formats.story?.frames?.length ? (<div>
+          <div className="muted xs cc-label">Story (9:16)</div>
+          <ol className="small" style={{ margin: 0, paddingLeft: 18 }}>{formats.story.frames.map((f) => <li key={f.frame}><b>{f.visual}</b>{f.on_screen_text ? ` — "${f.on_screen_text}"` : ''}{f.sticker ? <span className="faint"> · {f.sticker}</span> : null}</li>)}</ol>
         </div>) : null}
       {formats.ugc?.creator_brief ? (<div>
           <div className="muted xs cc-label">UGC brief</div>

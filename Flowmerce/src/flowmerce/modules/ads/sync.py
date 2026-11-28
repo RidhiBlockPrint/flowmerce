@@ -29,7 +29,7 @@ from .config import (
     ads_config,
     meta_account,
 )
-from .meta import MetaClient, MetaError, ad_row, minor_to_major
+from .meta import MetaClient, MetaError, ad_copy, ad_row, minor_to_major
 
 log = logging.getLogger(__name__)
 SPAN_DAYS = 7
@@ -190,8 +190,9 @@ def _sync(
             ],
             c,
         )
-        data.save_structure(
-            "ads", [{**ad_row(key, a), "synced_at": now.isoformat()} for a in meta.ads()], c
+        data.save_ads(
+            [{**ad_row(key, a), **ad_copy(a), "synced_at": now.isoformat()} for a in meta.ads()],
+            c,
         )
         for a, b in spans(since, today):
             rows_written += data.replace_daily(key, a, b, meta.daily(a, b), c)

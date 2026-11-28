@@ -38,8 +38,10 @@ log = logging.getLogger(__name__)
 
 PACK_KIND = "creative_pack"
 VARIATIONS_KIND = "creative_variations"
+AD_VARIATIONS_KIND = "creative_ad_variations"
+BRIEF_KIND = "creative_designer_brief"
 RECS_KIND = "creative_recommendations"
-PACK_VERSION = 1
+PACK_VERSION = 2  # 2: reads the tag patterns and writes a Story per concept
 RECS_VERSION = 1
 MAX_CONCEPTS = 5
 MAX_VARIATIONS = 5
@@ -133,6 +135,18 @@ def _formats(value: Any) -> dict[str, Any]:
                 "caption": _text(frame.get("caption"), 200),
             }
         )
+    story_frames: list[dict[str, Any]] = []
+    for i, frame in enumerate(_obj(data, "story").get("frames") or [], start=1):
+        if not isinstance(frame, dict):
+            continue
+        story_frames.append(
+            {
+                "frame": _int(frame.get("frame"), 1, 10, i),
+                "visual": _text(frame.get("visual"), 300),
+                "on_screen_text": _text(frame.get("on_screen_text"), 150),
+                "sticker": _text(frame.get("sticker"), 100),
+            }
+        )
     shots: list[dict[str, Any]] = []
     for i, shot in enumerate(reel.get("shots") or [], start=0):
         if not isinstance(shot, dict):
@@ -155,6 +169,7 @@ def _formats(value: Any) -> dict[str, Any]:
             "length_seconds": _int(reel.get("length_seconds"), 5, 90, 20),
             "shots": shots[:8],
         },
+        "story": {"frames": story_frames[:5]},
         "ugc": {
             "creator_brief": _text(ugc.get("creator_brief"), 1500),
             "talking_points": _lines(ugc.get("talking_points"), 200, 6),
@@ -252,10 +267,11 @@ def _work(brand: str, by: str) -> None:
     try:
         findings = service.findings(brand)
         notes = _team_notes(brand)
-        # High effort: the pack has to read a table of figures and then write for four formats.
+        patterns = _patterns(brand)
+        # High effort: the pack has to read a table of figures and then write for five formats.
         data, model = claude._structured(
             prompts.PACK_SYSTEM,
-            prompts.pack_prompt(findings, brand, notes),
+            prompts.pack_prompt(findings, brand, notes, patterns),
             prompts.PACK_SCHEMA,
             "high",
             max_tokens=32000,
@@ -289,6 +305,16 @@ def _work(brand: str, by: str) -> None:
     finally:
         with _lock:
             _running.discard(brand)
+
+
+def _patterns(brand: str) -> dict[str, Any] | None:
+    """The tag patterns for the default period, or None when they cannot be read (tables not set
+    up yet, nothing tagged): the pack is still written from the format and hook figures alone."""
+    try:
+        return service.creative_patterns(brand)
+    except Exception:  # noqa: BLE001 - optional context, never a reason to fail the pack
+        log.info("Creative pack for %s: tag patterns not available", brand, exc_info=True)
+        return None
 
 
 def _team_notes(brand: str) -> str:
@@ -507,3 +533,140 @@ def variations(brand: str, concept: dict[str, Any]) -> dict[str, Any]:
         "source": findings.get("source"),
         **clean_variations(data),
     }
+
+
+# ------------------------------------------------------------------------ variations of an ad
+def _need_claude(what: str) -> None:
+    if not claude.configured():
+        raise HttpError(
+            412,
+            f"ANTHROPIC_API_KEY is not set on the server, so Claude cannot write {what}.",
+            "pending_setup",
+        )
+
+
+def ad_variations(brand: str, ad_id: str) -> dict[str, Any]:
+    """Fresh variations of one of the store's own ads (usually a winner), in the caller's request.
+
+    The ad's copy, tags and figures come from the same patterns the page shows. Returned, not
+    stored: the team picks a variation and saves it as a concept if it wants to keep it.
+    """
+    from . import products
+
+    store_for(brand)
+    _need_claude("variations")
+    patterns = service.creative_patterns(brand)
+    ad = next((a for a in patterns.get("ads") or [] if str(a.get("adId")) == str(ad_id)), None)
+    if ad is None:
+        raise products.NotFoundError(f"Ad {ad_id!r} did not deliver in the period for {brand}.")
+    ai_budget.check(AD_VARIATIONS_KIND)
+    data, model = claude._structured(
+        prompts.VARIATIONS_SYSTEM,
+        prompts.ad_variations_prompt(ad, patterns, brand),
+        prompts.VARIATIONS_SCHEMA,
+        "medium",
+        max_tokens=8000,
+    )
+    cost = ai_budget.record(claude.take_usage(), brand, AD_VARIATIONS_KIND)
+    return {
+        "brand": brand,
+        "adId": str(ad_id),
+        "adName": ad.get("name"),
+        "verdict": ad.get("verdict"),
+        "model": model,
+        "cost_usd": cost,
+        "source": patterns.get("source"),
+        **clean_variations(data),
+    }
+
+
+# ------------------------------------------------------------------------------ designer brief
+def clean_brief(data: dict[str, Any]) -> dict[str, Any]:
+    """Claude's designer brief, cut to lengths the page and a message can carry."""
+    sizes = [s for s in (data.get("sizes") or []) if s in prompts.BRIEF_SIZES]
+    return {
+        "objective": _text(data.get("objective"), 400),
+        "sizes": list(dict.fromkeys(sizes)) or ["9:16"],
+        "product": _text(data.get("product"), 300),
+        "print_color": _text(data.get("print_color"), 300),
+        "visual_direction": _text(data.get("visual_direction"), 800),
+        "reference": _text(data.get("reference"), 400),
+        "on_screen_text": _lines(data.get("on_screen_text"), 120, 6),
+        "must_say": _lines(data.get("must_say"), 200, 6),
+        "must_not_say": _lines(data.get("must_not_say"), 200, 8),
+        "deliverables": _lines(data.get("deliverables"), 200, 8),
+    }
+
+
+def brief_to_markdown(concept: dict[str, Any], brief: dict[str, Any]) -> str:
+    """The cleaned brief as markdown, ready to paste into a message to a designer or editor."""
+
+    def bullets(items: list[str]) -> list[str]:
+        return [f"- {i}" for i in items] or ["- (none)"]
+
+    lines = [
+        f"# Designer brief: {concept.get('title') or 'Untitled concept'}",
+        "",
+        f"**Objective:** {brief['objective']}",
+        f"**Sizes:** {', '.join(brief['sizes'])}",
+        f"**Product:** {brief['product'] or '(not product specific)'}",
+        f"**Print and color:** {brief['print_color'] or '(open)'}",
+        "",
+        "## Hook",
+        f"> {concept.get('hook') or '(hook not set)'}",
+        "",
+        "## Visual direction",
+        brief["visual_direction"] or "(not set)",
+        "",
+        "## Reference: what already works",
+        brief["reference"] or "(no winner yet)",
+        "",
+        "## Words on screen",
+        *bullets(brief["on_screen_text"]),
+        "",
+        "## Must say",
+        *bullets(brief["must_say"]),
+        "",
+        "## Must not say",
+        *bullets(brief["must_not_say"]),
+        "",
+        "## Deliverables",
+        *bullets(brief["deliverables"]),
+    ]
+    return "\n".join(lines)
+
+
+def designer_brief(brand: str, concept_id: int, by: str) -> dict[str, Any]:
+    """Claude writes a designer brief for one saved concept; it is kept in creative.brief as a
+    draft that somebody approves. Runs in the caller's request (one medium-effort call)."""
+    from . import products
+
+    store = store_for(brand)
+    products.require_live("Writing a designer brief")
+    _need_claude("a designer brief")
+    concept = service.concept_row(brand, concept_id)
+    patterns = _patterns(brand)
+    try:
+        product_rows = [p for p in products.listing(brand) if p.get("source")]
+    except Exception:  # noqa: BLE001 - product context is optional for a brief
+        product_rows = []
+    ai_budget.check(BRIEF_KIND)
+    try:
+        data, model = claude._structured(
+            prompts.DESIGNER_BRIEF_SYSTEM,
+            prompts.designer_brief_prompt(concept, patterns, product_rows, brand),
+            prompts.DESIGNER_BRIEF_SCHEMA,
+            "medium",
+            max_tokens=8000,
+        )
+    finally:
+        cost = ai_budget.record(claude.take_usage(), brand, BRIEF_KIND)
+    brief = clean_brief(data)
+    row = service.save_brief(
+        store,
+        concept_id,
+        brief_to_markdown(concept, brief),
+        {**brief, "model": model},
+        by,
+    )
+    return {"brand": brand, "cost_usd": cost, "brief": row}

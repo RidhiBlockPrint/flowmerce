@@ -4,9 +4,9 @@ Two sources, never mixed in one answer:
   * demo   fixed sample ads and findings, so the page can be built and reviewed before any ad
            account is connected. Every answer carries ``"source": "demo"``.
   * live   the Ads teammate's own sync tables in schema `ads` (``accounts``, ``ads``, ``daily``),
-           read through Supabase. That sync is Meta-only today and does not yet store the ad's own
-           headline or primary text, so hooks cannot be grouped from live data: `by_hook` comes back
-           empty rather than guessing from the ad's internal name, which is not real ad copy.
+           read through Supabase. That sync is Meta-only today. It stores the ad's own headline,
+           primary text and link once 118_creative_tags.sql has run; before that `by_hook` comes
+           back empty rather than guessing from the ad's internal name, which is not real ad copy.
 
 The AI step (Claude writing concepts and briefs from these findings) is deliberately not here yet:
 the figures have to be right and checkable first. The brief template below is written by rule, not
@@ -113,6 +113,38 @@ _DEMO_ADS: list[dict[str, Any]] = [
 ]
 
 
+AD_BASE_COLUMNS = "id,account_key,format,name,thumbnail_url,created_time"
+AD_COPY_COLUMNS = "primary_text,headline,link_url"
+
+
+def ad_details(ads: Any, key_list: str) -> dict[str, dict[str, Any]]:
+    """ads.ads rows for some accounts, by ad id, with the ad's copy when the database has it.
+
+    The copy columns arrive with 118_creative_tags.sql. Before that file is run, asking for them is
+    an error, so the read is repeated without them and the copy stays None (hooks then come back
+    empty, as they did before).
+    """
+    from ..shipping.supabase import SupabaseError
+
+    def read(columns: str) -> list[dict[str, Any]]:
+        return list(
+            ads.select(
+                "ads",
+                [("select", columns), ("account_key", f"in.({key_list})")],
+                limit=100_000,
+            ).rows
+        )
+
+    try:
+        rows = read(f"{AD_BASE_COLUMNS},{AD_COPY_COLUMNS}")
+    except SupabaseError as exc:
+        if exc.state not in ("bad_request", "error"):
+            raise
+        log.info("Creative: ads.ads has no copy columns yet (run 118_creative_tags.sql).")
+        rows = read(AD_BASE_COLUMNS)
+    return {str(a["id"]): a for a in rows if a.get("id")}
+
+
 def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], str, str]:
     """The ad-level rows one round of insights works from, where they came from, and their currency.
 
@@ -144,12 +176,7 @@ def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], s
     currency = str(accounts[0].get("currency") or "USD").strip() or "USD"
     key_list = ",".join(keys)
 
-    ad_rows = ads.select(
-        "ads",
-        [("select", "id,account_key,format,name"), ("account_key", f"in.({key_list})")],
-        limit=100_000,
-    ).rows
-    ad_info = {str(a["id"]): a for a in ad_rows if a.get("id")}
+    ad_info = ad_details(ads, key_list)
 
     daily_rows = ads.select(
         "daily",
@@ -173,9 +200,12 @@ def _rows(brand: str, since: date, until: date) -> tuple[list[dict[str, Any]], s
                 "platform": platform_of.get(str(row.get("account_key") or ""), ""),
                 "ad_name": info.get("name") or "",
                 "ad_format": info.get("format") or "",
-                # Not synced yet: the ad's own headline/primary text, so hooks cannot be grouped.
-                "headline": None,
-                "primary_text": None,
+                # The ad's own copy, synced by the Ads module once 118_creative_tags.sql has run;
+                # None before that, and hooks then cannot be grouped.
+                "headline": info.get("headline"),
+                "primary_text": info.get("primary_text"),
+                "link_url": info.get("link_url"),
+                "thumbnail_url": info.get("thumbnail_url"),
                 "spend": row.get("spend"),
                 "impressions": row.get("impressions"),
                 "clicks": row.get("clicks"),
@@ -565,3 +595,159 @@ def brief_for(concept_id: int, brand: str) -> dict[str, Any]:
     if found is None:
         raise InputError(f"No concept with id {concept_id} for this store.")
     return {"source": "live", "conceptId": concept_id, "markdown": brief_markdown(found)}
+
+
+# ------------------------------------------------------------------ patterns, rules and seasons
+def _creative_rows(table: str, store: str) -> list[dict[str, Any]]:
+    from . import products
+
+    return list(products.client().select(table, [("select", "*"), ("store", f"eq.{store}")]).rows)
+
+
+def rules(brand: str) -> dict[str, Any]:
+    """The store's winner / loser rule and season calendar (defaults in demo mode)."""
+    from . import patterns as p
+
+    if creative_config().demo:
+        return {"brand": brand, "source": "demo", "rule": dict(p.DEFAULT_RULE),
+                "seasons": list(p.DEFAULT_SEASONS)}
+    store = store_for(brand)
+    rule_rows = _creative_rows("rule", store)
+    return {
+        "brand": brand,
+        "source": "live",
+        "rule": p.rule_from_row(rule_rows[0] if rule_rows else None),
+        "seasons": p.ordered_calendar(_creative_rows("season", store)),
+    }
+
+
+def save_rule(brand: str, values: dict[str, Any], by: str) -> dict[str, Any]:
+    """Change some or all of the store's thresholds."""
+    from . import patterns as p
+    from . import products
+
+    products.require_live("Saving the rules")
+    store = store_for(brand)
+    merged = p.check_rule(values, rules(brand)["rule"])
+    products.client().upsert(
+        "rule", [{"store": store, **merged, "updated_by": by}], on_conflict="store"
+    )
+    return rules(brand)
+
+
+def save_seasons(brand: str, entries: Any) -> dict[str, Any]:
+    """Change season date ranges."""
+    from . import patterns as p
+    from . import products
+
+    products.require_live("Saving the season calendar")
+    store = store_for(brand)
+    checked = p.check_seasons(entries)
+    products.client().upsert(
+        "season",
+        [{"store": store, "season": e["season"], "start_mmdd": e["start"], "end_mmdd": e["end"]}
+         for e in checked],
+        on_conflict="store,season",
+    )
+    return rules(brand)
+
+
+def creative_patterns(
+    brand: str, days: int | None = None, since: date | None = None, until: date | None = None
+) -> dict[str, Any]:
+    """Every ad's verdict and tags, and results grouped by hook, visual, format, print, color,
+    category, season and product, for the period (same period rule as `findings`)."""
+    from . import patterns as p
+    from . import products, tagging
+
+    cfg = creative_config()
+    if since is not None and until is not None:
+        since, until = _explicit_range(since, until)
+    else:
+        since, until = _range(cfg.insight_days if days is None else days)
+    rows, source, currency = _rows(brand, since, until)
+    setup = rules(brand)
+    if source == "demo":
+        tags: dict[str, dict[str, Any]] = {}
+        product_map: dict[str, dict[str, Any]] = {}
+    else:
+        tags, product_map = tagging.tags_by_ad(brand), products.by_handle(brand)
+    ads = p.ad_performance(rows, tags, product_map, setup["seasons"], setup["rule"])
+    return {
+        "brand": brand,
+        "source": source,
+        "currency": currency,
+        "from": since.isoformat(),
+        "to": until.isoformat(),
+        "rule": setup["rule"],
+        "ads": ads,
+        **p.summary(ads, setup["rule"]),
+    }
+
+
+# ------------------------------------------------------------ designer briefs (creative.brief)
+def concept_row(brand: str, concept_id: int) -> dict[str, Any]:
+    """One saved concept of the store; NotFoundError when it is not this store's."""
+    from . import products
+
+    store = store_for(brand)
+    rows = products.client().select(
+        "concept", [("select", "*"), ("id", f"eq.{int(concept_id)}"), ("store", f"eq.{store}")],
+        limit=1,
+    ).rows
+    if not rows:
+        raise products.NotFoundError(f"No saved concept {concept_id} for {brand}.")
+    return dict(rows[0])
+
+
+def save_brief(
+    store: str, concept_id: int, body_md: str, requirements: dict[str, Any], by: str
+) -> dict[str, Any]:
+    """Keep one designer brief as a draft in creative.brief and return it."""
+    from . import products
+
+    row = {
+        "concept_id": int(concept_id),
+        "brief_type": "ad",
+        "target_platform": "meta",
+        "body_md": body_md[:20000],
+        "requirements": requirements,
+        "status": "draft",
+        "created_by": by,
+    }
+    return dict(products.client().insert_returning("brief", row))
+
+
+def briefs_for(brand: str, concept_id: int) -> dict[str, Any]:
+    """The designer briefs of one saved concept, newest first (none in demo mode)."""
+    from . import products
+
+    if creative_config().demo:
+        store_for(brand)
+        return {"brand": brand, "source": "demo", "briefs": []}
+    concept_row(brand, concept_id)  # checks the concept belongs to this store
+    rows = products.client().select(
+        "brief",
+        [("select", "*"), ("concept_id", f"eq.{int(concept_id)}"), ("order", "created_at.desc")],
+        limit=50,
+    ).rows
+    return {"brand": brand, "source": "live", "briefs": list(rows)}
+
+
+def approve_brief(brand: str, brief_id: int, by: str) -> dict[str, Any]:
+    """Mark a draft brief approved, recording who approved it and when."""
+    from . import products
+
+    products.require_live("Approving a brief")
+    c = products.client()
+    rows = c.select("brief", [("select", "*"), ("id", f"eq.{int(brief_id)}")], limit=1).rows
+    if not rows:
+        raise products.NotFoundError(f"No brief {brief_id}.")
+    concept_row(brand, int(rows[0]["concept_id"]))  # the brief must belong to this store
+    c.update(
+        "brief",
+        [("id", f"eq.{int(brief_id)}")],
+        {"status": "approved", "approved_by": by, "approved_at": datetime.now(UTC).isoformat()},
+    )
+    saved = c.select("brief", [("select", "*"), ("id", f"eq.{int(brief_id)}")], limit=1).rows
+    return dict(saved[0])

@@ -7,6 +7,7 @@ database problem.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import OrderedDict
@@ -15,8 +16,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
 from typing import Any
 
-from ..shipping.supabase import SupabaseClient
+from ..shipping.supabase import SupabaseClient, SupabaseError
 from .config import ads_client
+
+log = logging.getLogger(__name__)
 
 STRUCTURE_SECONDS = (
     300  # campaigns, ad sets and ads are kept in memory this long per account (a few hundred KB)
@@ -160,6 +163,30 @@ def save_structure(table: str, rows: list[dict[str, Any]], c: SupabaseClient | N
     keys."""
     for i in range(0, len(rows), 500):
         _c(c).upsert(table, rows[i : i + 500], on_conflict="id")
+
+
+COPY_COLUMNS = ("primary_text", "headline", "link_url")
+_copy_columns_missing = False
+
+
+def save_ads(rows: list[dict[str, Any]], c: SupabaseClient | None = None) -> None:
+    """Upsert ads with their copy (primary text, headline, link). Until 118_creative_tags.sql has
+    added those columns, Supabase rejects them; the ads are then saved without the copy, so the
+    sync never fails because of the Creative columns, and a warning says what to run."""
+    global _copy_columns_missing
+    if not _copy_columns_missing:
+        try:
+            save_structure("ads", rows, c)
+            return
+        except SupabaseError as e:
+            if e.code != "PGRST204":  # "column not found": anything else is a real failure
+                raise
+            _copy_columns_missing = True
+            log.warning(
+                "Ads: ads.ads has no copy columns yet; run db/central/118_creative_tags.sql. "
+                "Saving ads without their copy."
+            )
+    save_structure("ads", [{k: v for k, v in r.items() if k not in COPY_COLUMNS} for r in rows], c)
 
 
 def budgets(key: str, c: SupabaseClient | None = None) -> dict[str, dict[str, Any]]:

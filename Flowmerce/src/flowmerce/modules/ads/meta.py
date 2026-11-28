@@ -261,13 +261,15 @@ class MetaClient:
         )
 
     def ads(self) -> list[dict[str, Any]]:
-        """Every ad with its campaign, ad set, status and creative (post, video, thumbnail)."""
+        """Every ad with its campaign, ad set, status and creative (post, video, thumbnail, and
+        the copy and link that `ad_copy` reads)."""
         return list(
             self.rows(
                 f"{self.account.account_id}/ads",
                 {
                     "fields": "id,name,campaign_id,adset_id,effective_status,created_time,"
-                    "creative{id,object_type,video_id,effective_object_story_id,thumbnail_url}",
+                    "creative{id,object_type,video_id,effective_object_story_id,thumbnail_url,"
+                    "body,title,object_story_spec,asset_feed_spec}",
                     "limit": 100,
                 },
             )
@@ -423,4 +425,52 @@ def ad_row(account_key: str, a: dict[str, Any]) -> dict[str, Any]:
         else "image",
         "video_id": str(video_id) if video_id else None,
         "thumbnail_url": cr.get("thumbnail_url"),
+    }
+
+
+def _first(*values: Any) -> str | None:
+    for v in values:
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _feed_text(feed: dict[str, Any], key: str) -> str | None:
+    for entry in feed.get(key) or []:
+        if isinstance(entry, dict) and str(entry.get("text") or "").strip():
+            return str(entry["text"]).strip()
+    return None
+
+
+def ad_copy(a: dict[str, Any]) -> dict[str, str | None]:
+    """The ad's own words and link, wherever this kind of creative keeps them: primary text,
+    headline and destination URL. Kept apart from `ad_row` so the sync can still save an ad when
+    the database does not have these columns yet (before 118_creative_tags.sql is run)."""
+    cr = a.get("creative") or {}
+    spec = cr.get("object_story_spec") or {}
+    link_data = spec.get("link_data") or {}
+    video_data = spec.get("video_data") or {}
+    feed = cr.get("asset_feed_spec") or {}
+    children = [c for c in link_data.get("child_attachments") or [] if isinstance(c, dict)]
+    cta = ((video_data.get("call_to_action") or {}).get("value") or {}).get("link")
+    feed_link = next(
+        (
+            str(e["website_url"])
+            for e in feed.get("link_urls") or []
+            if isinstance(e, dict) and e.get("website_url")
+        ),
+        None,
+    )
+    return {
+        "primary_text": _first(
+            cr.get("body"), link_data.get("message"), video_data.get("message"),
+            _feed_text(feed, "bodies"),
+        ),
+        "headline": _first(
+            cr.get("title"), link_data.get("name"), video_data.get("title"),
+            _feed_text(feed, "titles"), *(c.get("name") for c in children),
+        ),
+        "link_url": _first(
+            link_data.get("link"), *(c.get("link") for c in children), cta, feed_link
+        ),
     }

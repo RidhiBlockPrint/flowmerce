@@ -48,7 +48,11 @@ ESTIMATE_USD = {"content_generation": 0.80, "content_revision": 0.80, "topic_res
                 "creative_pack": 0.60, "creative_variations": 0.20,
                 # Recommendations: the day-by-day trend plus the same groupings a pack reads, 3-5
                 # short recommendations out (medium effort, up to 6k output).
-                "creative_recommendations": 0.30}
+                "creative_recommendations": 0.30,
+                # What the strategist monitors and its outputs (2026-11-28): one small low-effort
+                # call per tagged ad or product; variations of one real ad; one designer brief.
+                "creative_tagging": 0.03, "creative_ad_variations": 0.20,
+                "creative_designer_brief": 0.25}
 
 
 def _local_now() -> datetime:

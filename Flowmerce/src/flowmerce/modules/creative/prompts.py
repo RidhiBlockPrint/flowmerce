@@ -65,7 +65,7 @@ def brand_voice(brand: str) -> str:
 _FORMATS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["static", "carousel", "reel", "ugc"],
+    "required": ["static", "carousel", "reel", "story", "ugc"],
     "properties": {
         "static": {
             "type": "object",
@@ -113,6 +113,30 @@ _FORMATS_SCHEMA: dict[str, Any] = {
                             "at_second": {"type": "integer"},
                             "visual": {"type": "string"},
                             "on_screen_text": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+        # A Story is 9:16 and tapped through: a few full-screen frames, each with its own words and
+        # one interactive element at most (a poll, a question box, a link sticker).
+        "story": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["frames"],
+            "properties": {
+                "frames": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["frame", "visual", "on_screen_text", "sticker"],
+                        "properties": {
+                            "frame": {"type": "integer"},
+                            "visual": {"type": "string"},
+                            "on_screen_text": {"type": "string"},
+                            "sticker": {"type": "string"},
                         },
                     },
                 },
@@ -239,6 +263,11 @@ PACK_SYSTEM = (
     "1. Read the figures first. A concept is worth proposing only when a figure supports it: a "
     "format or hook that earns its spend, one that clearly does not, or a gap between them. "
     "Name those figures in `evidence`, with the real numbers and what they are compared with.\n"
+    "   When <patterns> are given, they are the same ads tagged by the team: hook type, visual "
+    "style, print, color, category, season and product, each group with a verdict (winner, "
+    "average, loser, insufficient_data), plus the top winning and losing ads with their own copy. "
+    "Build on what wins there and avoid repeating what loses; a group or ad marked "
+    "insufficient_data or untagged proves nothing.\n"
     "2. Keep what is working and change one thing at a time. If the craft hook earns well, the "
     "next concept builds on it rather than replacing it.\n"
     "3. Write for production. Somebody has to shoot or design this: say what is in the frame, in "
@@ -277,6 +306,8 @@ PACK_SYSTEM = (
     "  `persona`: at most 12 words. `evidence`: 2-4 lines, each at most 20 words.\n"
     "  `static.primary_text`: at most 60 words. `carousel`: 3-5 frames.\n"
     "  `reel.shots`: 3-6 shots inside `length_seconds` (15-30).\n"
+    "  `story.frames`: 3-4 full-screen 9:16 frames; `on_screen_text` at most 10 words; `sticker` "
+    "is one link, poll or question sticker, or empty.\n"
     "  `ugc.talking_points`: 3-5 lines; `ugc.do_not_say`: the claims the brand guide forbids.\n"
     "  `test.hypothesis`: one sentence naming the metric it should move.\n"
     "  `summary`: 2-3 sentences, at most 70 words: which format and hook earn their spend, which "
@@ -308,8 +339,66 @@ def _compact(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
-def pack_prompt(findings: dict[str, Any], brand: str, notes: str = "") -> str:
-    """The ask for a creative pack: the figures, the brand guide, and the team's own notes."""
+def _ad_brief(ad: dict[str, Any]) -> dict[str, Any]:
+    """One ad from the patterns, cut to what a prompt needs."""
+    tags = ad.get("tags") or {}
+    sums = ad.get("sums") or {}
+    rates = ad.get("rates") or {}
+    return {
+        "name": ad.get("name"),
+        "headline": ad.get("headline"),
+        "primaryText": str(ad.get("primaryText") or "")[:300] or None,
+        "product": ad.get("productTitle") or tags.get("product"),
+        "tags": {
+            k: tags.get(k)
+            for k in ("hook_type", "hook_text", "visual_style", "format", "print", "color",
+                      "category", "season")
+        },
+        "verdict": ad.get("verdict"),
+        "spend": sums.get("spend"),
+        "roas": rates.get("roas"),
+        "ctr": rates.get("ctr"),
+        "hookRate": rates.get("hookRate"),
+    }
+
+
+def patterns_for_prompt(
+    patterns: dict[str, Any] | None, groups: int = 8
+) -> dict[str, Any] | None:
+    """The tag patterns (`service.creative_patterns`), trimmed so a prompt stays small: the rule,
+    the verdict counts, the biggest groups of every tag, and the top winning and losing ads."""
+    if not patterns or not patterns.get("adCount"):
+        return None
+    dims: dict[str, list[dict[str, Any]]] = {}
+    for dim, rows in (patterns.get("dimensions") or {}).items():
+        dims[dim] = [
+            {
+                "value": g.get("value"),
+                "ads": g.get("ads"),
+                "verdict": g.get("verdict"),
+                "spend": (g.get("sums") or {}).get("spend"),
+                "roas": (g.get("rates") or {}).get("roas"),
+                "ctr": (g.get("rates") or {}).get("ctr"),
+                "hookRate": (g.get("rates") or {}).get("hookRate"),
+            }
+            for g in (rows or [])[:groups]
+        ]
+    return {
+        "currency": patterns.get("currency"),
+        "rule": patterns.get("rule"),
+        "verdicts": patterns.get("verdicts"),
+        "untaggedAds": patterns.get("untagged"),
+        "groups": dims,
+        "topWinners": [_ad_brief(a) for a in patterns.get("topWinners") or []],
+        "topLosers": [_ad_brief(a) for a in patterns.get("topLosers") or []],
+    }
+
+
+def pack_prompt(
+    findings: dict[str, Any], brand: str, notes: str = "", patterns: dict[str, Any] | None = None
+) -> str:
+    """The ask for a creative pack: the figures, the tag patterns when there are any, the brand
+    guide, and the team's own notes."""
     voice = brand_voice(brand)
     parts = [
         "Here are this store's ad figures for the period. Groups are by creative format, by the "
@@ -317,6 +406,13 @@ def pack_prompt(findings: dict[str, Any], brand: str, notes: str = "") -> str:
         "is enough spend and impressions behind a group to judge it.",
         f"<figures>\n{_compact(findings)}\n</figures>",
     ]
+    trimmed = patterns_for_prompt(patterns)
+    if trimmed:
+        parts.append(
+            "The same ads tagged by the team, with each group's verdict and the top winners and "
+            "losers. Spend is in the account currency.\n"
+            f"<patterns>\n{_compact(trimmed)}\n</patterns>"
+        )
     if voice:
         parts.append(
             "The brand guide below governs the voice and what may be claimed. Follow it exactly.\n"
@@ -334,7 +430,7 @@ def pack_prompt(findings: dict[str, Any], brand: str, notes: str = "") -> str:
         )
     parts.append(
         "Produce 3 to 5 concepts, each resting on a figure above, each with a static ad, a "
-        "carousel, a Reel script, a UGC brief and a one-variable test."
+        "carousel, a Reel script, a Story, a UGC brief and a one-variable test."
     )
     return "\n\n".join(parts)
 
@@ -438,6 +534,117 @@ def variations_prompt(concept: dict[str, Any], findings: dict[str, Any], brand: 
         "The store's ad figures for the period, for picking what to vary:",
         f"<figures>\n{_compact(findings)}\n</figures>",
     ]
+    if voice:
+        parts.append(f"<brand_guide>\n{voice}\n</brand_guide>")
+    else:
+        parts.append(
+            "No brand guide is available for this store, so make no claim about materials, "
+            "origin, durability or certification."
+        )
+    return "\n\n".join(parts)
+
+
+# --------------------------------------------------------------------- variations of a winning ad
+def ad_variations_prompt(ad: dict[str, Any], patterns: dict[str, Any] | None, brand: str) -> str:
+    """The ask for variations of one real ad (usually a winner), with its own copy and tags."""
+    voice = brand_voice(brand)
+    parts = [
+        "This is one of the store's own ads, with its copy, tags and figures. Produce variations "
+        "of it for the next test round. Treat its copy as the current version to keep or change.",
+        f"<ad>\n{_compact(_ad_brief(ad))}\n</ad>",
+    ]
+    trimmed = patterns_for_prompt(patterns, groups=5)
+    if trimmed:
+        parts.append(
+            "What wins and loses across the store's other ads, for picking the variable:\n"
+            f"<patterns>\n{_compact(trimmed)}\n</patterns>"
+        )
+    if voice:
+        parts.append(f"<brand_guide>\n{voice}\n</brand_guide>")
+    else:
+        parts.append(
+            "No brand guide is available for this store, so make no claim about materials, "
+            "origin, durability or certification."
+        )
+    return "\n\n".join(parts)
+
+
+# ------------------------------------------------------------------------------- designer brief
+BRIEF_SIZES = ("9:16", "4:5", "1:1", "16:9")
+
+DESIGNER_BRIEF_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "objective",
+        "sizes",
+        "product",
+        "print_color",
+        "visual_direction",
+        "reference",
+        "on_screen_text",
+        "must_say",
+        "must_not_say",
+        "deliverables",
+    ],
+    "properties": {
+        "objective": {"type": "string"},
+        "sizes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "enum": list(BRIEF_SIZES)},
+        },
+        "product": {"type": "string"},
+        "print_color": {"type": "string"},
+        "visual_direction": {"type": "string"},
+        "reference": {"type": "string"},
+        "on_screen_text": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "must_say": {"type": "array", "items": {"type": "string"}},
+        "must_not_say": {"type": "array", "items": {"type": "string"}},
+        "deliverables": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    },
+}
+
+DESIGNER_BRIEF_SYSTEM = (
+    "You write the brief a designer or video editor works from, for a small brand that sells hand "
+    "block printed home textiles. You are given one creative concept, the store's tag patterns "
+    "(what wins and loses by hook, visual style, print, color, category and season) and some of "
+    "its products with their print and color.\n"
+    "\n"
+    "Rules:\n"
+    "- Be concrete enough to produce without a meeting: what is in the frame, in what order, the "
+    "exact words on screen, the sizes.\n"
+    "- `product`: name a real product from the list when the concept fits one; otherwise say the "
+    "range it shows. Never invent a product, price, offer, material or claim.\n"
+    "- `reference`: point at the visual style and print/color that win in the patterns, with the "
+    "figure (for example 'lifestyle_room: winner, ROAS 3.1'). Say when there is no winner yet.\n"
+    "- `must_not_say`: the claims the brand guide forbids, plus anything the concept must avoid.\n"
+    "- Lengths: `objective` one sentence; `visual_direction` at most 80 words; `on_screen_text` "
+    "2-5 lines of at most 10 words; `deliverables` 2-6 lines, each one file with its size and "
+    "length.\n"
+    "- Plain British English, for a designer, not an analyst."
+)
+
+
+def designer_brief_prompt(
+    concept: dict[str, Any],
+    patterns: dict[str, Any] | None,
+    products: list[dict[str, Any]],
+    brand: str,
+) -> str:
+    """The ask for a designer brief for one saved concept."""
+    voice = brand_voice(brand)
+    keep = ("title", "hook", "angle", "message", "offer", "funnel_stage", "persona", "evidence")
+    parts = [f"<concept>\n{_compact({k: concept.get(k) for k in keep})}\n</concept>"]
+    trimmed = patterns_for_prompt(patterns, groups=5)
+    if trimmed:
+        parts.append(f"<patterns>\n{_compact(trimmed)}\n</patterns>")
+    if products:
+        listed = [
+            {k: p.get(k) for k in ("title", "category", "print", "color", "season_fit")}
+            for p in products[:40]
+        ]
+        parts.append(f"<products>\n{_compact(listed)}\n</products>")
     if voice:
         parts.append(f"<brand_guide>\n{voice}\n</brand_guide>")
     else:

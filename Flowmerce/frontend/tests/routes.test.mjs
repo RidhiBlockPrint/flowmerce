@@ -19,7 +19,7 @@ test('the menu has exactly the agreed modules and pages, in order, with rarely u
         ['Shipping', ['Overview', 'Shipments', 'Hand checks'], ['Analytics']],
         ['Conversion (CRO)', ['Overview', 'Conversion', 'Landing pages', 'Cart & checkout', 'Products', 'Sales'], ['Site health', 'Recommendations', 'Experiments', 'Alarms', 'Change log']],
         ['Ads', ['Overview', 'Campaigns', 'Creatives', 'Funnel', 'Actions'], ['Search terms', 'ABO to CBO gap', 'Rules']],
-        ['Creative Strategist', ['Insights', 'Concepts', 'AI pack'], []],
+        ['Creative Strategist', ['Insights', 'Concepts', 'AI pack', 'Ad tags', 'Product context'], []],
     ]);
     assert.deepEqual(SETTINGS.items.map((i) => i.label), ['Integrations', 'Brands', 'Data management', 'Audit log']);
 });

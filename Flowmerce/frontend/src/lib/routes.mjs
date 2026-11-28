@@ -70,6 +70,8 @@ export const NAV = [
         { to: '/creative', tab: 'overview', label: 'Insights', icon: 'analytics' },
         { to: '/creative', tab: 'concepts', label: 'Concepts', icon: 'star' },
         { to: '/creative', tab: 'pack', label: 'AI pack', icon: 'sparkle' },
+        { to: '/creative', tab: 'tags', label: 'Ad tags', icon: 'image' },
+        { to: '/creative', tab: 'products', label: 'Product context', icon: 'sheet' },
     ] },
 ];
 

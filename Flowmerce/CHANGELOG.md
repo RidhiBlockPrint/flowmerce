@@ -2,6 +2,65 @@
 
 Format: newest first. Types: Added, Changed, Fixed, Removed, Architecture.
 
+## 2026-11-28 (Creative Strategist: outputs from the tag data)
+
+Owner request 2026-11-28: the "Main outputs / actions" part (hooks, UGC scripts, static ads, carousels, Reels and
+Stories; designer briefs; fresh variations from winning concepts). Decision record:
+[ADR 0013](docs/decisions/0013-creative-outputs.md).
+
+### Added
+- The AI pack reads the tag patterns (verdicts by hook, visual, format, print, color, category, season and product, and
+  the top winning and losing ads with their copy) and writes a **Story** (3-4 frames, 9:16) for every concept.
+- `POST /api/creative/ads/{ad_id}/variations`: Claude's variations of one real ad; a **Variations** button on winners in
+  the Ad tags tab, each variation can be saved to Concepts.
+- Designer briefs: `POST /api/creative/concepts/{id}/designer-brief`, `GET .../designer-briefs`,
+  `POST /api/creative/briefs/{id}/approve`; kept as drafts in `creative.brief` (no new SQL). On each saved concept a
+  **Designer brief** section: write with Claude, copy, approve.
+- `seo/services/ai_budget.py`: estimates `creative_tagging` 0.03, `creative_ad_variations` 0.20,
+  `creative_designer_brief` 0.25.
+- `tests/unit/creative/test_outputs.py` (6 tests, fake Claude and Supabase).
+
+### Validation
+- `pytest -q`: 1015 passed. `node --test tests/`: 131 passed. `npm run build`: succeeded. ruff and mypy --strict clean
+  for `modules/creative` and `modules/ads`.
+- Browser (isolated demo instance): Concepts shows the Designer brief section (disabled in demo), Ad tags renders.
+- **Not verified:** any live Claude call for the new parts, the Variations dialog and the Story in a real pack.
+
+## 2026-11-28 (Creative Strategist: what it monitors and uses)
+
+Owner request 2026-11-28: build the "What it monitors / uses" part of the Creative Strategist (product, print, color,
+category and season; winning and losing patterns; performance by hook, visual and format), merged into the existing
+module for both stores. Decision record: [ADR 0012](docs/decisions/0012-creative-monitoring-and-tags.md).
+
+### Added
+- `db/central/118_creative_tags.sql`: `ads.ads.primary_text`, `headline`, `link_url`; tables `creative.product`,
+  `creative.ad_tag`, `creative.season` (seeded for RBP and CPC), `creative.rule` (RBP ₹1,000 / CPC $50 minimum spend,
+  1,000 impressions, target ROAS 2.0, break-even 1.0). Rollback in `db/central/rollback/`. **Not run in Supabase yet.**
+- `modules/creative/taxonomy.py` (fixed tag vocabulary), `patterns.py` (verdicts, rates, grouping by hook, visual, format,
+  print, color, category, season and product), `products.py` (Shopify products, read-only), `tagging.py` (Claude tags ads
+  and products; manual edits are never overwritten; shared daily Claude limit, kind `creative_tagging`).
+- Routes: `GET /api/creative/patterns`, `/taxonomy`, `/rules`, `/products`; `PUT /rules`, `/seasons`;
+  `POST /products/sync`, `/products/tag`, `/tags/run`; `PATCH /products/{handle}`, `/tags/{ad_id}`.
+- `/creative` tabs **Ad tags** and **Product context** (sidebar), and on Insights: verdict counts, top winners and losers,
+  "What wins and loses" by tag, and the rules and season calendar editors (`components/creativeTags.jsx`).
+- `tests/unit/creative/test_tags_patterns.py` (12 tests).
+
+### Changed
+- Ads module: `meta.py` also reads each ad's copy and link (`ad_copy`); `sync.py` saves it through `data.save_ads`, which
+  saves without the copy (and logs what to run) while 118 has not been run, so the Ads sync never fails because of it.
+- `creative/service.py` reads the copy from `ads.ads` (hooks are grouped once 118 has run) and answers patterns, rules
+  and seasons; `api.py` explains 404 / 412 and names 118 when tables are missing.
+- `frontend/src/lib/routes.mjs` and `frontend/tests/routes.test.mjs`: the two new menu items.
+- Insights (owner request, same day): the top of the tab keeps only "Format: hook rate (3s video views)". The four KPI
+  tiles, the daily spend and daily ROAS/CTR charts, and the "Format: ROAS" and "Hook: click-through rate" cards were
+  removed from the page (`GET /api/creative/trend` stays in the backend, unused by the page).
+
+### Validation
+- `pytest -q`: 1009 passed. `node --test tests/` (frontend): 131 passed. `npm run build`: succeeded. ruff and
+  mypy --strict: no issues in `modules/creative` and `modules/ads` (the repository's older findings elsewhere unchanged).
+- **Not verified:** the SQL in Supabase, any live Meta / Shopify / Claude call for the new parts, and the new tabs in a
+  browser.
+
 ## 2026-11-27 (Shipping: less empty space on the Overview)
 
 Owner request 2026-11-27: "there is a lot of white space in the shipping dashboard, reduce the dashboard". Measured on
